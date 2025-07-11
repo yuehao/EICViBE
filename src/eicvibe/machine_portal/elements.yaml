@@ -1,0 +1,66 @@
+# Define allowed elements and its parameter groups
+# This file is used to define the elements and their parameters for the machine portal
+
+All: # parameter groups common to all elements
+  group:
+    - ApertureP
+    - ControlP
+    - MetaP
+
+
+Bend: # Bend element with its specific parameter groups
+  group:
+    - BendP
+    - MagneticMultipoleP
+
+Drift: # Drift element with its specific parameter groups
+  group:
+
+Quadrupole: # Quadrupole element with its specific parameter groups
+  group:
+    - MagneticMultipoleP
+
+Sextupole: # Sextupole element with its specific parameter groups
+  group:
+    - MagneticMultipoleP
+
+Octupole: # Octupole element with its specific parameter groups
+  group:
+    - MagneticMultipoleP  
+
+Solenoid: # Solenoid element with its specific parameter groups
+  group:
+    - SolenoidP
+
+Marker: # Marker element with its specific parameter groups
+  group:
+    - MarkerP
+
+RFCavity: # RF Cavity element with its specific parameter groups
+  group:
+    - RFP
+    - MagneticMultipoleP 
+
+CrabCavity: # Crab Cavity element with its specific parameter groups
+  group:
+    - RFP
+    - MagneticMultipoleP 
+
+Instrument: # Instrument element with its specific parameter groups
+  group:
+    - InstrumentP
+
+Kicker:  # Kicker element with its specific parameter groups
+  group:
+    - KickerP
+    - MagneticMultipoleP
+
+BeamBeam: # Beam-Beam element with its specific parameter groups
+  group:
+    - BeamBeamP
+
+
+
+
+
+    
