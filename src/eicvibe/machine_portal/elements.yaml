@@ -13,8 +13,6 @@ Bend: # Bend element with its specific parameter groups
     - BendP
     - MagneticMultipoleP
 
-Drift: # Drift element with its specific parameter groups
-  group:
 
 Quadrupole: # Quadrupole element with its specific parameter groups
   group:

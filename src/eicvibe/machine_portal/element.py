@@ -27,33 +27,32 @@
 
 
 from . parameter_group import ParameterGroup
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+import os
+import yaml
 
-element_types = [
-    'ACKicker', 'BeamBeam', 'Bend', 'CrabCavity', 'Drift', 'EGun', 
-    'Instrument', 'Kicker', 'Marker', 'Match', 'Multipole',
-    'Octupole', 'Quadrupole', 'RFCavity', 'Sextupole', 'Solenoid',
-    'Taylor', 'Undulator']
-element_type_allowed_groups = {
-    'ACKicker': ['MagneticMultipoleP', 'ApertureP', 'RFP', 'MetaP'],
-    'BeamBeam': ['BeamBeamP', 'ApertureP', 'MetaP'],
-    'Bend': ['BendP', 'ApertureP', 'MetaP', 'MagneticMultipoleP'],
-    'CrabCavity': ['RFP', 'ApertureP', 'MagneticMultipoleP', 'MetaP'],
-    'Drift': ['ApertureP', 'MetaP'],
-    'EGun': ['EGunP', 'ApertureP', 'MetaP'],
-    'Instrument': ['InstrumentP', 'ApertureP', 'MetaP'],
-    'Kicker': ['KickerP', 'ApertureP', 'MetaP'],
-    'Marker': ['ApertureP', 'MetaP', 'FORKP'],
-    'Match': ['MatchP', 'ApertureP', 'MetaP'],
-    'Multipole': ['MagneticMultipoleP', 'ApertureP', 'MetaP'],
-    'Octupole': ['MagneticMultipoleP', 'ApertureP', 'MetaP'],
-    'Quadrupole': ['MagneticMultipoleP', 'ApertureP', 'MetaP'],
-    'RFCavity': ['RFP', 'ApertureP', 'MagneticMultipoleP', 'MetaP'],
-    'Sextupole': ['MagneticMultipoleP', 'ApertureP', 'MetaP'],
-    'Solenoid': ['SolenoidP', 'ApertureP', 'MetaP'],
-    'Taylor': ['TaylorP', 'ApertureP', 'MetaP'],
-    'Undulator': ['UndulatorP', 'ApertureP', 'MetaP']
-}
+
+def _load_allowed_groups_from_yaml():
+    yaml_path = os.path.join(os.path.dirname(__file__), 'elements.yaml')
+    if not os.path.exists(yaml_path):
+        raise FileNotFoundError(f"elements.yaml not found at {yaml_path}")
+    with open(yaml_path, 'r') as f:
+        data = yaml.safe_load(f)
+    if not isinstance(data, dict):
+        raise ValueError("elements.yaml is malformed: root should be a mapping")
+    all_groups = set(data.get('All', {}).get('group', []))
+    allowed = {}
+    for elem_type, v in data.items():
+        if elem_type == 'All':
+            continue
+        groups = set(v.get('group', [])) | all_groups
+        allowed[elem_type] = list(groups)
+    return allowed
+
+try:
+    element_type_allowed_groups = _load_allowed_groups_from_yaml()
+except Exception as e:
+    raise RuntimeError(f"Failed to load allowed parameter groups from elements.yaml: {e}")
 
 
 @dataclass
@@ -62,7 +61,7 @@ class Element:
     name: str
     type: str
     length: float = 0.0
-    parameters: list[ParameterGroup] = None
+    parameters: list[ParameterGroup] = field(default_factory=list)
     
     def __post_init__(self):
         """Initialize the element with a name, type, length and parameters."""
@@ -148,14 +147,25 @@ class Element:
         return self.__str__()
     
     # Convert element to yaml dictionary format.
-    def to_dict(self) -> dict:
-        """Convert the element to a dictionary."""
-        return {
-            'name': self.name,
-            'type': self.type,
-            'length': self.length,
-            'parameters': [group.to_dict() for group in self.parameters]
-        }
+    def to_yaml_dict(self) -> dict:
+        """Convert the element to a dictionary in the format:
+        element_type:
+              name: element_name
+              length: number
+              parameter_group_1:
+                      parameter_name: parameter_value
+        """
+        result = {}
+        element_dict = {}
+        element_dict['name'] = self.name
+        element_dict['length'] = self.length
+        
+        # Add parameter groups using the ParameterGroup.to_yaml_dict() method
+        for group in self.parameters:
+            element_dict[group.type] = group.to_yaml_dict()
+            
+        result[self.type] = element_dict
+        return result
     
 
     
