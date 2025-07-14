@@ -61,6 +61,7 @@ class Element:
     name: str
     type: str
     length: float = 0.0
+    inherit: str | None = None  # Name of the prototype element this inherits from
     parameters: list[ParameterGroup] = field(default_factory=list)
     
     def __post_init__(self):
@@ -139,9 +140,18 @@ class Element:
             raise ValueError("Name cannot be empty.")
         self.name = name
     
+    def get_inherit(self) -> str | None:
+        """Get the name of the prototype this element inherits from."""
+        return self.inherit
+    
+    def set_inherit(self, prototype_name: str | None):
+        """Set the prototype this element inherits from."""
+        self.inherit = prototype_name
+    
     def __str__(self): 
         """String representation of the element."""
-        return f"Element(name={self.name}, type={self.type}, length={self.length}, parameters={self.parameters})"
+        inherit_str = f", inherit={self.inherit}" if self.inherit is not None else ""
+        return f"Element(name={self.name}, type={self.type}, length={self.length}{inherit_str}, parameters={self.parameters})"
     def __repr__(self):
         """String representation of the element."""
         return self.__str__()
@@ -152,6 +162,7 @@ class Element:
         element_type:
               name: element_name
               length: number
+              inherit: prototype_name (optional)
               parameter_group_1:
                       parameter_name: parameter_value
         """
@@ -159,6 +170,10 @@ class Element:
         element_dict = {}
         element_dict['name'] = self.name
         element_dict['length'] = self.length
+        
+        # Add inherit field if not None
+        if self.inherit is not None:
+            element_dict['inherit'] = self.inherit
         
         # Add parameter groups using the ParameterGroup.to_yaml_dict() method
         for group in self.parameters:
