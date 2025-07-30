@@ -6,6 +6,7 @@ All: # parameter groups common to all elements
     - ApertureP
     - ControlP
     - MetaP
+    - BodyShiftP
 
 
 Bend: # Bend element with its specific parameter groups
@@ -13,6 +14,11 @@ Bend: # Bend element with its specific parameter groups
     - BendP
     - MagneticMultipoleP
 
+
+RBend: # Bend element with its specific parameter groups
+  group:
+    - BendP
+    - MagneticMultipoleP
 
 Quadrupole: # Quadrupole element with its specific parameter groups
   group:
@@ -44,9 +50,9 @@ CrabCavity: # Crab Cavity element with its specific parameter groups
     - RFP
     - MagneticMultipoleP 
 
-Instrument: # Instrument element with its specific parameter groups
+Monitor: # Monitor element with its specific parameter groups
   group:
-    - InstrumentP
+    - MonitorP
 
 Kicker:  # Kicker element with its specific parameter groups
   group:

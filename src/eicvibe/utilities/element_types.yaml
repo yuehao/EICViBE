@@ -1,0 +1,130 @@
+Bend: # Bend element with its specific parameter groups
+  madx: 
+    type: SBEND
+    parameters:
+      L: length
+      ANGLE: BendP.angle
+      E1: BendP.E1
+      E2: BendP.E2
+      TILT: BendP.tilt
+      K1: MagneticMultipoleP.kn1
+      K2: MagneticMultipoleP.kn2
+      FINT: BendP.edge_int1
+      FINTX: BendP.edge_int2
+      HGAP: BendP.hgap
+      H1: BendP.h1
+      H2: BendP.h2
+
+RBend: # RBend element with its specific parameter groups
+  madx: 
+    type: RBEND
+    parameters:
+      L: BendP.chord_length
+      ANGLE: BendP.angle
+      E1: BendP.E1
+      E2: BendP.E2
+      TILT: BendP.tilt
+      K1: MagneticMultipoleP.kn1
+      K2: MagneticMultipoleP.kn2
+      FINT: BendP.edge_int1
+      FINTX: BendP.edge_int2
+      HGAP: BendP.hgap
+      H1: BendP.h1
+      H2: BendP.h2
+
+
+Drift: # Drift element with its specific parameter groups
+  madx: 
+    type: drift
+    parameters:
+      L: length
+
+
+Quadrupole: # Quadrupole element with its specific parameter groups
+  madx: 
+    type: quadrupole
+    parameters:
+      L: length
+      K1: MagneticMultipoleP.kn1
+      K1S: MagneticMultipoleP.ks1
+      TILT: MagneticMultipoleP.tilt
+
+      
+
+Sextupole: # Sextupole element with its specific parameter groups
+  madx: 
+    type: sextupole
+    parameters:
+      L: length
+      K2: MagneticMultipoleP.kn2
+      K2S: MagneticMultipoleP.ks2
+      TILT: MagneticMultipoleP.tilt
+
+Octupole: # Octupole element with its specific parameter groups
+  madx: 
+    type: octupole
+    parameters:
+      L: length
+      K3: MagneticMultipoleP.kn3
+      K3S: MagneticMultipoleP.ks3
+      TILT: MagneticMultipoleP.tilt
+
+Solenoid: # Solenoid element with its specific parameter groups
+  madx: 
+    type: solenoid
+    parameters:
+      L: length
+      KS: SolenoidP.ks
+      
+      
+
+Marker: # Marker element with its specific parameter groups
+  madx: 
+    type: marker
+    
+
+RFCavity: # RF Cavity element with its specific parameter groups
+  madx: 
+    type: rfcavity
+    parameters:
+      L: length
+      FREQ: RFP.freq
+      LAG: RFP.phase
+      VOLT: RFP.voltage
+      HARMON: RFP.harmonic
+
+
+
+
+CrabCavity: # Crab Cavity element with its specific parameter groups
+  madx: 
+    type: crabcavity
+    parameters:
+      L: length
+      FREQ: RFP.freq
+      LAG: RFP.phase
+      VOLT: RFP.voltage
+      HARMON: RFP.harmonic
+  
+
+Monitor: # Monitor element with its specific parameter groups
+  madx: 
+    type: monitor
+    parameters:
+      L: length
+      
+
+Kicker:  # Kicker element with its specific parameter groups
+  madx: 
+    type: kicker
+    parameters:
+      L: length
+      HKICK: KickerP.hkick
+      VKICK: KickerP.vkick
+      TILT: KickerP.tilt
+      
+
+
+
+  
+

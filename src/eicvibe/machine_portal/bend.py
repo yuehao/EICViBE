@@ -11,7 +11,7 @@ class Bend(Element):
     """Bend element."""
     type: str = 'Bend'
     plot_color: str = 'C0'
-    plot_height: float = 0.6 # Height of the bend element in the beamline
+    plot_height: float = 0.7 # Height of the bend element in the beamline
     plot_cross_section: float =0.5  
     
     def __post_init__(self):
@@ -22,23 +22,22 @@ class Bend(Element):
         if self.type != 'Bend':
             raise ValueError("Type of a bend element must be 'Bend'.")
         
-    def check_consistency(self):
-        """Check if the bend element is consistent. The angle parameter of BendP paraemeter group must be set."""
-        angle_group = self.get_parameter_group("BendP")
-        if angle_group is None or angle_group.get_parameter("ANGLE") is None:
-            raise ValueError("Bend element must have a BendP group with an ANGLE parameter set.")
-        return True
+    def _check_element_specific_consistency(self):
+        """Bend-specific consistency checks. The angle parameter of BendP parameter group must be set."""
+        bend_group = self.get_parameter_group("BendP")
+        if bend_group is None or bend_group.get_parameter("angle") is None:
+            raise ValueError("Bend element must have a BendP group with an angle parameter set.")
     
     def plot_in_beamline(self, ax, s_start, normalized_strength=None):
         '''Plot the bend element in the beamline, using an square box to represent the bend.'''
         if normalized_strength is None:
             height = self.plot_height
         else:
-            angle = self.get_parameter("BendP", "ANGLE")
+            angle = self.get_parameter("BendP", "angle")
             height = self.plot_height * angle / normalized_strength
         ax.add_patch(
-                        Rectangle((s_start, -height), self.length, 2*height, angle=0.0, ec=self.plot_color,
-                                  fc=self.plot_color, alpha=0.5, lw=2)
+                        Rectangle((s_start, -height/2), self.length, height, angle=0.0, ec=self.plot_color,
+                                  fc=self.plot_color, alpha=0.8, lw=1)
                     )
         return s_start + self.length
         
@@ -57,7 +56,7 @@ class Bend(Element):
         if len(entrance_coords) != 2 or len(tangent_vector) != 2:
             raise ValueError("Entrance coordinates and tangent vector must be 2D.")
         
-        angle = self.get_parameter("BendP", "ANGLE")
+        angle = self.get_parameter("BendP", "angle")
         if self.length == 0:  # If length is zero, we use wedge to represent a zero length bend, tangent vector need to be rotated by angle.
             exit_coords = entrance_coords
             extra_rotation = 0

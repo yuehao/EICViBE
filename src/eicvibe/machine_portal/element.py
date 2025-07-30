@@ -184,9 +184,27 @@ class Element:
     
 
     
-    # Define a method to check consistance of the element, each element type should implement its own check.
+    # Define a method to check consistency of the element, each element type should implement its own check.
     def check_consistency(self):
-        pass # To be implemented by subclasses
+        """Check if the element is consistent. Validates parameter groups and calls element-specific checks."""
+        # Common parameter group validation for all elements
+        self._validate_parameter_groups()
+        
+        # Call element-specific consistency checks
+        self._check_element_specific_consistency()
+        
+        return True
+    
+    def _validate_parameter_groups(self):
+        """Validate that all parameter groups are allowed for this element type."""
+        allowed_groups = element_type_allowed_groups.get(self.type, [])
+        
+        for group in self.parameters:
+            self.check_parameter_group(group.type, allowed_groups)
+    
+    def _check_element_specific_consistency(self):
+        """Element-specific consistency checks. Override in subclasses as needed."""
+        pass
 
     # Define a plot method to visualize the element in a beamline floor view. The input should be matplotlib Axes object, the entrance coordinates and the tangent vector.
     # The output should be the coordinates of the exit point and the tangent vector, Each element type should implement its own plot method.

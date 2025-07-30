@@ -3,6 +3,25 @@
 # Parameter group also allow subgroups, which are also ParameterGroup objects.
 
 from dataclasses import dataclass, field
+import os
+import yaml
+
+def _load_allowed_parameters_from_yaml():
+    """Load the allowed parameters for each parameter group type from parameters.yaml."""
+    yaml_path = os.path.join(os.path.dirname(__file__), 'parameters.yaml')
+    if not os.path.exists(yaml_path):
+        raise FileNotFoundError(f"parameters.yaml not found at {yaml_path}")
+    with open(yaml_path, 'r') as f:
+        data = yaml.safe_load(f)
+    if not isinstance(data, dict):
+        raise ValueError("parameters.yaml is malformed: root should be a mapping")
+    return data
+
+try:
+    parameter_group_allowed_parameters = _load_allowed_parameters_from_yaml()
+except Exception as e:
+    raise RuntimeError(f"Failed to load allowed parameters from parameters.yaml: {e}")
+
 
 @dataclass
 class ParameterGroup:
@@ -17,12 +36,38 @@ class ParameterGroup:
             self.parameters = {}
         if self.subgroups is None:
             self.subgroups = []
+
+    def validate_parameter(self, name: str) -> bool:
+        """Validate if a parameter is allowed for this parameter group type."""
+        allowed_params = parameter_group_allowed_parameters.get(self.type, {})
+        if not allowed_params:
+            # If parameter group type is not defined in parameters.yaml, allow any parameter (backward compatibility)
+            return True
         
-        
-        
+        if name not in allowed_params:
+            raise ValueError(f"Parameter '{name}' is not allowed for parameter group type '{self.type}'. "
+                           f"Allowed parameters: {list(allowed_params.keys())}")
+        return True
+
+    def get_allowed_parameters(self) -> list[str]:
+        """Get the list of allowed parameters for this parameter group type."""
+        allowed_params = parameter_group_allowed_parameters.get(self.type, {})
+        return list(allowed_params.keys())
+
+    @staticmethod
+    def get_allowed_parameters_for_type(group_type: str) -> list[str]:
+        """Get the list of allowed parameters for a given parameter group type."""
+        allowed_params = parameter_group_allowed_parameters.get(group_type, {})
+        return list(allowed_params.keys())
+
+    @staticmethod
+    def get_all_parameter_groups() -> list[str]:
+        """Get the list of all defined parameter group types."""
+        return list(parameter_group_allowed_parameters.keys())
 
     def add_parameter(self, name: str, value: str | float | int | list[float] | list[int]):
-        """Add a parameter to the group."""
+        """Add a parameter to the group with validation."""
+        self.validate_parameter(name)
         self.parameters[name] = value
 
     def add_subgroup(self, subgroup: 'ParameterGroup'):

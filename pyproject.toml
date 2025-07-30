@@ -5,6 +5,7 @@ description = "EIC Virtual Beam Enviroment"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "cpymad>=1.17.0",
     "matplotlib>=3.10.3",
     "numpy>=2.3.1",
     "pytest>=8.4.0",
@@ -21,4 +22,5 @@ build-backend = "hatchling.build"
 [dependency-groups]
 dev = [
     "ipykernel>=6.29.5",
+    "ipympl>=0.9.7",
 ]

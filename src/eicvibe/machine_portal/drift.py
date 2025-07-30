@@ -16,8 +16,9 @@ class Drift(Element):
         if self.type != 'Drift':
             raise ValueError("Type of a drift element must be 'Drift'.")
     
-    def check_consistency(self):
-        return True  # Drift elements are always consistent as they have no parameters or subgroups.
+    def _check_element_specific_consistency(self):
+        """Drift-specific consistency checks (none required beyond parameter group validation)."""
+        pass  # Drift elements are always consistent as they have no special requirements
     
     # Plotting functions for the drift element, nothing to be done of in-beamline 1-D here as it is just a space.
     # Need simple implement of plot_in_floorplan, limiting 2-D plotting:

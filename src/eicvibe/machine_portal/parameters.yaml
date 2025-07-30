@@ -1,0 +1,68 @@
+BendP:
+  angle: 0.0
+  E1: 0.0
+  E2: 0.0
+  tilt: 0.0
+  edge_int1: 0.0
+  edge_int2: 0.0
+  hgap: 0.0
+  h1: 0.0
+  h2: 0.0
+  chord_length: 0.0
+
+MagneticMultipoleP:
+  kn1: 0.0
+  kn2: 0.0
+  kn3: 0.0
+  kn4: 0.0
+  ks1: 0.0
+  ks2: 0.0
+  ks3: 0.0
+  ks4: 0.0
+  tilt: 0.0
+
+SolenoidP:
+  ks: 0.0
+
+RFP:
+  voltage: 0.0
+  freq: 0.0
+  phase: 0.0
+  harmonic: 0.0
+
+ApertureP:
+  X: [0.0, 0.0]  # [min, max] aperture in X
+  Y: [0.0, 0.0]  # [min, max] aperture in Y
+
+ControlP:
+  on: true
+  scale: 1.0
+
+MetaP:
+  comment: ""
+  author: ""
+  date: ""
+
+BodyShiftP:
+  dx: 0.0
+  dy: 0.0
+  dz: 0.0
+
+MarkerP:
+  # Marker elements typically don't have specific parameters
+
+MonitorP:
+  # Monitor elements typically don't have specific parameters beyond position
+
+KickerP:
+  hkick: 0.0
+  vkick: 0.0
+  tilt: 0.0
+
+BeamBeamP:
+  sigx: 0.0
+  sigy: 0.0
+  xma: 0.0
+  yma: 0.0
+  charge: 0.0
+
