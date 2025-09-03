@@ -103,17 +103,14 @@ def extract_base_name(element_name: str) -> str:
 def consolidate_drifts(element_pool: dict, branches: dict, tolerance: float = 1e-10) -> tuple[dict, dict]:
     """
     Consolidate drift elements by combining continuous drifts and identifying repeating patterns.
-    Prioritizes name-based matching over tolerance-based length comparison.
-    
-    IMPORTANT: Each merged drift sequence gets a unique name to prevent length conflicts
-    when the same element pair appears multiple times with different drift lengths.
+    Uses pattern-based consolidation to properly group identical drift sequences.
     
     Returns:
         tuple: (consolidated_element_pool, updated_branches)
     """
     print("Starting drift consolidation...")
     
-    # Step 1: Group drift elements by base name patterns
+    # Step 1: Group individual drift elements by base name and length
     drift_groups_by_name = {}
     drift_groups_by_length = {}
     
@@ -136,7 +133,7 @@ def consolidate_drifts(element_pool: dict, branches: dict, tolerance: float = 1e
     print(f"Found {len(drift_groups_by_name)} unique drift base names")
     print(f"Found {len(drift_groups_by_length)} unique drift lengths")
     
-    # Step 2: Create consolidated drift definitions
+    # Step 2: Create consolidated drift definitions from individual drifts
     consolidated_drifts = {}
     drift_mapping = {}  # Maps original name -> consolidated name
     
@@ -184,10 +181,10 @@ def consolidate_drifts(element_pool: dict, branches: dict, tolerance: float = 1e
                 orig_name = drift_list[0][0]
                 drift_mapping[orig_name] = orig_name
     
-    # Step 4: Process branches to merge consecutive identical drifts
+    # Step 4: Process branches to merge consecutive drifts using pattern-based naming
     updated_branches = {}
-    total_original_elements = 0
-    total_consolidated_elements = 0
+    merged_drift_patterns = {}  # Maps (pattern_signature, total_length) -> merged_drift_name
+    pattern_counter = 0
     
     for branch_name, element_names in branches.items():
         new_element_names = []
@@ -196,7 +193,6 @@ def consolidate_drifts(element_pool: dict, branches: dict, tolerance: float = 1e
         while i < len(element_names):
             current_name = element_names[i]
             current_element = element_pool[current_name]
-            total_original_elements += 1
             
             if type(current_element).__name__ == 'Drift':
                 # Start of drift sequence - collect consecutive drifts
@@ -214,19 +210,27 @@ def consolidate_drifts(element_pool: dict, branches: dict, tolerance: float = 1e
                         break
                 
                 if len(drift_sequence) > 1:
-                    # Multiple consecutive drifts - merge them
+                    # Multiple consecutive drifts - merge them using pattern-based approach
                     total_length = sum(element_pool[name].length for name in drift_sequence)
                     
-                    # Find the elements before and after the drift sequence for naming
+                    # Create pattern signature based on drift names and surrounding elements
+                    mapped_sequence = [drift_mapping.get(name, name) for name in drift_sequence]
                     element_before = "START" if i == 0 else element_names[i-1]
                     element_after = "END" if (i + len(drift_sequence)) >= len(element_names) else element_names[i + len(drift_sequence)]
                     
-                    # Create unique merged drift name including sequence info to avoid conflicts
-                    # Use branch name and position to ensure uniqueness
-                    merged_name = f"D_{element_before}_{element_after}_{branch_name}_{i}"
+                    # Create pattern signature: (before_element, drift_pattern, after_element, total_length)
+                    pattern_signature = (element_before, tuple(mapped_sequence), element_after, round(total_length / tolerance) * tolerance)
                     
-                    # Create merged drift element if it doesn't exist
-                    if merged_name not in consolidated_drifts:
+                    # Check if this exact pattern has been seen before
+                    if pattern_signature in merged_drift_patterns:
+                        # Reuse existing merged drift
+                        merged_name = merged_drift_patterns[pattern_signature]
+                    else:
+                        # Create new merged drift with pattern-based name
+                        pattern_counter += 1
+                        merged_name = f"DRIFT_MERGED_P{pattern_counter:03d}_L{total_length:.3f}".replace('.', '_')
+                        
+                        # Create merged drift element
                         from eicvibe.machine_portal.lattice import create_element_by_type
                         merged_element = create_element_by_type(
                             element_type='Drift',
@@ -234,20 +238,18 @@ def consolidate_drifts(element_pool: dict, branches: dict, tolerance: float = 1e
                             length=total_length
                         )
                         consolidated_drifts[merged_name] = merged_element
+                        merged_drift_patterns[pattern_signature] = merged_name
                     
                     new_element_names.append(merged_name)
-                    total_consolidated_elements += 1
                 else:
-                    # Single drift - use mapping
+                    # Single drift - use existing mapping
                     mapped_name = drift_mapping[current_name]
                     new_element_names.append(mapped_name)
-                    total_consolidated_elements += 1
                 
                 i = j  # Skip processed drifts
             else:
                 # Non-drift element - keep as is
                 new_element_names.append(current_name)
-                total_consolidated_elements += 1
                 i += 1
         
         updated_branches[branch_name] = new_element_names
@@ -260,21 +262,25 @@ def consolidate_drifts(element_pool: dict, branches: dict, tolerance: float = 1e
         if type(element).__name__ != 'Drift':
             consolidated_pool[name] = element
     
-    # Add consolidated drift elements
+    # Add consolidated drift elements (both individual and merged)
     consolidated_pool.update(consolidated_drifts)
     
-    # Add individual drifts that weren't consolidated
+    # Add individual drifts that weren't consolidated (mapped to themselves)
     for orig_name, mapped_name in drift_mapping.items():
         if mapped_name == orig_name:  # Not consolidated, keep original
             consolidated_pool[orig_name] = element_pool[orig_name]
     
-    # Calculate statistics
+    # Calculate and display statistics
     original_drift_count = sum(1 for elem in element_pool.values() if type(elem).__name__ == 'Drift')
     consolidated_drift_count = sum(1 for elem in consolidated_pool.values() if type(elem).__name__ == 'Drift')
+    individual_consolidated = len([name for name, mapped in drift_mapping.items() if name != mapped])
+    merged_patterns = len(merged_drift_patterns)
     
     print(f"Drift consolidation complete:")
     print(f"  Original drifts: {original_drift_count}")
-    print(f"  Consolidated drifts: {consolidated_drift_count}")
+    print(f"  Individual drifts consolidated: {individual_consolidated}")
+    print(f"  Unique merged drift patterns: {merged_patterns}")
+    print(f"  Final drift count: {consolidated_drift_count}")
     print(f"  Total elements: {len(element_pool)} -> {len(consolidated_pool)}")
     print(f"  Reduction: {len(element_pool) - len(consolidated_pool)} elements ({100 * (len(element_pool) - len(consolidated_pool)) / len(element_pool):.1f}%)")
     

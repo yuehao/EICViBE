@@ -1,12 +1,13 @@
 # EICViBE - EIC Virtual Beam Environment
 
-EICViBE is a Python package for accelerator physics simulations, specifically designed for the Electron-Ion Collider (EIC) and other particle accelerator facilities. It provides a comprehensive framework for modeling accelerator lattices, managing beam dynamics, and interfacing with simulation tools like MAD-X.
+EICViBE is a Python package developed for accelerator physics simulations, with a primary focus on the Electron-Ion Collider (EIC). While tailored to the EIC, many of its core functionalities are modular and can be adapted for use at other particle accelerator facilities. The package is designed to serve as a comprehensive framework for building virtual accelerators—digital replicas of real machines—to support the testing of commissioning tools, performance prediction, and the development of optimization methods.
 
 ## Features
 
 ### 🎯 Core Capabilities
-- **Lattice Modeling**: Comprehensive accelerator element library with inheritance-based design
-- **Element Selection**: Advanced filtering with multiple criteria and relative positioning
+- **Lattice Description**: Support flexible lattice layout of accelerator complex.
+- **Migrating from Design** 
+- **Multi Simulation Engine Support**: Advanced filtering with multiple criteria and relative positioning
 - **Ring & Linac Support**: Full support for both linear and circular accelerator topologies
 - **MAD-X Integration**: Import and optimize MAD-X lattices with drift consolidation
 - **Parameter Management**: Flexible parameter grouping and inheritance system
@@ -18,6 +19,8 @@ EICViBE is a Python package for accelerator physics simulations, specifically de
 - **Drift Consolidation**: Intelligent merging of consecutive drift spaces from MAD-X imports
 - **Branch Management**: Multi-branch lattice support with different topologies
 - **YAML Export/Import**: Human-readable lattice serialization
+- **Simulation Engines**: Continuous simulation services with XSuite integration
+- **Multiple Simulation Modes**: LINAC, RING, and RAMPING simulation modes
 
 ## Installation
 
@@ -25,7 +28,18 @@ EICViBE is a Python package for accelerator physics simulations, specifically de
 - Python ≥ 3.11
 - Optional: MAD-X installation for cpymad integration
 
-### Install from Source
+### Recommended: Install with uv (Preferred)
+```bash
+# Install uv if you haven't already
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Clone and install EICViBE
+git clone https://github.com/yuehao/EICViBE.git
+cd EICViBE
+uv sync
+```
+
+### Alternative: Install from Source with pip
 ```bash
 git clone https://github.com/yuehao/EICViBE.git
 cd EICViBE
@@ -39,7 +53,13 @@ pip install -e .
 - `pyyaml>=6.0.2` - YAML serialization
 - `pytest>=8.4.0` - Testing framework
 
+### Optional Simulation Dependencies
+- `xsuite` - For particle tracking and beam dynamics simulations
+- `julia` and `JuTrack.jl` - For high-performance tracking (future integration)
+
 ## Quick Start
+
+> **Note**: If you installed with `uv`, prefix Python commands with `uv run` (e.g., `uv run python script.py`)
 
 ### Basic Lattice Creation
 
@@ -129,6 +149,50 @@ lattice = lattice_from_madx_file(
 print(f"Imported {len(lattice.branches['RING'])} elements")
 ```
 
+### Simulation Engines
+
+EICViBE provides continuous simulation services with support for multiple simulation modes:
+
+```python
+from eicvibe.simulators import (
+    SimulatorManager, XSuiteSimulator, 
+    SimulationMode, RampingPlan
+)
+
+# Create and start simulation service
+simulator = XSuiteSimulator()
+simulator.start_service()
+
+# LINAC Mode: Continuous particle generation
+request_id = simulator.submit_linac_simulation(
+    lattice=lattice,
+    generation_rate=1000.0,  # particles/second
+    continuous_duration=10.0  # seconds
+)
+
+# RING Mode: Multi-turn particle tracking
+request_id = simulator.submit_ring_simulation(
+    lattice=ring_lattice,
+    num_particles=1000,
+    continuous_duration=100.0  # seconds
+)
+
+# RAMPING Mode: Time-dependent parameters
+ramping_plan = RampingPlan(name="injection", duration=5.0)
+request_id = simulator.submit_ramping_simulation(
+    lattice=lattice,
+    ramping_plan=ramping_plan
+)
+
+# Get results
+result = simulator.get_latest_result()
+if result.success:
+    print(f"Simulation completed: {result.data['survival_rate']:.1%} survival")
+
+# Stop service
+simulator.stop_service()
+```
+
 ## Package Structure
 
 ```
@@ -142,11 +206,14 @@ eicvibe/
 │   ├── bend.py            # Bending magnets
 │   ├── monitor.py         # Beam position monitors
 │   └── ...                # Other element types
+├── simulators/             # Simulation backends
+│   ├── base.py            # Base simulator service framework
+│   ├── xsuite_interface.py # XSuite integration with LINAC/RING/RAMPING modes
+│   └── __init__.py        # Simulation service exports
 ├── utilities/              # Utility functions
 │   ├── madx_import.py     # MAD-X import with optimization
 │   └── element_types.yaml # Element type definitions
 ├── control/               # Control system interface
-├── simulators/            # Simulation backends
 └── visualization/         # Plotting and visualization
 ```
 
@@ -173,7 +240,20 @@ eicvibe/
 
 ### Running Tests
 ```bash
+# With uv (recommended)
+uv run pytest tests/
+
+# Or with pip installation
 pytest tests/
+```
+
+### Running Examples
+```bash
+# Test simulation modes
+uv run test_simulation_modes.py
+
+# Test specific simulators
+uv run test_xsuite_only.py
 ```
 
 ### Code Style
