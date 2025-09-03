@@ -17,6 +17,10 @@ from .base import (
 
 from .xsuite_interface import XSuiteSimulationEngine, create_xsuite_engine
 
+# Compatibility aliases for existing tests
+XSuiteSimulator = XSuiteSimulationEngine  # Alias for backward compatibility
+SimulatorManager = XSuiteSimulationEngine  # Alias for backward compatibility
+
 try:
     # JuTrack interface not updated yet for new architecture
     # from .jutrack_interface import JuTrackSimulator, create_jutrack_simulator
@@ -37,7 +41,9 @@ __all__ = [
     'RampingPlan',
     'CircularBuffer',
     'XSuiteSimulationEngine',
-    'create_xsuite_engine'
+    'create_xsuite_engine',
+    'XSuiteSimulator',  # Compatibility alias
+    'SimulatorManager'  # Compatibility alias
 ]
 
 # Add JuTrack exports if available
