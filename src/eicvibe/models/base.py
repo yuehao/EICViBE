@@ -5,7 +5,7 @@ This module provides foundational Pydantic model classes with physics-specific
 configurations and utilities for type validation and serialization.
 """
 
-from pydantic import BaseModel, ConfigDict, Field, validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Optional, Union, List, Dict, Any
 import numpy as np
 
@@ -119,14 +119,16 @@ class ElementConfig(PhysicsBaseModel):
     length: float = Field(ge=0.0, description="Element length in meters")
     inherit: Optional[str] = Field(None, description="Prototype element name")
     
-    @validator('name')
+    @field_validator('name')
+    @classmethod
     def validate_name_format(cls, v):
         """Validate element name follows reasonable conventions."""
         if not v.replace('_', '').replace('-', '').isalnum():
             raise ValueError("Element name must contain only alphanumeric characters, underscores, and hyphens")
         return v
     
-    @validator('length')
+    @field_validator('length')
+    @classmethod
     def validate_physical_length(cls, v):
         """Validate length is physically reasonable."""
         if v > 10000:  # 10 km seems like a reasonable upper limit for accelerator elements
@@ -145,7 +147,8 @@ class PhysicsParameterGroup(PhysicsBaseModel):
     name: str = Field(..., min_length=1, description="Parameter group name")
     type: str = Field(..., min_length=1, description="Parameter group type")
     
-    @validator('type')
+    @field_validator('type')
+    @classmethod
     def validate_group_type_format(cls, v):
         """Ensure parameter group type follows naming conventions."""
         if not v.endswith('P'):
