@@ -1,0 +1,260 @@
+# EICViBE to Simulator Interface Configuration
+# This file defines the mapping between EICViBE elements and simulator-specific elements
+
+XSuite:
+  # Basic Drift Element
+  Drift:
+    type: Drift
+    parameters:
+      length: length
+
+  # Quadrupole Element  
+  Quadrupole:
+    type: Quadrupole
+    parameters:
+      length: length
+      MagneticMultipoleP.kn1: k1  # Normal quadrupole strength (m^-2)
+      MagneticMultipoleP.kn2: k2  # Sextupole component (m^-3) 
+      MagneticMultipoleP.kn3: k3  # Octupole component (m^-4)
+      MagneticMultipoleP.ksl1: k1s # Skew quadrupole strength (m^-2)
+      MagneticMultipoleP.ksl2: k2s # Skew sextupole component (m^-3)
+      MagneticMultipoleP.ksl3: k3s # Skew octupole component (m^-4)
+
+  # Sextupole Element
+  Sextupole:
+    type: Sextupole
+    parameters:
+      length: length
+      MagneticMultipoleP.kn2: k2  # Normal sextupole strength (m^-3)
+      MagneticMultipoleP.kn1: k1  # Quadrupole component (m^-2)
+      MagneticMultipoleP.kn3: k3  # Octupole component (m^-4)
+      MagneticMultipoleP.ksl2: k2s # Skew sextupole strength (m^-3)
+      MagneticMultipoleP.ksl1: k1s # Skew quadrupole component (m^-2)
+      MagneticMultipoleP.ksl3: k3s # Skew octupole component (m^-4)
+
+  # Octupole Element
+  Octupole:
+    type: Multipole  # XSuite doesn't have dedicated Octupole, use Multipole
+    parameters:
+      length: length
+      MagneticMultipoleP.kn3: k3  # Normal octupole strength (m^-4)
+      MagneticMultipoleP.kn1: k1  # Quadrupole component (m^-2)
+      MagneticMultipoleP.kn2: k2  # Sextupole component (m^-3)
+      MagneticMultipoleP.ksl3: k3s # Skew octupole strength (m^-4)
+      MagneticMultipoleP.ksl1: k1s # Skew quadrupole component (m^-2)
+      MagneticMultipoleP.ksl2: k2s # Skew sextupole component (m^-3)
+
+  # Bend Element (Sector bend)
+  Bend:
+    type: Bend
+    parameters:
+      length: length
+      BendP.angle: angle                    # Bending angle (rad)
+      BendP.e1: edge_entry_angle           # Entry edge angle (rad)
+      BendP.e2: edge_exit_angle            # Exit edge angle (rad)
+      BendP.edge_int1: edge_entry_fint     # Entry fringe field integral
+      BendP.edge_int2: edge_exit_fint      # Exit fringe field integral
+      BendP.hgap1: edge_entry_hgap         # Entry gap height (m)
+      BendP.hgap2: edge_exit_hgap          # Exit gap height (m)
+      MagneticMultipoleP.kn0: k0           # Dipole strength (m^-1)
+      MagneticMultipoleP.kn1: k1           # Quadrupole component (m^-2)
+      MagneticMultipoleP.kn2: k2           # Sextupole component (m^-3)
+      MagneticMultipoleP.ksl0: k0s         # Skew dipole strength (m^-1)
+      MagneticMultipoleP.ksl1: k1s         # Skew quadrupole component (m^-2)
+      MagneticMultipoleP.ksl2: k2s         # Skew sextupole component (m^-3)
+
+  # RBend Element (Rectangular bend)
+  RBend:
+    type: RBend
+    parameters:
+      length: length
+      BendP.angle: angle                    # Bending angle (rad)
+      BendP.e1: edge_entry_angle           # Entry edge angle (rad)
+      BendP.e2: edge_exit_angle            # Exit edge angle (rad)
+      BendP.edge_int1: edge_entry_fint     # Entry fringe field integral
+      BendP.edge_int2: edge_exit_fint      # Exit fringe field integral
+      BendP.hgap1: edge_entry_hgap         # Entry gap height (m)
+      BendP.hgap2: edge_exit_hgap          # Exit gap height (m)
+      BendP.chord_length: length_straight  # Straight length (m)
+      MagneticMultipoleP.kn0: k0           # Dipole strength (m^-1)
+      MagneticMultipoleP.kn1: k1           # Quadrupole component (m^-2)
+      MagneticMultipoleP.kn2: k2           # Sextupole component (m^-3)
+      MagneticMultipoleP.ksl0: k0s         # Skew dipole strength (m^-1)
+      MagneticMultipoleP.ksl1: k1s         # Skew quadrupole component (m^-2)
+      MagneticMultipoleP.ksl2: k2s         # Skew sextupole component (m^-3)
+
+  # RF Cavity Element
+  RFCavity:
+    type: Cavity
+    parameters:
+      length: length
+      RFP.voltage: voltage     # RF voltage (V)
+      RFP.freq: frequency # RF frequency (Hz)
+      RFP.phase: lag            # RF phase lag (degrees)
+      RFP.harmon: harmon      # Harmonic number
+      # Multipole components for cavity errors
+      MagneticMultipoleP.kn1: k1  # Quadrupole component (m^-2)
+      MagneticMultipoleP.kn2: k2  # Sextupole component (m^-3)
+      MagneticMultipoleP.ksl1: k1s # Skew quadrupole component (m^-2)
+      MagneticMultipoleP.ksl2: k2s # Skew sextupole component (m^-3)
+
+  # Crab Cavity Element
+  CrabCavity:
+    type: RFMultipole  # XSuite uses RFMultipole for crab cavities
+    parameters:
+      length: length
+      RFP.voltage: voltage     # RF voltage (V)
+      RFP.frequency: frequency # RF frequency (Hz)
+      RFP.lag: lag            # RF phase lag (degrees)
+      RFP.harmon: harmon      # Harmonic number
+      # Crab cavity specific parameters
+      RFP.pn: pn              # Normal component phases (deg)
+      RFP.ps: ps              # Skew component phases (deg)
+      # Multipole components
+      MagneticMultipoleP.kn1: knl  # Normal multipole strengths
+      MagneticMultipoleP.ksl1: ksl # Skew multipole strengths
+
+  # Monitor Element (Beam Position Monitor)
+  Monitor:
+    type: ParticlesMonitor  # XSuite uses ParticlesMonitor for beam monitoring
+    parameters:
+      length: length
+      # Monitor specific parameters (most are set programmatically)
+      start_at_turn: start_at_turn
+      stop_at_turn: stop_at_turn
+      n_repetitions: n_repetitions
+      repetition_period: repetition_period
+
+  # Marker Element  
+  Marker:
+    type: Marker
+    parameters:
+      # Markers have no physical parameters, only length (usually 0)
+      length: length
+
+  # Solenoid Element
+  Solenoid:
+    type: Solenoid
+    parameters:
+      length: length
+      SolenoidP.ks: ks        # Solenoid strength (rad/m)
+      SolenoidP.ksi: ksi      # Integrated solenoid strength (rad)
+      # Multipole components for solenoid errors
+      MagneticMultipoleP.kn1: k1  # Quadrupole component (m^-2)
+      MagneticMultipoleP.kn2: k2  # Sextupole component (m^-3)
+      MagneticMultipoleP.ksl1: k1s # Skew quadrupole component (m^-2)
+      MagneticMultipoleP.ksl2: k2s # Skew sextupole component (m^-3)
+
+  # Multipole Element (General multipole)
+  Multipole:
+    type: Multipole
+    parameters:
+      length: length
+      MagneticMultipoleP.kn0: kn0  # Dipole component (m^-1)
+      MagneticMultipoleP.kn1: kn1  # Quadrupole component (m^-2)
+      MagneticMultipoleP.kn2: kn2  # Sextupole component (m^-3)
+      MagneticMultipoleP.kn3: kn3  # Octupole component (m^-4)
+      MagneticMultipoleP.kn4: kn4  # Decapole component (m^-5)
+      MagneticMultipoleP.kn5: kn5  # Dodecapole component (m^-6)
+      MagneticMultipoleP.ksl0: ksl0 # Skew dipole component (m^-1)
+      MagneticMultipoleP.ksl1: ksl1 # Skew quadrupole component (m^-2)
+      MagneticMultipoleP.ksl2: ksl2 # Skew sextupole component (m^-3)
+      MagneticMultipoleP.ksl3: ksl3 # Skew octupole component (m^-4)
+      MagneticMultipoleP.ksl4: ksl4 # Skew decapole component (m^-5)
+      MagneticMultipoleP.ksl5: ksl5 # Skew dodecapole component (m^-6)
+
+  # Kicker Element (Fast/slow kickers)
+  Kicker:
+    type: Multipole  # XSuite models kickers as thin multipoles
+    parameters:
+      length: length
+      KickerP.hkick: hkick     # Horizontal kick angle (rad)
+      KickerP.vkick: vkick     # Vertical kick angle (rad)
+      # Map kicks to multipole components
+      MagneticMultipoleP.kn0: kn0  # Mapped from vkick
+      MagneticMultipoleP.ksl0: ksl0 # Mapped from hkick
+
+# Future simulators can be added here with similar structure
+# JuTrack:
+#   Drift:
+#     type: DRIFT
+#     parameters:
+#       length: L
+#   # ... other JuTrack mappings
+
+# MAD-X:
+#   Drift:
+#     type: DRIFT
+#     parameters:
+#       length: L
+#   # ... other MAD-X mappings
+
+# Common parameter groups used across simulators
+# These define the standard parameter naming conventions
+ParameterGroups:
+  MagneticMultipoleP:
+    description: "Normal and skew multipole components"
+    parameters:
+      kn0: "Normal dipole component (m^-1)"
+      kn1: "Normal quadrupole component (m^-2)"
+      kn2: "Normal sextupole component (m^-3)"
+      kn3: "Normal octupole component (m^-4)"
+      kn4: "Normal decapole component (m^-5)"
+      kn5: "Normal dodecapole component (m^-6)"
+      ksl0: "Skew dipole component (m^-1)"
+      ksl1: "Skew quadrupole component (m^-2)"
+      ksl2: "Skew sextupole component (m^-3)"
+      ksl3: "Skew octupole component (m^-4)"
+      ksl4: "Skew decapole component (m^-5)"
+      ksl5: "Skew dodecapole component (m^-6)"
+
+  BendP:
+    description: "Bending magnet parameters"
+    parameters:
+      angle: "Bending angle (rad)"
+      e1: "Entry edge angle (rad)"
+      e2: "Exit edge angle (rad)"
+      edge_int1: "Entry fringe field integral"
+      edge_int2: "Exit fringe field integral"
+      hgap1: "Entry gap height (m)"
+      hgap2: "Exit gap height (m)"
+      chord_length: "Straight length for rectangular bends (m)"
+
+  RFP:
+    description: "RF cavity parameters"
+    parameters:
+      voltage: "RF voltage (V)"
+      frequency: "RF frequency (Hz)"
+      lag: "RF phase lag (degrees)"
+      harmon: "Harmonic number"
+      pn: "Normal component phases (deg)"
+      ps: "Skew component phases (deg)"
+
+  SolenoidP:
+    description: "Solenoid parameters"
+    parameters:
+      ks: "Solenoid strength (rad/m)"
+      ksi: "Integrated solenoid strength (rad)"
+
+  KickerP:
+    description: "Kicker parameters"
+    parameters:
+      hkick: "Horizontal kick angle (rad)"
+      vkick: "Vertical kick angle (rad)"
+
+  ApertureP:
+    description: "Aperture parameters"
+    parameters:
+      aper_type: "Aperture type"
+      aper_1: "First aperture parameter"
+      aper_2: "Second aperture parameter"
+      aper_3: "Third aperture parameter"
+      aper_4: "Fourth aperture parameter"
+
+  MetaP:
+    description: "Metadata parameters"
+    parameters:
+      tilt: "Element tilt angle (rad)"
+      dx: "Horizontal misalignment (m)"
+      dy: "Vertical misalignment (m)"
+      ds: "Longitudinal misalignment (m)"
