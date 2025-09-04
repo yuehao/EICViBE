@@ -26,8 +26,10 @@
 
 
 
-from . parameter_group import ParameterGroup
-from dataclasses import dataclass, field
+from .parameter_group import ParameterGroup
+from ..models.base import PhysicsBaseModel
+from pydantic import Field, field_validator, model_validator
+from typing import List, Optional, Union
 import os
 import yaml
 
@@ -55,62 +57,129 @@ except Exception as e:
     raise RuntimeError(f"Failed to load allowed parameter groups from elements.yaml: {e}")
 
 
-@dataclass
-class Element:
-    """Base class for accelerator elements."""
-    name: str
-    type: str
-    length: float = 0.0
-    inherit: str | None = None  # Name of the prototype element this inherits from
-    parameters: list[ParameterGroup] = field(default_factory=list)
+class Element(PhysicsBaseModel):
+    """Base Pydantic model for accelerator elements with enhanced validation."""
     
-    def __post_init__(self):
-        """Initialize the element with a name, type, length and parameters."""
-        if self.parameters is None:
-            self.parameters = []
-
-    def check_parameter_group(self, group_type: str, allowed_groups: list[str]) -> bool:
-        """Check if the parameter group type is allowed for the element type."""
-        if group_type not in allowed_groups:
-            raise ValueError(f"Parameter group '{group_type}' is not allowed for element type '{self.type}'.")
-        return True
+    name: str = Field(..., min_length=1, description="Element name")
+    type: str = Field(..., min_length=1, description="Element type")
+    length: float = Field(ge=0.0, description="Element length in meters")
+    inherit: Optional[str] = Field(None, description="Prototype element name")
+    parameters: List[ParameterGroup] = Field(
+        default_factory=list,
+        description="Parameter groups for this element"
+    )
+    
+    # Plotting attributes (not validated but available for subclasses)
+    plot_color: Optional[str] = Field(default=None, description="Color for plotting")
+    plot_height: Optional[float] = Field(default=None, description="Height for beamline plots")
+    plot_cross_section: Optional[float] = Field(default=None, description="Cross section for floor plan plots")
+    
+    @field_validator('name')
+    @classmethod
+    def validate_element_name(cls, v):
+        """Validate element name follows conventions."""
+        from ..models.validators import validate_element_name
+        return validate_element_name(v)
+    
+    @field_validator('length')
+    @classmethod
+    def validate_element_length(cls, v):
+        """Validate element length is physically reasonable."""
+        if v > 10000:  # 10 km seems like a reasonable upper limit
+            raise ValueError(f"Element length {v} m seems unreasonably large (>10km)")
+        return v
+    
+    @field_validator('parameters')
+    @classmethod
+    def validate_parameter_groups_allowed(cls, v, info):
+        """Validate parameter groups are allowed for element type."""
+        if info.data and 'type' in info.data:
+            element_type = info.data['type']
+            allowed_groups = element_type_allowed_groups.get(element_type, [])
+            
+            for group in v:
+                if group.type not in allowed_groups:
+                    raise ValueError(
+                        f"Parameter group '{group.type}' not allowed for element type '{element_type}'. "
+                        f"Allowed groups: {allowed_groups}"
+                    )
+        return v
+    
+    @model_validator(mode='after')
+    def validate_element_consistency(self):
+        """Validate element consistency including parameter groups and element-specific checks."""
+        # Validate parameter groups and run element-specific consistency checks
+        self._validate_parameter_groups()
+        self._check_element_specific_consistency()
         
+        # Special handling for bend geometry validation
+        if self.type in ['Bend', 'RBend'] and hasattr(self, '_validate_bend_geometry'):
+            self._validate_bend_geometry()
+        
+        return self
+    
+    def model_post_init(self, __context) -> None:
+        """Post-initialization hook (replaces __post_init__)."""
+        # This replaces the dataclass __post_init__ method
+        # Subclasses can override this for custom initialization
+        pass
+
+
 
     def add_parameter_group(self, group: ParameterGroup):
         """Add a parameter group to the element."""
-        if not isinstance(group, ParameterGroup):
+        # More robust type checking for Pydantic compatibility
+        if not hasattr(group, 'type') or not hasattr(group, 'parameters'):
             raise TypeError("Parameter group must be an instance of ParameterGroup.")
-        if self.check_parameter_group(group.type, element_type_allowed_groups.get(self.type, [])):
-            self.parameters.append(group)
-        else:
-            raise ValueError(f"Parameter group '{group.type}' is not allowed for element type '{self.type}'.")
         
-    def get_parameter_group(self, group_type: str) -> ParameterGroup | None:
+        # Check if parameter group is allowed for this element type
+        allowed_groups = element_type_allowed_groups.get(self.type, [])
+        if group.type not in allowed_groups:
+            raise ValueError(
+                f"Parameter group '{group.type}' is not allowed for element type '{self.type}'. "
+                f"Allowed groups: {allowed_groups}"
+            )
+        
+        # Add the parameter group
+        self.parameters.append(group)
+        
+        # Trigger re-validation if this is a critical change
+        if self.type in ['Bend', 'RBend'] and group.type == 'BendP':
+            self._validate_bend_geometry_if_possible()
+    
+    def _validate_bend_geometry_if_possible(self):
+        """Validate bend geometry if we have sufficient parameters."""
+        try:
+            bend_group = self.get_parameter_group('BendP')
+            if bend_group is not None:
+                # Use the parameter group's validation method with element length
+                bend_group.validate_bend_geometry_with_length(self.length)
+        except Exception:
+            # Don't fail during construction - validation will happen during model validation
+            pass
+        
+    def get_parameter_group(self, group_type: str) -> Optional[ParameterGroup]:
         """Get a parameter group by type."""
         for group in self.parameters:
             if group.type == group_type:
                 return group
         return None
     
-    
-
-    # add a parameter to a specific group with specific group type; check if the group already exist, if not, create a new group
-    def add_parameter(self, group_type: str, parameter_name: str, value: str | float | int | list[float] | list[int]):
+    def add_parameter(self, group_type: str, parameter_name: str, value: Union[str, float, int, List[float], List[int]]):
         """Add a parameter to a specific group."""
         group = self.get_parameter_group(group_type)
         if group is None:
             group = ParameterGroup(name=group_type, type=group_type)
             self.add_parameter_group(group)
         group.add_parameter(parameter_name, value)
-
-    def get_parameter(self, group_type: str, parameter_name: str) -> str | float | int | list[float] | list[int] | None:
+    
+    def get_parameter(self, group_type: str, parameter_name: str) -> Union[str, float, int, List[float], List[int], None]:
         """Get a parameter value by group type and parameter name."""
         group = self.get_parameter_group(group_type)
         if group is not None:
             return group.get_parameter(parameter_name)
         return None
-
-        
+    
     def remove_parameter(self, group_type: str, name: str):
         """Remove a parameter from a specific group."""
         group = self.get_parameter_group(group_type)
@@ -120,12 +189,16 @@ class Element:
     def get_length(self) -> float:
         """Get the length of the element."""
         return self.length
+    
     def set_length(self, length: float):
         """Set the length of the element."""
-        if length <= 0:
-            raise ValueError("Length must be positive.")
+        if length < 0:
+            raise ValueError("Length must be non-negative.")
         self.length = length
-        
+        # Re-validate bend geometry if applicable
+        if self.type in ['Bend', 'RBend']:
+            self._validate_bend_geometry_if_possible()
+    
     def get_type(self) -> str:
         """Get the type of the element."""
         return self.type
@@ -140,19 +213,20 @@ class Element:
             raise ValueError("Name cannot be empty.")
         self.name = name
     
-    def get_inherit(self) -> str | None:
+    def get_inherit(self) -> Optional[str]:
         """Get the name of the prototype this element inherits from."""
         return self.inherit
     
-    def set_inherit(self, prototype_name: str | None):
+    def set_inherit(self, prototype_name: Optional[str]):
         """Set the prototype this element inherits from."""
         self.inherit = prototype_name
     
-    def __str__(self): 
+    def __str__(self) -> str:
         """String representation of the element."""
         inherit_str = f", inherit={self.inherit}" if self.inherit is not None else ""
-        return f"Element(name={self.name}, type={self.type}, length={self.length}{inherit_str}, parameters={self.parameters})"
-    def __repr__(self):
+        return f"{self.__class__.__name__}(name={self.name}, type={self.type}, length={self.length}{inherit_str}, parameters={self.parameters})"
+    
+    def __repr__(self) -> str:
         """String representation of the element."""
         return self.__str__()
     
@@ -184,27 +258,35 @@ class Element:
     
 
     
-    # Define a method to check consistency of the element, each element type should implement its own check.
     def check_consistency(self):
         """Check if the element is consistent. Validates parameter groups and calls element-specific checks."""
-        # Common parameter group validation for all elements
+        # This method is maintained for backward compatibility
+        # The actual validation happens in the Pydantic model validators
         self._validate_parameter_groups()
-        
-        # Call element-specific consistency checks
         self._check_element_specific_consistency()
-        
         return True
     
     def _validate_parameter_groups(self):
         """Validate that all parameter groups are allowed for this element type."""
         allowed_groups = element_type_allowed_groups.get(self.type, [])
-        
         for group in self.parameters:
-            self.check_parameter_group(group.type, allowed_groups)
+            if group.type not in allowed_groups:
+                raise ValueError(
+                    f"Parameter group '{group.type}' not allowed for element type '{self.type}'. "
+                    f"Allowed groups: {allowed_groups}"
+                )
     
     def _check_element_specific_consistency(self):
         """Element-specific consistency checks. Override in subclasses as needed."""
         pass
+    
+    def _validate_bend_geometry(self):
+        """Validate bend geometry for Bend and RBend elements."""
+        if self.type in ['Bend', 'RBend']:
+            bend_group = self.get_parameter_group('BendP')
+            if bend_group is not None:
+                # Use the enhanced bend geometry validation
+                bend_group.validate_bend_geometry_with_length(self.length)
 
     # Define a plot method to visualize the element in a beamline floor view. The input should be matplotlib Axes object, the entrance coordinates and the tangent vector.
     # The output should be the coordinates of the exit point and the tangent vector, Each element type should implement its own plot method.

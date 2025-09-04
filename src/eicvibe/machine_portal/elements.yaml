@@ -40,6 +40,9 @@ Marker: # Marker element with its specific parameter groups
   group:
     - MarkerP
 
+Drift: # Drift element with its specific parameter groups
+  group: []  # Drift only uses common parameter groups from "All"
+
 RFCavity: # RF Cavity element with its specific parameter groups
   group:
     - RFP
