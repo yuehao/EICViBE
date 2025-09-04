@@ -6,6 +6,7 @@ from eicvibe.machine_portal.lattice import Lattice, create_element_by_type
 from eicvibe.machine_portal.parameter_group import ParameterGroup
 import yaml
 import os
+import math
 
 
 def load_element_types_yaml():
@@ -54,7 +55,16 @@ def get_madx_element_type(madx_element):
 
 def map_madx_parameters(madx_element, eicvibe_element, madx_mapping: dict):
     """Map MAD-X element parameters to EICViBE parameter groups based on the mapping.
-    Avoids known MAD-X default values that weren't explicitly set."""
+    Avoids known MAD-X default values that weren't explicitly set.
+    Performs unit conversions for cavity parameters:
+    - VOLT (MV) -> voltage (V): multiply by 1e6
+    - FREQ (MHz) -> freq (Hz): multiply by 1e6
+    - LAG (units of 2π) -> phase (degrees): multiply by 360
+    
+    Special handling for RBend: 
+    - L parameter goes to BendP.chord_length
+    - Element length is calculated from chord_length and angle to maintain precision
+    """
     madx_type = get_madx_element_type(madx_element)
     mapping_info = madx_mapping.get(madx_type, {})
     parameter_mappings = mapping_info.get('parameters', {})
@@ -68,6 +78,19 @@ def map_madx_parameters(madx_element, eicvibe_element, madx_mapping: dict):
         'h2': 0.0,      # Default exit pole face curvature
     }
     
+    # Unit conversion mappings for cavity parameters
+    # Maps (madx_param, eicvibe_path) to conversion factor
+    UNIT_CONVERSIONS = {
+        ('volt', 'RFP.voltage'): 1e6,    # MV to V
+        ('freq', 'RFP.freq'): 1e6,      # MHz to Hz
+        ('lag', 'RFP.phase'): 360.0,    # units of 2π to degrees
+    }
+    
+    # Special handling for RBend: collect chord_length and angle first
+    rbend_chord_length = None
+    rbend_angle = None
+    is_rbend = eicvibe_element.type == 'RBend'
+    
     for madx_param, eicvibe_path in parameter_mappings.items():
         # Get the value from MAD-X element
         madx_value = getattr(madx_element, madx_param.lower(), None)
@@ -76,6 +99,20 @@ def map_madx_parameters(madx_element, eicvibe_element, madx_mapping: dict):
         if (madx_value is not None and 
             madx_value != 0 and 
             madx_value != MADX_DEFAULTS_TO_SKIP.get(madx_param.lower())):
+            
+            # Apply unit conversion if needed
+            conversion_key = (madx_param.lower(), eicvibe_path)
+            if conversion_key in UNIT_CONVERSIONS:
+                converted_value = madx_value * UNIT_CONVERSIONS[conversion_key]
+                print(f"Converting {madx_param}={madx_value} to {eicvibe_path}={converted_value}")
+                madx_value = converted_value
+            
+            # Special handling for RBend parameters
+            if is_rbend:
+                if eicvibe_path == 'BendP.chord_length':
+                    rbend_chord_length = madx_value
+                elif eicvibe_path == 'BendP.angle':
+                    rbend_angle = madx_value
             
             if eicvibe_path == 'length':
                 # Special case: length is a direct attribute, not in a parameter group
@@ -88,6 +125,19 @@ def map_madx_parameters(madx_element, eicvibe_element, madx_mapping: dict):
                 else:
                     # If no dot, assume it's a top-level parameter in a default group
                     eicvibe_element.add_parameter('MetaP', eicvibe_path, madx_value)
+    
+    # Special post-processing for RBend: calculate arc length from chord_length and angle
+    if is_rbend and rbend_chord_length is not None and rbend_angle is not None:
+        # Calculate arc length from chord_length and angle for precision
+        import math
+        if abs(rbend_angle) > 1e-12:  # Non-zero angle
+            radius = rbend_chord_length / (2 * math.sin(abs(rbend_angle) / 2))
+            arc_length = abs(rbend_angle) * radius
+            # Update element length with calculated arc length
+            eicvibe_element.set_length(arc_length)
+        else:
+            # Zero angle: arc length equals chord length
+            eicvibe_element.set_length(rbend_chord_length)
 
 
 def extract_base_name(element_name: str) -> str:

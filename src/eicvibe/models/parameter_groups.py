@@ -162,7 +162,7 @@ class RFP(PhysicsBaseModel):
     
     voltage: Optional[float] = Field(None, ge=0, description="RF voltage (V)")
     freq: Optional[float] = Field(None, gt=0, description="RF frequency (Hz)")
-    phase: Optional[float] = Field(0.0, description="RF phase (radians)")
+    phase: Optional[float] = Field(0.0, description="RF phase (degrees)")
     harmonic: Optional[float] = Field(0.0, ge=0, description="Harmonic number")
     
     @field_validator('freq')
@@ -177,8 +177,8 @@ class RFP(PhysicsBaseModel):
     @classmethod
     def validate_rf_phase(cls, v):
         """Validate RF phase is within reasonable range."""
-        if v is not None and abs(v) > 4 * math.pi:
-            raise ValueError(f"RF phase {v} rad seems unreasonably large (>4π)")
+        if v is not None and abs(v) > 720:  # More than 2 full rotations
+            raise ValueError(f"RF phase {v} degrees seems unreasonably large (>720°)")
         return v
     
     @field_validator('voltage')

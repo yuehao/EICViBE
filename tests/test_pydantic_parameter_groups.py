@@ -81,7 +81,7 @@ class TestPydanticParameterGroup:
         # Valid RF parameters
         group.add_parameter("voltage", 1e6)  # 1 MV
         group.add_parameter("freq", 1e9)     # 1 GHz
-        group.add_parameter("phase", 0.5)    # 0.5 rad
+        group.add_parameter("phase", 30.0)    # 30 degrees
         
         assert group.get_parameter("voltage") == 1e6
         assert group.get_parameter("freq") == 1e9
@@ -265,10 +265,10 @@ class TestSpecializedParameterModels:
     def test_rf_model(self):
         """Test RFP model validation."""
         # Valid RF cavity
-        rf = RFP(voltage=1e6, freq=1e9, phase=0.5)
+        rf = RFP(voltage=1e6, freq=1e9, phase=30.0)
         assert rf.voltage == 1e6
         assert rf.freq == 1e9
-        assert rf.phase == 0.5
+        assert rf.phase == 30.0
         
         # Invalid voltage (negative)
         with pytest.raises(ValidationError):

@@ -191,9 +191,18 @@ class ParameterGroup(PhysicsBaseModel):
             chord_length = self.get_parameter("chord_length")
             
             try:
+                # Cast parameters to proper types for validation
+                angle_val = None
+                if angle is not None and isinstance(angle, (int, float)):
+                    angle_val = float(angle)
+                
+                chord_val = None
+                if chord_length is not None and isinstance(chord_length, (int, float)):
+                    chord_val = float(chord_length)
+                
                 # Validate and potentially update parameters
                 validated_length, validated_angle, validated_chord = validate_bend_geometry(
-                    length=element_length, angle=angle, chord_length=chord_length
+                    length=element_length, angle=angle_val, chord_length=chord_val
                 )
                 
                 # Update calculated parameters if they were missing

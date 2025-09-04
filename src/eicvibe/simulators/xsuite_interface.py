@@ -282,9 +282,25 @@ class XSuiteSimulationEngine(BaseSimulationEngine):
                 return xt.Bend(length=length, k0=angle/length if length > 0 else 0.0, k1=k1), name
                 
             elif elem_type == 'rfcavity':
-                voltage = eicvibe_element.parameters.get('rf', {}).get('voltage', 0.0)
-                frequency = eicvibe_element.parameters.get('rf', {}).get('frequency', 500e6)
-                lag = eicvibe_element.parameters.get('rf', {}).get('lag', 0.0)
+                # Get RF parameters from RFP group
+                rf_group = None
+                for group in eicvibe_element.parameters:
+                    if group.type == 'RFP':
+                        rf_group = group
+                        break
+                
+                if rf_group:
+                    voltage = rf_group.get_parameter('voltage') or 0.0
+                    frequency = rf_group.get_parameter('freq') or 500e6
+                    # Get phase in degrees and convert to XSuite format if needed
+                    phase_deg = rf_group.get_parameter('phase') or 0.0
+                    # XSuite lag parameter expects degrees
+                    lag = phase_deg
+                else:
+                    voltage = 0.0
+                    frequency = 500e6
+                    lag = 0.0
+                
                 return xt.Cavity(voltage=voltage, frequency=frequency, lag=lag), name
                 
             elif elem_type in ['monitor', 'bpm']:
@@ -361,13 +377,13 @@ class XSuiteSimulationEngine(BaseSimulationEngine):
                     self.parameter_map[(expanded_name, 'multipole', 'k1l')] = (xt_elem, 'k1')
                 
             elif elem_type == 'rfcavity':
-                self.parameter_map[(original_name, 'rf', 'voltage')] = (xt_elem, 'voltage')
-                self.parameter_map[(original_name, 'rf', 'frequency')] = (xt_elem, 'frequency')
-                self.parameter_map[(original_name, 'rf', 'lag')] = (xt_elem, 'lag')
+                self.parameter_map[(original_name, 'RFP', 'voltage')] = (xt_elem, 'voltage')
+                self.parameter_map[(original_name, 'RFP', 'freq')] = (xt_elem, 'frequency')
+                self.parameter_map[(original_name, 'RFP', 'phase')] = (xt_elem, 'lag')
                 if expanded_name != original_name:
-                    self.parameter_map[(expanded_name, 'rf', 'voltage')] = (xt_elem, 'voltage')
-                    self.parameter_map[(expanded_name, 'rf', 'frequency')] = (xt_elem, 'frequency')
-                    self.parameter_map[(expanded_name, 'rf', 'lag')] = (xt_elem, 'lag')
+                    self.parameter_map[(expanded_name, 'RFP', 'voltage')] = (xt_elem, 'voltage')
+                    self.parameter_map[(expanded_name, 'RFP', 'freq')] = (xt_elem, 'frequency')
+                    self.parameter_map[(expanded_name, 'RFP', 'phase')] = (xt_elem, 'lag')
                 
             elif elem_type == 'kicker':
                 if hasattr(xt_elem, 'dx'):

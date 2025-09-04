@@ -35,41 +35,14 @@ class RFCavity(Element):
     def _check_element_specific_consistency(self) -> bool:
         """RFCavity-specific consistency checks.
         
-        Validates RF cavity parameters for physical reasonableness.
-        Uses flexible validation to allow incremental parameter construction.
+        Basic validation is handled by the RFP Pydantic model.
+        This method is kept for potential future element-specific validations.
         
         Returns:
-            bool: True if consistent, False otherwise
+            bool: Always True (validation handled by Pydantic)
         """
-        rf_group = self.get_parameter_group("RFP")
-        if rf_group is None:
-            # RF cavity can exist without parameters initially
-            return True
-            
-        # Check voltage parameter if present
-        voltage = rf_group.get_parameter("voltage")
-        if voltage is not None:
-            try:
-                voltage_val = float(voltage)
-                # Reasonable voltage limits (MV)
-                if abs(voltage_val) > 1000.0:  # Very high voltage
-                    import warnings
-                    warnings.warn(f"RF cavity voltage {voltage_val} MV is very high")
-            except (ValueError, TypeError):
-                return False
-                
-        # Check frequency parameter if present
-        frequency = rf_group.get_parameter("frequency")
-        if frequency is not None:
-            try:
-                freq_val = float(frequency)
-                # Reasonable frequency limits (MHz)
-                if freq_val <= 0 or freq_val > 10000.0:
-                    import warnings
-                    warnings.warn(f"RF frequency {freq_val} MHz may be unrealistic")
-            except (ValueError, TypeError):
-                return False
-                
+        # The RFP Pydantic model handles all parameter validation
+        # including voltage, frequency, and phase range checks
         return True
     
     def plot_in_beamline(self, ax, s_start, normalized_strength=None):
