@@ -168,3 +168,138 @@ def validate_lattice_branch_type(branch_type: str) -> str:
     if branch_type not in valid_types:
         raise ValueError(f"Branch type '{branch_type}' must be one of {valid_types}")
     return branch_type
+
+
+def validate_bend_geometry(length: Optional[float], angle: Optional[float], chord_length: Optional[float], 
+                          tolerance: float = 1e-6) -> tuple[Optional[float], Optional[float], Optional[float]]:
+    """
+    Validate and compute consistent bend geometry parameters.
+    
+    For bend magnets, the three parameters are related by:
+    - radius = length / angle (for arc length)
+    - chord_length = 2 * radius * sin(angle/2)
+    
+    Args:
+        length: Arc length of the bend (m)
+        angle: Bending angle (radians)
+        chord_length: Straight-line chord length (m)
+        tolerance: Numerical tolerance for consistency checks
+        
+    Returns:
+        Tuple of (length, angle, chord_length) with computed missing values
+        
+    Raises:
+        ValueError: If parameters are inconsistent or insufficient
+    """
+    # Count how many parameters are provided
+    provided = sum(x is not None for x in [length, angle, chord_length])
+    
+    if provided < 2:
+        raise ValueError("At least two of (length, angle, chord_length) must be provided for bend geometry")
+    
+    # Handle special case: zero angle
+    if angle is not None and abs(angle) < tolerance:
+        if length is not None and chord_length is not None:
+            if abs(length - chord_length) > tolerance:
+                raise ValueError(f"For zero bending angle, length ({length}) and chord_length ({chord_length}) must be equal")
+        elif length is not None:
+            chord_length = length
+        elif chord_length is not None:
+            length = chord_length
+        return length, angle, chord_length
+    
+    # Normal case: non-zero angle
+    if provided == 2:
+        # Calculate the missing parameter
+        if angle is None:
+            # Given length and chord_length, solve for angle
+            if length <= 0 or chord_length <= 0:
+                raise ValueError("Length and chord_length must be positive for angle calculation")
+            
+            # Solve: chord_length = 2 * (length/angle) * sin(angle/2)
+            # This requires numerical solution, but we can use approximation for small angles
+            # or exact solution for specific cases
+            
+            # For small angles: chord ≈ length, so angle ≈ 0
+            # For exact solution: need to solve transcendental equation
+            # We'll use Newton's method for general case
+            
+            def f(a):
+                if abs(a) < tolerance:
+                    return length - chord_length
+                return chord_length - 2 * (length/a) * math.sin(a/2)
+            
+            def df_da(a):
+                if abs(a) < tolerance:
+                    return 0
+                radius = length / a
+                return -2 * radius * math.cos(a/2) + chord_length / a
+            
+            # Initial guess
+            if abs(length - chord_length) < tolerance:
+                angle = 0.0
+            else:
+                # For reasonable initial guess, use small angle approximation
+                angle = 2 * (length - chord_length) / length
+            
+            # Newton's method
+            for _ in range(10):
+                if abs(angle) < tolerance:
+                    break
+                fa = f(angle)
+                if abs(fa) < tolerance:
+                    break
+                dfa = df_da(angle)
+                if abs(dfa) < tolerance:
+                    break
+                angle_new = angle - fa / dfa
+                if abs(angle_new - angle) < tolerance:
+                    angle = angle_new
+                    break
+                angle = angle_new
+            
+            # Validate the solution
+            if abs(f(angle)) > tolerance:
+                raise ValueError(f"Could not find consistent angle for length={length}, chord_length={chord_length}")
+                
+        elif length is None:
+            # Given angle and chord_length, calculate length
+            if abs(angle) < tolerance:
+                length = chord_length
+            else:
+                radius = chord_length / (2 * math.sin(abs(angle) / 2))
+                length = abs(angle) * radius
+                
+        elif chord_length is None:
+            # Given length and angle, calculate chord_length
+            if abs(angle) < tolerance:
+                chord_length = length
+            else:
+                radius = length / abs(angle)
+                chord_length = 2 * radius * math.sin(abs(angle) / 2)
+    
+    else:  # provided == 3
+        # All three parameters provided - check consistency
+        if abs(angle) < tolerance:
+            # Zero angle case
+            if abs(length - chord_length) > tolerance:
+                raise ValueError(f"For zero angle, length ({length}) and chord_length ({chord_length}) must be equal")
+        else:
+            # Non-zero angle case
+            radius = length / abs(angle)
+            expected_chord = 2 * radius * math.sin(abs(angle) / 2)
+            
+            if abs(chord_length - expected_chord) > tolerance:
+                raise ValueError(
+                    f"Bend geometry parameters are inconsistent: "
+                    f"length={length}, angle={angle}, chord_length={chord_length}. "
+                    f"Expected chord_length={expected_chord:.6f} for given length and angle"
+                )
+    
+    # Final validation
+    if length is not None and length < 0:
+        raise ValueError(f"Bend length must be non-negative, got {length}")
+    if chord_length is not None and chord_length < 0:
+        raise ValueError(f"Bend chord_length must be non-negative, got {chord_length}")
+    
+    return length, angle, chord_length

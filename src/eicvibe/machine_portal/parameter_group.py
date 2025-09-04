@@ -155,6 +155,37 @@ class ParameterGroup(PhysicsBaseModel):
                 return subgroup
         return None
     
+    def validate_bend_geometry_with_length(self, element_length: float) -> None:
+        """Validate bend geometry consistency when length is known from the element.
+        
+        This method provides comprehensive bend geometry validation for BendP parameter groups
+        when the element length is available.
+        
+        Args:
+            element_length: The length of the bend element from the containing Element
+            
+        Raises:
+            ValueError: If bend geometry parameters are inconsistent
+        """
+        if self.type == "BendP":
+            from ..models.validators import validate_bend_geometry
+            
+            angle = self.get_parameter("angle")
+            chord_length = self.get_parameter("chord_length")
+            
+            try:
+                # Validate and potentially update parameters
+                validated_length, validated_angle, validated_chord = validate_bend_geometry(
+                    length=element_length, angle=angle, chord_length=chord_length
+                )
+                
+                # Update chord_length if it was calculated
+                if chord_length is None and validated_chord is not None:
+                    self.add_parameter("chord_length", validated_chord)
+                    
+            except ValueError as e:
+                raise ValueError(f"Bend geometry validation failed for {self.name}: {e}")
+    
 
     
     def remove_parameter(self, name: str):

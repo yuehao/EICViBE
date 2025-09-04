@@ -212,6 +212,56 @@ class TestSpecializedParameterModels:
         with pytest.raises(ValidationError):
             BendP(angle=0.1, E1=1.0, E2=1.0)  # Edge angles too large
     
+    def test_bend_geometry_validation(self):
+        """Test bend geometry consistency validation."""
+        from eicvibe.models.validators import validate_bend_geometry
+        import math
+        
+        # Test case 1: Given length and angle, calculate chord_length
+        length, angle, chord_length = validate_bend_geometry(length=2.0, angle=0.1, chord_length=None)
+        assert length == 2.0
+        assert angle == 0.1
+        assert chord_length is not None
+        
+        # Verify the geometric relationship
+        radius = length / angle
+        expected_chord = 2 * radius * math.sin(angle / 2)
+        assert abs(chord_length - expected_chord) < 1e-6
+        
+        # Test case 2: Given angle and chord_length, calculate length
+        length2, angle2, chord_length2 = validate_bend_geometry(length=None, angle=0.1, chord_length=1.99)
+        assert angle2 == 0.1
+        assert chord_length2 == 1.99
+        assert length2 is not None
+        
+        # Test case 3: Zero angle case
+        length3, angle3, chord_length3 = validate_bend_geometry(length=2.0, angle=0.0, chord_length=None)
+        assert length3 == 2.0
+        assert angle3 == 0.0
+        assert chord_length3 == 2.0  # Should equal length for zero angle
+        
+        # Test case 4: All three parameters consistent
+        length = 2.0
+        angle = 0.1
+        radius = length / angle
+        chord = 2 * radius * math.sin(angle / 2)
+        
+        # Should not raise an error
+        result = validate_bend_geometry(length=length, angle=angle, chord_length=chord)
+        assert result == (length, angle, chord)
+        
+        # Test case 5: Inconsistent parameters should raise error
+        with pytest.raises(ValueError, match="inconsistent"):
+            validate_bend_geometry(length=2.0, angle=0.1, chord_length=5.0)  # Clearly wrong
+        
+        # Test case 6: Insufficient parameters
+        with pytest.raises(ValueError, match="At least two"):
+            validate_bend_geometry(length=2.0, angle=None, chord_length=None)
+        
+        # Test case 7: Zero angle with inconsistent length and chord
+        with pytest.raises(ValueError, match="must be equal"):
+            validate_bend_geometry(length=2.0, angle=0.0, chord_length=3.0)
+    
     def test_rf_model(self):
         """Test RFP model validation."""
         # Valid RF cavity
@@ -344,6 +394,41 @@ class TestIntegrationWithExistingElements:
         # So we expect 4 elements: original Q1, B1 and their branch copies Q1_1, B1_1
         assert len(lattice.elements) == 4
         assert lattice.get_total_path_length("main") == 1.5
+    
+    def test_bend_geometry_integration(self):
+        """Test bend geometry validation integration with actual elements."""
+        from eicvibe.machine_portal.lattice import create_element_by_type
+        from eicvibe.models.validators import validate_bend_geometry
+        import math
+        
+        # Create a bend element
+        bend = create_element_by_type("Bend", "B1", length=2.0)
+        bend.add_parameter("BendP", "angle", 0.1)
+        
+        # Test the geometry validation with element
+        bend_group = bend.get_parameter_group("BendP")
+        
+        # This should calculate and add chord_length
+        bend_group.validate_bend_geometry_with_length(bend.length)
+        
+        # Verify chord_length was calculated correctly
+        chord_length = bend_group.get_parameter("chord_length")
+        assert chord_length is not None
+        
+        # Verify the geometric relationship
+        angle = bend_group.get_parameter("angle")
+        radius = bend.length / angle
+        expected_chord = 2 * radius * math.sin(angle / 2)
+        assert abs(chord_length - expected_chord) < 1e-6
+        
+        # Test inconsistent geometry
+        bend2 = create_element_by_type("Bend", "B2", length=2.0)
+        bend2.add_parameter("BendP", "angle", 0.1)
+        bend2.add_parameter("BendP", "chord_length", 10.0)  # Clearly wrong
+        
+        bend2_group = bend2.get_parameter_group("BendP")
+        with pytest.raises(ValueError, match="inconsistent"):
+            bend2_group.validate_bend_geometry_with_length(bend2.length)
 
 
 if __name__ == "__main__":

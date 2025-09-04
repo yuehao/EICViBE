@@ -104,7 +104,22 @@ class BendP(PhysicsBaseModel):
     
     @model_validator(mode='after')
     def validate_geometric_consistency(self):
-        """Validate geometric relationships between parameters."""
+        """Validate geometric relationships between length, angle, and chord_length.
+        
+        For bend magnets, these parameters are related by:
+        - radius = length / angle (for arc length)
+        - chord_length = 2 * radius * sin(angle/2)
+        
+        If all three are provided, they must be consistent.
+        If only two are provided, the third can be calculated.
+        At least two parameters are required for a valid bend.
+        """
+        import math
+        
+        # Get length from the containing element if we have access to it
+        # Note: This validation works with the BendP parameters only
+        # The length parameter is stored in the Element class
+        
         # Only validate if angle is set
         if self.angle is not None:
             # Check for reasonable combinations of edge angles and bending angle
@@ -112,6 +127,28 @@ class BendP(PhysicsBaseModel):
                 total_edge = abs(self.E1) + abs(self.E2)
                 if total_edge > abs(self.angle) * 2:
                     raise ValueError(f"Sum of edge angles ({total_edge:.3f}) exceeds reasonable fraction of bending angle ({self.angle:.3f})")
+            
+            # Geometric consistency validation for angle and chord_length
+            # Note: We can't access the element's length parameter directly from here
+            # This validation will be enhanced when we have access to the full element context
+            if self.chord_length is not None:
+                # Basic sanity check: chord length should be reasonable relative to angle
+                # For small angles: chord_length ≈ length
+                # For large angles: chord_length < length
+                if abs(self.angle) > 1e-6:  # Avoid division by zero
+                    # Estimate minimum possible length for this angle and chord
+                    # Using: length = angle * chord_length / (2 * sin(angle/2))
+                    estimated_min_length = abs(self.angle * self.chord_length / (2 * math.sin(abs(self.angle) / 2)))
+                    
+                    # Sanity check: chord length shouldn't be unreasonably large
+                    if self.chord_length > 1000.0:  # 1km seems unreasonable
+                        raise ValueError(f"Chord length {self.chord_length} m seems unreasonably large (>1000m)")
+                        
+                    # For very small angles, chord ≈ length, so they should be similar
+                    if abs(self.angle) < 0.01 and self.chord_length > 0:  # Small angle approximation
+                        max_reasonable_length = self.chord_length * 1.1  # 10% tolerance
+                        if estimated_min_length > max_reasonable_length:
+                            raise ValueError(f"For small angle {self.angle:.6f} rad, chord length {self.chord_length} m seems inconsistent with estimated length {estimated_min_length:.3f} m")
         
         return self
 
