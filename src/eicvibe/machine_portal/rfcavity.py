@@ -1,26 +1,76 @@
 from .element import Element
-from dataclasses import dataclass, field
+from eicvibe.models.base import PhysicsBaseModel
+from pydantic import Field, field_validator
+from typing import Optional
 import matplotlib.pyplot as plt
 from matplotlib.patches import Ellipse
 import numpy as np
 
-@dataclass
 class RFCavity(Element):
-    """RF Cavity element."""
-    type: str = 'RFCavity'
-    plot_color: str = 'C4'
-    plot_height: float = 0.8
+    """RF Cavity element with Pydantic validation.
     
-    def __post_init__(self):
-        super().__post_init__()
-        if self.length < 0:
+    An RF cavity accelerates particles by applying time-varying electromagnetic fields.
+    Used for acceleration and longitudinal focusing in both linacs and rings.
+    """
+    type: str = Field(default='RFCavity', description="Element type")
+    plot_color: str = Field(default='C4', description="Color for plotting")
+    plot_height: float = Field(default=0.8, ge=0.0, le=2.0, description="Height in beamline plot")
+    
+    @field_validator('length')
+    @classmethod
+    def validate_length(cls, v):
+        """Validate RF cavity length is non-negative."""
+        if v < 0:
             raise ValueError("Length of an RFCavity element must be non-negative.")
-        if self.type != 'RFCavity':
-            raise ValueError("Type of an RFCavity element must be 'RFCavity'.")
+        return v
     
-    def _check_element_specific_consistency(self):
-        """RFCavity-specific consistency checks (none required beyond parameter group validation)."""
-        pass
+    @field_validator('type')
+    @classmethod
+    def validate_type(cls, v):
+        """Validate element type is correct."""
+        if v != 'RFCavity':
+            raise ValueError("Type of an RFCavity element must be 'RFCavity'.")
+        return v
+    
+    def _check_element_specific_consistency(self) -> bool:
+        """RFCavity-specific consistency checks.
+        
+        Validates RF cavity parameters for physical reasonableness.
+        Uses flexible validation to allow incremental parameter construction.
+        
+        Returns:
+            bool: True if consistent, False otherwise
+        """
+        rf_group = self.get_parameter_group("RFP")
+        if rf_group is None:
+            # RF cavity can exist without parameters initially
+            return True
+            
+        # Check voltage parameter if present
+        voltage = rf_group.get_parameter("voltage")
+        if voltage is not None:
+            try:
+                voltage_val = float(voltage)
+                # Reasonable voltage limits (MV)
+                if abs(voltage_val) > 1000.0:  # Very high voltage
+                    import warnings
+                    warnings.warn(f"RF cavity voltage {voltage_val} MV is very high")
+            except (ValueError, TypeError):
+                return False
+                
+        # Check frequency parameter if present
+        frequency = rf_group.get_parameter("frequency")
+        if frequency is not None:
+            try:
+                freq_val = float(frequency)
+                # Reasonable frequency limits (MHz)
+                if freq_val <= 0 or freq_val > 10000.0:
+                    import warnings
+                    warnings.warn(f"RF frequency {freq_val} MHz may be unrealistic")
+            except (ValueError, TypeError):
+                return False
+                
+        return True
     
     def plot_in_beamline(self, ax, s_start, normalized_strength=None):
         '''Plot the RFCavity element in the beamline, using an ellipse.'''

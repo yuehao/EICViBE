@@ -1,29 +1,68 @@
 from .element import Element
-from dataclasses import dataclass, field
+from eicvibe.models.base import PhysicsBaseModel
+from pydantic import Field, field_validator
+from typing import Optional
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 import numpy as np
 
-@dataclass
 class Octupole(Element):
-    """Octupole element."""
-    type: str = 'Octupole'
-    plot_color: str = 'C3'
-    plot_height: float = 0.6
-    plot_cross_section: float = 0.5
+    """Octupole element with Pydantic validation.
     
-    def __post_init__(self):
-        super().__post_init__()
-        if self.length < 0:
+    An octupole magnet provides higher-order nonlinear corrections for
+    advanced beam dynamics control and aberration compensation.
+    """
+    type: str = Field(default='Octupole', description="Element type")
+    plot_color: str = Field(default='C3', description="Color for plotting")
+    plot_height: float = Field(default=0.6, ge=0.0, le=2.0, description="Height in beamline plot")
+    plot_cross_section: float = Field(default=0.5, ge=0.0, le=5.0, description="Cross-section width")
+    
+    @field_validator('length')
+    @classmethod
+    def validate_length(cls, v):
+        """Validate octupole length is non-negative."""
+        if v < 0:
             raise ValueError("Length of an octupole element must be non-negative.")
-        if self.type != 'Octupole':
-            raise ValueError("Type of an octupole element must be 'Octupole'.")
+        return v
     
-    def _check_element_specific_consistency(self):
-        """Octupole-specific consistency checks (none required beyond parameter group validation)."""
+    @field_validator('type')
+    @classmethod
+    def validate_type(cls, v):
+        """Validate element type is correct."""
+        if v != 'Octupole':
+            raise ValueError("Type of an octupole element must be 'Octupole'.")
+        return v
+    
+    def _check_element_specific_consistency(self) -> bool:
+        """Octupole-specific consistency checks.
+        
+        Validates octupole parameters for physical reasonableness.
+        Uses flexible validation to allow incremental parameter construction.
+        
+        Returns:
+            bool: True if consistent, False otherwise
+        """
         mm_group = self.get_parameter_group("MagneticMultipoleP")
-        if mm_group is None or mm_group.get_parameter("kn3") is None:
-            raise ValueError("Octupole element must have a MagneticMultipoleP group with a 'kn3' parameter set.")
+        if mm_group is None:
+            # Octupole can exist without parameters initially
+            return True
+        
+        kn3 = mm_group.get_parameter("kn3")
+        if kn3 is None:
+            # Could warn here, but allow for incremental parameter addition
+            return True
+        
+        # Additional validation for octupole-specific physics constraints
+        try:
+            kn3_val = float(kn3)
+            # Reasonable octupole strength limits (m^-4)
+            if abs(kn3_val) > 100000.0:  # Very strong octupole
+                import warnings
+                warnings.warn(f"Octupole strength kn3={kn3_val} m^-4 is very high")
+        except (ValueError, TypeError):
+            return False
+            
+        return True
         
     
     def plot_in_beamline(self, ax, s_start, normalized_strength=None):

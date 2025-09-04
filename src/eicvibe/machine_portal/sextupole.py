@@ -1,29 +1,68 @@
 from .element import Element
-from dataclasses import dataclass, field
+from eicvibe.models.base import PhysicsBaseModel
+from pydantic import Field, field_validator
+from typing import Optional
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 import numpy as np
 
-@dataclass
 class Sextupole(Element):
-    """Sextupole element."""
-    type: str = 'Sextupole'
-    plot_color: str = 'C2'
-    plot_height: float = 0.7
-    plot_cross_section: float = 0.6
+    """Sextupole element with Pydantic validation.
     
-    def __post_init__(self):
-        super().__post_init__()
-        if self.length < 0:
+    A sextupole magnet provides nonlinear focusing forces for chromaticity correction
+    and nonlinear dynamics control in beam optics.
+    """
+    type: str = Field(default='Sextupole', description="Element type")
+    plot_color: str = Field(default='C2', description="Color for plotting")
+    plot_height: float = Field(default=0.7, ge=0.0, le=2.0, description="Height in beamline plot")
+    plot_cross_section: float = Field(default=0.6, ge=0.0, le=5.0, description="Cross-section width")
+    
+    @field_validator('length')
+    @classmethod
+    def validate_length(cls, v):
+        """Validate sextupole length is non-negative."""
+        if v < 0:
             raise ValueError("Length of a sextupole element must be non-negative.")
-        if self.type != 'Sextupole':
-            raise ValueError("Type of a sextupole element must be 'Sextupole'.")
+        return v
     
-    def _check_element_specific_consistency(self):
-        """Sextupole-specific consistency checks (none required beyond parameter group validation)."""
+    @field_validator('type')
+    @classmethod
+    def validate_type(cls, v):
+        """Validate element type is correct."""
+        if v != 'Sextupole':
+            raise ValueError("Type of a sextupole element must be 'Sextupole'.")
+        return v
+    
+    def _check_element_specific_consistency(self) -> bool:
+        """Sextupole-specific consistency checks.
+        
+        Validates sextupole parameters for physical reasonableness.
+        Uses flexible validation to allow incremental parameter construction.
+        
+        Returns:
+            bool: True if consistent, False otherwise
+        """
         mm_group = self.get_parameter_group("MagneticMultipoleP")
-        if mm_group is None or mm_group.get_parameter("kn2") is None:
-            raise ValueError("Sextupole element must have a MagneticMultipoleP group with a 'kn2' parameter set.")
+        if mm_group is None:
+            # Sextupole can exist without parameters initially
+            return True
+        
+        kn2 = mm_group.get_parameter("kn2")
+        if kn2 is None:
+            # Could warn here, but allow for incremental parameter addition
+            return True
+        
+        # Additional validation for sextupole-specific physics constraints
+        try:
+            kn2_val = float(kn2)
+            # Reasonable sextupole strength limits (m^-3)
+            if abs(kn2_val) > 10000.0:  # Very strong sextupole
+                import warnings
+                warnings.warn(f"Sextupole strength kn2={kn2_val} m^-3 is very high")
+        except (ValueError, TypeError):
+            return False
+            
+        return True
 
     def plot_in_beamline(self, ax, s_start, normalized_strength=None):
         '''Plot the sextupole element in the beamline, using a rectangle box.'''

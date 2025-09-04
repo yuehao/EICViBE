@@ -117,8 +117,24 @@ class ParameterGroup(PhysicsBaseModel):
         return list(parameter_group_allowed_parameters.keys())
 
     def add_parameter(self, name: str, value: Union[str, float, int, List[float], List[int]]):
-        """Add a parameter to the group with validation."""
+        """Add a parameter to the group with validation.
+        
+        For BendP groups, handles bend geometry dependencies by clearing
+        dependent calculated parameters when fundamental parameters are overridden.
+        """
         self.validate_parameter(name)
+        
+        # Handle bend geometry dependencies for BendP groups
+        if self.type == "BendP" and name in ["angle", "chord_length"]:
+            # If we're setting angle or chord_length, remove any previously calculated chord_length
+            # to allow recalculation based on the new parameter
+            if name == "angle" and "chord_length" in self.parameters:
+                # Remove calculated chord_length when angle is being overridden
+                del self.parameters["chord_length"]
+            elif name == "chord_length" and "angle" in self.parameters:
+                # When setting chord_length explicitly, keep it but mark for consistency check
+                pass
+        
         self.parameters[name] = value
         
         # Trigger re-validation with specialized model if available
@@ -159,7 +175,8 @@ class ParameterGroup(PhysicsBaseModel):
         """Validate bend geometry consistency when length is known from the element.
         
         This method provides comprehensive bend geometry validation for BendP parameter groups
-        when the element length is available.
+        when the element length is available. It will automatically calculate missing parameters
+        and validate consistency when all parameters are present.
         
         Args:
             element_length: The length of the bend element from the containing Element
@@ -179,9 +196,11 @@ class ParameterGroup(PhysicsBaseModel):
                     length=element_length, angle=angle, chord_length=chord_length
                 )
                 
-                # Update chord_length if it was calculated
+                # Update calculated parameters if they were missing
+                if angle is None and validated_angle is not None:
+                    self.parameters["angle"] = validated_angle
                 if chord_length is None and validated_chord is not None:
-                    self.add_parameter("chord_length", validated_chord)
+                    self.parameters["chord_length"] = validated_chord
                     
             except ValueError as e:
                 raise ValueError(f"Bend geometry validation failed for {self.name}: {e}")

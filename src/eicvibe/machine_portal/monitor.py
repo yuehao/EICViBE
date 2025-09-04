@@ -1,25 +1,38 @@
 from .element import Element
-from dataclasses import dataclass, field
+from eicvibe.models.base import PhysicsBaseModel
+from pydantic import Field, field_validator
+from typing import Optional
 import matplotlib.pyplot as plt
 import numpy as np
 
-@dataclass
 class Monitor(Element):
-    """Monitor element."""
-    type: str = 'Monitor'
-    plot_color: str = 'k'
-    plot_height: float = 0.25
-    length: float = 0.0
+    """Monitor element with Pydantic validation.
     
-    def __post_init__(self):
-        super().__post_init__()
-        # Don't force monitor length to 0 - preserve the imported length from MAD-X
-        if self.type != 'Monitor':
+    A beam position monitor (BPM) or other diagnostic element used to measure
+    beam properties. Typically has very small but non-zero length.
+    """
+    type: str = Field(default='Monitor', description="Element type")
+    plot_color: str = Field(default='k', description="Color for plotting")
+    plot_height: float = Field(default=0.25, ge=0.0, le=2.0, description="Height in beamline plot")
+    length: float = Field(default=0.0, ge=0.0, description="Monitor length (usually small)")
+    
+    @field_validator('type')
+    @classmethod
+    def validate_type(cls, v):
+        """Validate element type is correct."""
+        if v != 'Monitor':
             raise ValueError("Type of a Monitor element must be 'Monitor'.")
+        return v
     
-    def _check_element_specific_consistency(self):
-        """Monitor-specific consistency checks (none required)."""
-        pass
+    def _check_element_specific_consistency(self) -> bool:
+        """Monitor-specific consistency checks.
+        
+        Monitors are generally always consistent as they are passive diagnostic elements.
+        
+        Returns:
+            bool: Always True for monitors
+        """
+        return True
     
     def plot_in_beamline(self, ax, s_start, normalized_strength=None):
         '''Plot the Monitor element as a short black vertical line.'''
