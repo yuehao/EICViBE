@@ -1,26 +1,66 @@
 from .element import Element
-from dataclasses import dataclass, field
+from eicvibe.models.base import PhysicsBaseModel
+from pydantic import Field, field_validator
+from typing import Optional
 import matplotlib.pyplot as plt
 from matplotlib.patches import Polygon
 import numpy as np
 
-@dataclass
 class Kicker(Element):
-    """Kicker element."""
-    type: str = 'Kicker'
-    plot_color: str = 'C0'
-    plot_height: float = 0.4
+    """Kicker element with Pydantic validation.
     
-    def __post_init__(self):
-        super().__post_init__()
-        if self.length < 0:
+    A fast kicker magnet used for beam injection, extraction, or orbit correction.
+    Provides transverse deflection with precise timing control.
+    """
+    type: str = Field(default='Kicker', description="Element type")
+    plot_color: str = Field(default='C0', description="Color for plotting")
+    plot_height: float = Field(default=0.4, ge=0.0, le=2.0, description="Height in beamline plot")
+    
+    @field_validator('length')
+    @classmethod
+    def validate_length(cls, v):
+        """Validate kicker length is non-negative."""
+        if v < 0:
             raise ValueError("Length of a Kicker element must be non-negative.")
-        if self.type != 'Kicker':
-            raise ValueError("Type of a Kicker element must be 'Kicker'.")
+        return v
     
-    def _check_element_specific_consistency(self):
-        """Kicker-specific consistency checks (none required beyond parameter group validation)."""
-        pass
+    @field_validator('type')
+    @classmethod
+    def validate_type(cls, v):
+        """Validate element type is correct."""
+        if v != 'Kicker':
+            raise ValueError("Type of a Kicker element must be 'Kicker'.")
+        return v
+    
+    def _check_element_specific_consistency(self) -> bool:
+        """Kicker-specific consistency checks.
+        
+        Validates kicker parameters for physical reasonableness if present.
+        
+        Returns:
+            bool: True if consistent, False otherwise
+        """
+        kicker_group = self.get_parameter_group("KickerP")
+        if kicker_group is None:
+            # Kicker can exist without parameters initially
+            return True
+            
+        # Check kick angle parameter if present
+        hkick = kicker_group.get_parameter("hkick")
+        vkick = kicker_group.get_parameter("vkick")
+        
+        for kick_param, kick_name in [(hkick, "hkick"), (vkick, "vkick")]:
+            if kick_param is not None:
+                try:
+                    kick_val = float(kick_param)
+                    # Reasonable kick angle limits (radians)
+                    if abs(kick_val) > 1.0:  # Very large kick
+                        import warnings
+                        warnings.warn(f"Kicker {kick_name}={kick_val} rad is very large")
+                except (ValueError, TypeError):
+                    return False
+                    
+        return True
     
     def plot_in_beamline(self, ax, s_start, normalized_strength=None):
         '''Plot the Kicker element in the beamline, using a rhombus spanning the full length.'''

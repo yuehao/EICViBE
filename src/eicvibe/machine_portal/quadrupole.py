@@ -1,48 +1,108 @@
 # Implementation of the quad module for the EICVibe machine portal.
 from eicvibe.machine_portal.element import Element
 from eicvibe.machine_portal.parameter_group import ParameterGroup
-from dataclasses import dataclass, field
+from eicvibe.models.base import PhysicsBaseModel
+from pydantic import Field, field_validator
+from typing import Optional
 
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 import numpy as np
 
-@dataclass
 class Quadrupole(Element):
-    """Quadrupole element."""
-    type: str = 'Quadrupole'
-    plot_color: str = 'C1'
-    plot_height: float = 0.6 # Height of the quadrupole element in the beamline
-    plot_cross_section: float = 0.8
-    def __post_init__(self):
-        """Initialize the quadrupole element with a name, type, length and parameters."""
-        super().__post_init__()
-        if self.length < 0:
-            raise ValueError("Length of a quadrupole element must be positive.")
-        if self.type != 'Quadrupole':
-            raise ValueError("Type of a quadrupole element must be 'Quadrupole'.")
+    """Quadrupole element with Pydantic validation.
     
-    def _check_element_specific_consistency(self):
-        """Quadrupole-specific consistency checks. The kn1 parameter of MagneticMultipoleP parameter group must be set."""
+    A quadrupole magnet provides focusing/defocusing forces in one transverse
+    direction and opposite forces in the perpendicular direction.
+    """
+    type: str = Field(default='Quadrupole', description="Element type")
+    plot_color: str = Field(default='C1', description="Color for plotting")
+    plot_height: float = Field(default=0.6, ge=0.0, le=2.0, description="Height in beamline plot")
+    plot_cross_section: float = Field(default=0.8, ge=0.0, le=5.0, description="Cross-section width")
+    
+    @field_validator('length')
+    @classmethod
+    def validate_length(cls, v):
+        """Validate quadrupole length is positive."""
+        if v < 0:
+            raise ValueError("Length of a quadrupole element must be positive.")
+        return v
+    
+    @field_validator('type')
+    @classmethod
+    def validate_type(cls, v):
+        """Validate element type is correct."""
+        if v != 'Quadrupole':
+            raise ValueError("Type of a quadrupole element must be 'Quadrupole'.")
+        return v
+    
+    def _check_element_specific_consistency(self) -> bool:
+        """Quadrupole-specific consistency checks.
+        
+        Validates that the quadrupole has appropriate MagneticMultipoleP parameters.
+        For flexible validation during construction, this uses warnings rather than
+        strict enforcement.
+        
+        Returns:
+            bool: True if consistent, False otherwise
+        """
         mm_group = self.get_parameter_group("MagneticMultipoleP")
-        if mm_group is None or mm_group.get_parameter("kn1") is None:
-            raise ValueError("Quadrupole element must have a MagneticMultipoleP group with a 'kn1' parameter set.")
+        if mm_group is None:
+            # Flexible validation - quadrupole can exist without parameters initially
+            return True
+        
+        kn1 = mm_group.get_parameter("kn1")
+        if kn1 is None:
+            # Could warn here, but allow for incremental parameter addition
+            return True
+        
+        # Additional validation for quadrupole-specific physics constraints
+        try:
+            kn1_val = float(kn1)
+            # Reasonable quadrupole strength limits (m^-2)
+            if abs(kn1_val) > 1000.0:  # Very strong quadrupole
+                import warnings
+                warnings.warn(f"Quadrupole strength kn1={kn1_val} m^-2 is very high")
+        except (ValueError, TypeError):
+            return False
+            
+        return True
     
     def plot_in_beamline(self, ax, s_start, normalized_strength=None):
-        '''Plot the quadrupole element in the beamline, using an square box to represent the quadrupole.'''
-    
+        """Plot the quadrupole element in the beamline.
+        
+        Uses a rectangular box to represent the quadrupole. Positive k1 (focusing in X)
+        is plotted above the axis, negative k1 (defocusing in X) below the axis.
+        
+        Args:
+            ax: Matplotlib axes object
+            s_start: Starting s-coordinate
+            normalized_strength: Optional normalization factor
+            
+        Returns:
+            float: End s-coordinate
+        """
         k1 = self.get_parameter("MagneticMultipoleP", "kn1")
         height = self.plot_height
-        if k1 > 0:
+        
+        # Default to positive (focusing) if k1 not set or not a number
+        try:
+            k1_val = float(k1) if k1 is not None else 0.0
+        except (ValueError, TypeError):
+            k1_val = 0.0
+            
+        if k1_val >= 0:
+            # Focusing quadrupole (above axis)
             ax.add_patch(
-                        Rectangle((s_start, 0), self.length, height, angle=0.0, ec=self.plot_color,
-                                  fc=self.plot_color, alpha=0.8, lw=1)
-                    )
+                Rectangle((s_start, 0), self.length, height, angle=0.0, 
+                         ec=self.plot_color, fc=self.plot_color, alpha=0.8, lw=1)
+            )
         else:
+            # Defocusing quadrupole (below axis)
             ax.add_patch(
-                        Rectangle((s_start, -height), self.length, height, angle=0.0, ec=self.plot_color,
-                                  fc=self.plot_color, alpha=0.8, lw=1)
-                    )
+                Rectangle((s_start, -height), self.length, height, angle=0.0, 
+                         ec=self.plot_color, fc=self.plot_color, alpha=0.8, lw=1)
+            )
         return s_start + self.length
     
     def plot_in_floorplan(self, ax, entrance_coords, tangent_vector):

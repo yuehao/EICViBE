@@ -16,7 +16,9 @@ from eicvibe.machine_portal.crabcavity import CrabCavity
 from eicvibe.machine_portal.kicker import Kicker
 from eicvibe.machine_portal.monitor import Monitor
 from eicvibe.machine_portal.rbend import RBend
-from dataclasses import dataclass, field
+from ..models.base import PhysicsBaseModel
+from pydantic import Field, field_validator, model_validator
+from typing import List, Dict, Optional, Union
 import copy
 
 
@@ -65,50 +67,132 @@ def create_element_by_type(element_type: str, name: str, length: float = 0.0, in
         return Element(name=name, type=element_type, length=length, inherit=inherit)
 
 
-@dataclass
-class Branch:
-    """Class representing a branch in the lattice structure.
-    A branch has a name and contains a list of elements."""
-    name: str
-    elements: list[Element] = field(default_factory=list)
-
-    def __post_init__(self):
-        """Initialize the branch with a name and elements."""
-        if not self.name:
-            raise ValueError("Branch must have a name.")
-        if not isinstance(self.elements, list):
-            raise TypeError("Elements must be a list of Element instances.")
-        for element in self.elements:
-            if not isinstance(element, Element):
-                raise TypeError("All elements in the branch must be instances of Element.")
-            
+class Branch(PhysicsBaseModel):
+    """Pydantic model for lattice branches with enhanced validation.
+    
+    A branch represents a sequence of elements in the accelerator lattice,
+    providing validation for element consistency and branch topology.
+    """
+    
+    name: str = Field(..., min_length=1, description="Branch name")
+    elements: List[Element] = Field(
+        default_factory=list,
+        description="List of elements in this branch"
+    )
+    
+    @field_validator('name')
+    @classmethod
+    def validate_branch_name(cls, v):
+        """Validate branch name follows conventions."""
+        from ..models.validators import validate_element_name
+        return validate_element_name(v)
+    
+    @field_validator('elements')
+    @classmethod
+    def validate_elements_list(cls, v):
+        """Validate all items in elements list are Element instances."""
+        for element in v:
+            if not hasattr(element, 'name') or not hasattr(element, 'type'):
+                raise ValueError("All items in elements list must be Element instances")
+        return v
+    
+    def model_post_init(self, __context) -> None:
+        """Post-initialization validation (replaces __post_init__)."""
+        super().model_post_init(__context)
+        # Additional Branch-specific initialization if needed
+        pass
+    
     def add_element(self, element: Element):
-        """Add an element to the branch."""
-        if not isinstance(element, Element):
+        """Add an element to the branch with validation."""
+        if not hasattr(element, 'name') or not hasattr(element, 'type'):
             raise TypeError("Element must be an instance of Element.")
         self.elements.append(element)
+    
+    def get_total_length(self) -> float:
+        """Calculate the total length of all elements in this branch."""
+        return sum(element.length for element in self.elements)
+    
+    def get_element_count(self) -> int:
+        """Get the number of elements in this branch."""
+        return len(self.elements)
+    
+    def get_elements_by_type(self, element_type: str) -> List[Element]:
+        """Get all elements of a specific type from this branch."""
+        return [element for element in self.elements if element.type == element_type]
 
 
-@dataclass
-class Lattice:
-    """Class representing a lattice structure in the machine portal.
-    A lattice consists of multiple branches, each branch has its own name and contains a list of element names.
-    One branch is marked as the root branch, and contains a pool of element definitions."""
-    name: str 
-    branches: dict[str, list[str]] = field(default_factory=dict)  # Dictionary of branches, where key is branch name and value is a list of element names in that branch
-    root_branch_name: str = ""  # Name of the root branch
-    elements: dict[str, Element] = field(default_factory=dict)  # Pool of element definitions
-    element_occurrences: dict[str, int] = field(default_factory=dict)  # Track occurrence count for each element name
-    branch_specs: dict[str, str] = field(default_factory=dict)  # Branch specifications: 'ring' or 'linac'
-
-    def __post_init__(self):
-        """Initialize the lattice with a name and branches."""
-        if not self.name:
-            raise ValueError("Lattice must have a name.")
-        if not isinstance(self.branches, dict):
-            raise TypeError("Branches must be a dictionary with branch names as keys and lists of elements as values.")
+class Lattice(PhysicsBaseModel):
+    """Pydantic model for accelerator lattice structures with topology validation.
+    
+    A lattice consists of multiple branches, each branch has its own name and contains
+    a list of element names. One branch is marked as the root branch, and the lattice
+    maintains a pool of element definitions.
+    """
+    
+    name: str = Field(..., min_length=1, description="Lattice name")
+    branches: Dict[str, List[str]] = Field(
+        default_factory=dict,
+        description="Dictionary of branches, where key is branch name and value is a list of element names"
+    )
+    root_branch_name: str = Field(
+        default="",
+        description="Name of the root branch"
+    )
+    elements: Dict[str, Element] = Field(
+        default_factory=dict,
+        description="Pool of element definitions"
+    )
+    element_occurrences: Dict[str, int] = Field(
+        default_factory=dict,
+        description="Track occurrence count for each element name"
+    )
+    branch_specs: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Branch specifications: 'ring' or 'linac'"
+    )
+    
+    @field_validator('name')
+    @classmethod
+    def validate_lattice_name(cls, v):
+        """Validate lattice name follows conventions."""
+        from ..models.validators import validate_element_name
+        return validate_element_name(v)
+    
+    @field_validator('branch_specs')
+    @classmethod
+    def validate_branch_specs(cls, v):
+        """Validate branch specifications are valid types."""
+        from ..models.validators import validate_lattice_branch_type
+        for branch_name, branch_type in v.items():
+            validate_lattice_branch_type(branch_type)
+        return v
+    
+    @model_validator(mode='after')
+    def validate_lattice_consistency(self):
+        """Validate lattice topology and consistency."""
+        # Validate root branch exists if specified
         if self.root_branch_name and self.root_branch_name not in self.branches:
             raise ValueError(f"Root branch '{self.root_branch_name}' must be present in the branches.")
+        
+        # Validate all elements in branches exist in element pool
+        for branch_name, element_names in self.branches.items():
+            for element_name in element_names:
+                if element_name not in self.elements:
+                    raise ValueError(f"Element '{element_name}' in branch '{branch_name}' not found in element pool.")
+        
+        # Validate branch specs exist for all branches
+        for branch_name in self.branches.keys():
+            if branch_name not in self.branch_specs:
+                # Default to 'linac' if not specified
+                self.branch_specs[branch_name] = 'linac'
+        
+        return self
+    
+    def model_post_init(self, __context) -> None:
+        """Post-initialization validation (replaces __post_init__)."""
+        super().model_post_init(__context)
+        # Additional Lattice-specific initialization if needed
+        pass
 
     def add_element(self, element: Element, check_consistency: bool = True):
         """Add an element definition to the lattice.
@@ -123,7 +207,7 @@ class Lattice:
             TypeError: If element is not an Element instance.
             ValueError: If element name already exists or consistency check fails.
         """
-        if not isinstance(element, Element):
+        if not hasattr(element, 'name') or not hasattr(element, 'type'):
             raise TypeError("Element must be an instance of Element.")
         if element.name in self.elements:
             raise ValueError(f"Element '{element.name}' already exists in the lattice.")
@@ -153,8 +237,8 @@ class Lattice:
 
 
     
-    def add_branch(self, branch_name: str, elements: list[Element] | list[str] | None = None, branch_type: str = "linac"):
-        """Add a new branch to the lattice.
+    def add_branch(self, branch_name: str, elements: Union[List[Element], List[str], None] = None, branch_type: str = "linac"):
+        """Add a new branch to the lattice with enhanced validation.
         Accepts either a list of Element objects or a list of element names.
         
         Args:
@@ -162,6 +246,8 @@ class Lattice:
             elements: List of Element objects or element names.
             branch_type: Type of branch, either 'ring' or 'linac' (default: 'linac').
         """
+        from ..models.validators import validate_lattice_branch_type
+        
         if not branch_name:
             raise ValueError("Branch name cannot be empty.")
         if elements is None:
@@ -170,15 +256,16 @@ class Lattice:
             raise TypeError("Elements must be a list of Element objects or element names.")
         if branch_name in self.branches:
             raise ValueError(f"Branch '{branch_name}' already exists in the lattice.")
-        if branch_type not in ['ring', 'linac']:
-            raise ValueError("Branch type must be either 'ring' or 'linac'.")
+        
+        # Validate branch type
+        validate_lattice_branch_type(branch_type)
         
         self.branches[branch_name] = []
         self.branch_specs[branch_name] = branch_type
         
         # Handle the elements based on their type
         for item in elements:
-            if isinstance(item, Element):
+            if hasattr(item, 'name') and hasattr(item, 'type'):  # Element-like object
                 # If it's an Element object, add it to the element pool first
                 if item.name not in self.elements:
                     self.add_element(item)

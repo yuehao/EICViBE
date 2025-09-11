@@ -1,32 +1,39 @@
 # Implementation of the bend element for the EICVibe machine portal.
 from eicvibe.machine_portal.element import Element
 from eicvibe.machine_portal.parameter_group import ParameterGroup
-from dataclasses import dataclass, field
+from pydantic import Field
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 
-@dataclass
 class Bend(Element):
-    """Bend element."""
-    type: str = 'Bend'
-    plot_color: str = 'C0'
-    plot_height: float = 0.7 # Height of the bend element in the beamline
-    plot_cross_section: float =0.5  
+    """Bend element with enhanced validation."""
     
-    def __post_init__(self):
-        """Initialize the bend element with a name, type, length and parameters."""
-        super().__post_init__()
-        if self.length < 0:
-            raise ValueError("Length of a bend element must be non-negative.")
-        if self.type != 'Bend':
-            raise ValueError("Type of a bend element must be 'Bend'.")
-        
+    type: str = Field(default='Bend', description="Element type (always 'Bend')")
+    length: float = Field(ge=0.0, description="Bend length must be non-negative")
+    plot_color: str = Field(default='C0', description="Color for plotting")
+    plot_height: float = Field(default=0.7, description="Height of the bend element in the beamline")
+    plot_cross_section: float = Field(default=0.5, description="Cross section for floor plan")
+    
+    def model_post_init(self, __context) -> None:
+        """Post-initialization validation (replaces __post_init__)."""
+        super().model_post_init(__context)
+        # Additional Bend-specific initialization if needed
+        pass
+    
     def _check_element_specific_consistency(self):
         """Bend-specific consistency checks. The angle parameter of BendP parameter group must be set."""
+        # Only check if we have parameters - during construction this might not be set yet
         bend_group = self.get_parameter_group("BendP")
-        if bend_group is None or bend_group.get_parameter("angle") is None:
-            raise ValueError("Bend element must have a BendP group with an angle parameter set.")
+        if bend_group is not None and bend_group.get_parameter("angle") is None:
+            raise ValueError("Bend element with BendP group must have an angle parameter set.")
+    
+    def _validate_bend_geometry(self):
+        """Validate bend geometry for enhanced Pydantic integration."""
+        bend_group = self.get_parameter_group('BendP')
+        if bend_group is not None:
+            # Use the enhanced bend geometry validation from parameter group
+            bend_group.validate_bend_geometry_with_length(self.length)
     
     def plot_in_beamline(self, ax, s_start, normalized_strength=None):
         '''Plot the bend element in the beamline, using an square box to represent the bend.'''

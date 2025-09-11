@@ -1,20 +1,19 @@
 # Implementation of the drift detection module for the EICVibe machine portal.
 from eicvibe.machine_portal.element import Element
 from eicvibe.machine_portal.parameter_group import ParameterGroup
-from dataclasses import dataclass, field
+from pydantic import Field
 
-@dataclass
 class Drift(Element):
-    """Drift space element."""
-    type: str = 'Drift'
+    """Drift space element with Pydantic validation."""
     
-    def __post_init__(self):
-        """Initialize the drift element with a name, type, length and parameters."""
-        super().__post_init__()
-        if self.length <= 0:
-            raise ValueError("Length of a drift element must be positive.")
-        if self.type != 'Drift':
-            raise ValueError("Type of a drift element must be 'Drift'.")
+    type: str = Field(default='Drift', description="Element type (always 'Drift')")
+    length: float = Field(gt=0.0, description="Drift length must be positive")
+    
+    def model_post_init(self, __context) -> None:
+        """Post-initialization validation (replaces __post_init__)."""
+        super().model_post_init(__context)
+        # Additional Drift-specific initialization if needed
+        pass
     
     def _check_element_specific_consistency(self):
         """Drift-specific consistency checks (none required beyond parameter group validation)."""

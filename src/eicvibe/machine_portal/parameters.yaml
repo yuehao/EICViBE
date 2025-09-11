@@ -11,6 +11,8 @@ BendP:
   chord_length: 0.0
 
 MagneticMultipoleP:
+  kn0: 0.0
+  ks0: 0.0
   kn1: 0.0
   kn2: 0.0
   kn3: 0.0

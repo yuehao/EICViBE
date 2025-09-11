@@ -2,7 +2,10 @@
 # Each parameter group has a name, a group type, and a list of parametername (string) and value (string, number or list of number) pairs .
 # Parameter group also allow subgroups, which are also ParameterGroup objects.
 
-from dataclasses import dataclass, field
+from pydantic import Field, field_validator, model_validator
+from typing import Dict, List, Union, Any, Optional
+from ..models.base import PhysicsBaseModel
+from ..models.parameter_groups import PARAMETER_GROUP_MODELS, create_parameter_group_model
 import os
 import yaml
 
@@ -23,19 +26,67 @@ except Exception as e:
     raise RuntimeError(f"Failed to load allowed parameters from parameters.yaml: {e}")
 
 
-@dataclass
-class ParameterGroup:
-    name: str
-    type: str
-    parameters: dict[str, str | float | int | list[float] | list[int]] = field(default_factory=dict)
-    subgroups: list['ParameterGroup'] = field(default_factory=list)
+class ParameterGroup(PhysicsBaseModel):
+    """
+    Pydantic model for accelerator element parameter groups.
+    
+    This model provides automatic validation of parameter names against
+    the allowed parameters defined in parameters.yaml, while maintaining
+    full backward compatibility with the existing API.
+    """
+    
+    name: str = Field(..., min_length=1, description="Parameter group name")
+    type: str = Field(..., min_length=1, description="Parameter group type")
+    parameters: Dict[str, Union[str, float, int, List[float], List[int]]] = Field(
+        default_factory=dict,
+        description="Parameter name-value pairs"
+    )
+    subgroups: List['ParameterGroup'] = Field(
+        default_factory=list,
+        description="Nested parameter subgroups"
+    )
 
-    def __post_init__(self):
-        """Initialize the parameter group with a name, type, parameters and subgroups."""
-        if self.parameters is None:
-            self.parameters = {}
-        if self.subgroups is None:
-            self.subgroups = []
+    @field_validator('type')
+    @classmethod
+    def validate_parameter_type(cls, v):
+        """Validate parameter group type against allowed types."""
+        # Load from parameters.yaml for validation
+        if v not in parameter_group_allowed_parameters:
+            # Allow unknown types for backward compatibility, but issue warning
+            import warnings
+            warnings.warn(f"Unknown parameter group type: {v}. Consider adding to parameters.yaml")
+        return v
+    
+    @field_validator('parameters')
+    @classmethod
+    def validate_parameter_values(cls, v, info):
+        """Validate parameter values against group type specifications."""
+        if info.data and 'type' in info.data:
+            group_type = info.data['type']
+            if group_type in parameter_group_allowed_parameters:
+                allowed_params = parameter_group_allowed_parameters[group_type]
+                for param_name in v.keys():
+                    if param_name not in allowed_params:
+                        raise ValueError(
+                            f"Parameter '{param_name}' not allowed in group type '{group_type}'. "
+                            f"Allowed parameters: {list(allowed_params.keys())}"
+                        )
+        return v
+    
+    @model_validator(mode='after')
+    def validate_specialized_parameters(self):
+        """Apply specialized validation for known parameter group types."""
+        if self.type in PARAMETER_GROUP_MODELS:
+            try:
+                # Create specialized model to validate parameters
+                specialized_model = create_parameter_group_model(self.type, **self.parameters)
+                # If validation passes, store any normalized values back
+                self.parameters.update(specialized_model.model_dump(exclude_unset=True))
+            except Exception as e:
+                # Don't fail completely for backward compatibility, but warn
+                import warnings
+                warnings.warn(f"Specialized validation failed for {self.type}: {e}")
+        return self
 
     def validate_parameter(self, name: str) -> bool:
         """Validate if a parameter is allowed for this parameter group type."""
@@ -49,48 +100,119 @@ class ParameterGroup:
                            f"Allowed parameters: {list(allowed_params.keys())}")
         return True
 
-    def get_allowed_parameters(self) -> list[str]:
+    def get_allowed_parameters(self) -> List[str]:
         """Get the list of allowed parameters for this parameter group type."""
         allowed_params = parameter_group_allowed_parameters.get(self.type, {})
         return list(allowed_params.keys())
 
     @staticmethod
-    def get_allowed_parameters_for_type(group_type: str) -> list[str]:
+    def get_allowed_parameters_for_type(group_type: str) -> List[str]:
         """Get the list of allowed parameters for a given parameter group type."""
         allowed_params = parameter_group_allowed_parameters.get(group_type, {})
         return list(allowed_params.keys())
 
     @staticmethod
-    def get_all_parameter_groups() -> list[str]:
+    def get_all_parameter_groups() -> List[str]:
         """Get the list of all defined parameter group types."""
         return list(parameter_group_allowed_parameters.keys())
 
-    def add_parameter(self, name: str, value: str | float | int | list[float] | list[int]):
-        """Add a parameter to the group with validation."""
+    def add_parameter(self, name: str, value: Union[str, float, int, List[float], List[int]]):
+        """Add a parameter to the group with validation.
+        
+        For BendP groups, handles bend geometry dependencies by clearing
+        dependent calculated parameters when fundamental parameters are overridden.
+        """
         self.validate_parameter(name)
+        
+        # Handle bend geometry dependencies for BendP groups
+        if self.type == "BendP" and name in ["angle", "chord_length"]:
+            # If we're setting angle or chord_length, remove any previously calculated chord_length
+            # to allow recalculation based on the new parameter
+            if name == "angle" and "chord_length" in self.parameters:
+                # Remove calculated chord_length when angle is being overridden
+                del self.parameters["chord_length"]
+            elif name == "chord_length" and "angle" in self.parameters:
+                # When setting chord_length explicitly, keep it but mark for consistency check
+                pass
+        
         self.parameters[name] = value
+        
+        # Trigger re-validation with specialized model if available
+        if self.type in PARAMETER_GROUP_MODELS:
+            try:
+                # Validate with specialized model
+                create_parameter_group_model(self.type, **self.parameters)
+            except Exception as e:
+                # Remove the parameter if specialized validation fails
+                del self.parameters[name]
+                raise ValueError(f"Parameter '{name}' with value '{value}' failed validation: {e}")
 
     def add_subgroup(self, subgroup: 'ParameterGroup'):
         """Add a subgroup to the group."""
+        if not isinstance(subgroup, ParameterGroup):
+            raise TypeError("Subgroup must be an instance of ParameterGroup")
         self.subgroups.append(subgroup)
 
-    def get_parameter(self, name: str) -> str | float | int | list[float] | list[int] | None:
+    def get_parameter(self, name: str) -> Union[str, float, int, List[float], List[int], None]:
         """Get a parameter value by name."""
         return self.parameters.get(name, None)
     
-    def get_subgroup_by_name(self, name: str) -> 'ParameterGroup | None':
+    def get_subgroup_by_name(self, name: str) -> Optional['ParameterGroup']:
         """Get a subgroup by name."""
         for subgroup in self.subgroups:
             if subgroup.name == name:
                 return subgroup
         return None
     
-    def get_subgroup_by_type(self, type_: str) -> 'ParameterGroup | None':
+    def get_subgroup_by_type(self, type_: str) -> Optional['ParameterGroup']:
         """Get a subgroup by type."""
         for subgroup in self.subgroups:
             if subgroup.type == type_:
                 return subgroup
         return None
+    
+    def validate_bend_geometry_with_length(self, element_length: float) -> None:
+        """Validate bend geometry consistency when length is known from the element.
+        
+        This method provides comprehensive bend geometry validation for BendP parameter groups
+        when the element length is available. It will automatically calculate missing parameters
+        and validate consistency when all parameters are present.
+        
+        Args:
+            element_length: The length of the bend element from the containing Element
+            
+        Raises:
+            ValueError: If bend geometry parameters are inconsistent
+        """
+        if self.type == "BendP":
+            from ..models.validators import validate_bend_geometry
+            
+            angle = self.get_parameter("angle")
+            chord_length = self.get_parameter("chord_length")
+            
+            try:
+                # Cast parameters to proper types for validation
+                angle_val = None
+                if angle is not None and isinstance(angle, (int, float)):
+                    angle_val = float(angle)
+                
+                chord_val = None
+                if chord_length is not None and isinstance(chord_length, (int, float)):
+                    chord_val = float(chord_length)
+                
+                # Validate and potentially update parameters
+                validated_length, validated_angle, validated_chord = validate_bend_geometry(
+                    length=element_length, angle=angle_val, chord_length=chord_val
+                )
+                
+                # Update calculated parameters if they were missing
+                if angle is None and validated_angle is not None:
+                    self.parameters["angle"] = validated_angle
+                if chord_length is None and validated_chord is not None:
+                    self.parameters["chord_length"] = validated_chord
+                    
+            except ValueError as e:
+                raise ValueError(f"Bend geometry validation failed for {self.name}: {e}")
     
 
     

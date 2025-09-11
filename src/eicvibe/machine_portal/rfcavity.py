@@ -1,26 +1,49 @@
 from .element import Element
-from dataclasses import dataclass, field
+from eicvibe.models.base import PhysicsBaseModel
+from pydantic import Field, field_validator
+from typing import Optional
 import matplotlib.pyplot as plt
 from matplotlib.patches import Ellipse
 import numpy as np
 
-@dataclass
 class RFCavity(Element):
-    """RF Cavity element."""
-    type: str = 'RFCavity'
-    plot_color: str = 'C4'
-    plot_height: float = 0.8
+    """RF Cavity element with Pydantic validation.
     
-    def __post_init__(self):
-        super().__post_init__()
-        if self.length < 0:
+    An RF cavity accelerates particles by applying time-varying electromagnetic fields.
+    Used for acceleration and longitudinal focusing in both linacs and rings.
+    """
+    type: str = Field(default='RFCavity', description="Element type")
+    plot_color: str = Field(default='C4', description="Color for plotting")
+    plot_height: float = Field(default=0.8, ge=0.0, le=2.0, description="Height in beamline plot")
+    
+    @field_validator('length')
+    @classmethod
+    def validate_length(cls, v):
+        """Validate RF cavity length is non-negative."""
+        if v < 0:
             raise ValueError("Length of an RFCavity element must be non-negative.")
-        if self.type != 'RFCavity':
-            raise ValueError("Type of an RFCavity element must be 'RFCavity'.")
+        return v
     
-    def _check_element_specific_consistency(self):
-        """RFCavity-specific consistency checks (none required beyond parameter group validation)."""
-        pass
+    @field_validator('type')
+    @classmethod
+    def validate_type(cls, v):
+        """Validate element type is correct."""
+        if v != 'RFCavity':
+            raise ValueError("Type of an RFCavity element must be 'RFCavity'.")
+        return v
+    
+    def _check_element_specific_consistency(self) -> bool:
+        """RFCavity-specific consistency checks.
+        
+        Basic validation is handled by the RFP Pydantic model.
+        This method is kept for potential future element-specific validations.
+        
+        Returns:
+            bool: Always True (validation handled by Pydantic)
+        """
+        # The RFP Pydantic model handles all parameter validation
+        # including voltage, frequency, and phase range checks
+        return True
     
     def plot_in_beamline(self, ax, s_start, normalized_strength=None):
         '''Plot the RFCavity element in the beamline, using an ellipse.'''
