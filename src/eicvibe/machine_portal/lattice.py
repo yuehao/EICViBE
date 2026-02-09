@@ -191,8 +191,10 @@ class Lattice(PhysicsBaseModel):
     def model_post_init(self, __context) -> None:
         """Post-initialization validation (replaces __post_init__)."""
         super().model_post_init(__context)
-        # Additional Lattice-specific initialization if needed
-        pass
+        # Initialize change management cache (hidden from user)
+        self._change_cache = None
+        self._simulation_engine = None
+        self._xsuite_line = None
 
     def add_element(self, element: Element, check_consistency: bool = True):
         """Add an element definition to the lattice.
@@ -864,22 +866,52 @@ class Lattice(PhysicsBaseModel):
             raise ValueError("No root branch set for lattice expansion.")
         return self._expand_branch(self.root_branch_name, force_expand=force_expand)
     
-    def plot_branch_beamline(self, branch_name: str, ax, s_start: float = 0.0, normalized_strength=None):
-        """Plot a branch in 1D beamline view using element plotting methods."""
+    def plot_branch_beamline(self, branch_name: str, ax, start_s: float = 0.0, normalized_strength=None, 
+                              s_begin: float = None, s_end: float = None):
+        """Plot a branch in 1D beamline view using element plotting methods.
+        
+        Args:
+            branch_name: Name of the branch to plot
+            ax: Matplotlib axes object
+            start_s: Starting s-coordinate for the plot axis (default: 0.0)
+            normalized_strength: If set, use this value as uniform height for all magnets
+            s_begin: Start position for elements to include in plot (default: None, plot from beginning)
+            s_end: End position for elements to include in plot (default: None, plot to end)
+        """
         
         if branch_name not in self.branches:
             raise ValueError(f"Branch '{branch_name}' does not exist.")
         
-        s_current = s_start
+        s_current = start_s
+        s_plot_start = s_current  # Track actual plot start
         
         # Plot each element in the branch
         for element_name in self.branches[branch_name]:
             element = self.elements[element_name]
+            element_end = s_current + element.length
+            
+            # Check if element is within the plotting range
+            if s_begin is not None and element_end < s_begin:
+                # Element ends before plotting range, skip but advance position
+                s_current = element_end
+                continue
+            if s_end is not None and s_current > s_end:
+                # Element starts after plotting range, stop plotting
+                break
+            
+            # Update plot start if this is the first plotted element
+            if s_begin is not None and s_current < s_begin:
+                s_plot_start = s_begin
+            
+            # Plot the element
             s_current = element.plot_in_beamline(ax, s_current, normalized_strength)
+        
+        # Determine final plot range
+        s_plot_end = s_current if s_end is None else min(s_current, s_end)
         
         # Set plot properties
         ax.set_xlabel('S coordinate (m)')
-        ax.set_xlim(s_start, s_current)
+        ax.set_xlim(s_plot_start, s_plot_end)
         ax.set_ylim(-1, 1)
         #ax.set_ylabel('Normalized strength')
         #ax.set_title(f'Beamline view: {branch_name}')
@@ -1010,11 +1042,194 @@ class Lattice(PhysicsBaseModel):
                             lattice.add_element(element)
                             element_names.append(element.name)
                     
-                    # Add the branch with the element names
-                    lattice.add_branch(branch_name, element_names)
+                    # Directly populate the branch without cloning
+                    # (add_branch with strings would call add_element_to_branch which clones)
+                    lattice.branches[branch_name] = element_names
+                    lattice.branch_specs[branch_name] = "linac"  # Default branch type
+                    
+                    # Set first branch as root if not already set
+                    if not lattice.root_branch_name:
+                        lattice.root_branch_name = branch_name
         
-        # Set the root branch after all branches are created
+        # Set the root branch after all branches are created (overrides first-branch default)
         if root_branch:
             lattice.set_root_branch(root_branch)
         
-        return lattice 
+        return lattice
+    
+    # ========================================================================
+    # CHANGE MANAGEMENT METHODS (User-facing API, cache is hidden)
+    # ========================================================================
+    
+    def attach_simulation(self, engine, xsuite_line):
+        """
+        Attach a simulation engine and converted line to enable change management.
+        
+        This method must be called before using change management features
+        (select_elements, propose_change, activate_changes).
+        
+        Args:
+            engine: Simulation engine instance (e.g., XSuiteSimulationEngine)
+            xsuite_line: Converted lattice line for the simulation engine
+            
+        Example:
+            >>> lattice.attach_simulation(engine, xsuite_line)
+        """
+        self._simulation_engine = engine
+        self._xsuite_line = xsuite_line
+        
+        # Initialize change cache
+        from eicvibe.machine_portal.lattice_change import LatticeChangeCache
+        self._change_cache = LatticeChangeCache(self, engine, xsuite_line)
+        
+        print("✓ Simulation attached to lattice")
+        print("  Change management features now available:")
+        print("    - lattice.select_elements(...)")
+        print("    - lattice.propose_change(...)")
+        print("    - lattice.review_changes()")
+        print("    - lattice.activate_changes(particles)")
+    
+    def select_element(self, element_name: str) -> 'Lattice':
+        """
+        Select a single element for parameter changes.
+        
+        Args:
+            element_name: Name of the element to select
+            
+        Returns:
+            Self for method chaining
+            
+        Example:
+            >>> lattice.select_element('Quad1_1')
+        """
+        if self._change_cache is None:
+            raise RuntimeError("Call attach_simulation() before using change management features")
+        self._change_cache.select_element(element_name)
+        return self
+    
+    def select_elements_by_type(self, element_type: str) -> 'Lattice':
+        """
+        Select all elements of a specific type for parameter changes.
+        
+        Args:
+            element_type: Type name ('Quadrupole', 'Bend', 'RFCavity', etc.)
+            
+        Returns:
+            Self for method chaining
+            
+        Example:
+            >>> lattice.select_elements_by_type('Quadrupole')
+        """
+        if self._change_cache is None:
+            raise RuntimeError("Call attach_simulation() before using change management features")
+        self._change_cache.select_by_type(element_type)
+        return self
+    
+    def select_elements_by_range(self, s_start: float, s_end: float, 
+                                 element_type: Optional[str] = None) -> 'Lattice':
+        """
+        Select elements within a range of s positions.
+        
+        Args:
+            s_start: Start position in meters
+            s_end: End position in meters
+            element_type: Optional filter by element type
+            
+        Returns:
+            Self for method chaining
+            
+        Example:
+            >>> lattice.select_elements_by_range(0, 10.5, element_type='Quadrupole')
+        """
+        if self._change_cache is None:
+            raise RuntimeError("Call attach_simulation() before using change management features")
+        self._change_cache.select_range(s_start, s_end, element_type)
+        return self
+    
+    def propose_change(self, parameter_group: str, parameter_name: str,
+                      new_value: float, description: str = "", 
+                      ramp_steps: int = 10) -> 'Lattice':
+        """
+        Propose a parameter change for currently selected elements.
+        Changes are cached but not applied until activate_changes() is called.
+        
+        Args:
+            parameter_group: Parameter group name (e.g., 'MagneticMultipoleP', 'BendP')
+            parameter_name: Parameter name within group (e.g., 'kn1', 'angle')
+            new_value: Target value for the parameter
+            description: Human-readable description of the change
+            ramp_steps: Number of ramping steps (default 10)
+            
+        Returns:
+            Self for method chaining
+            
+        Example:
+            >>> lattice.select_elements_by_type('Quadrupole') \\
+            ...     .propose_change('MagneticMultipoleP', 'kn1', -0.55, 
+            ...                     'Increase focusing by 10%', ramp_steps=8)
+        """
+        if self._change_cache is None:
+            raise RuntimeError("Call attach_simulation() before using change management features")
+        self._change_cache.propose_change(parameter_group, parameter_name, 
+                                         new_value, description, ramp_steps)
+        return self
+    
+    def review_changes(self, status=None):
+        """
+        Review all proposed changes as a pandas DataFrame.
+        
+        Args:
+            status: Optional filter by change status (from ChangeStatus enum)
+            
+        Returns:
+            DataFrame with columns: Element, Parameter, Old Value, New Value, 
+            Change (%), Status, Description
+            
+        Example:
+            >>> df = lattice.review_changes()
+            >>> display(df)
+        """
+        if self._change_cache is None:
+            raise RuntimeError("Call attach_simulation() before using change management features")
+        return self._change_cache.review_changes(status)
+    
+    def clear_changes(self, status=None):
+        """
+        Clear proposed changes from the cache.
+        
+        Args:
+            status: Optional filter - only clear changes with this status
+            
+        Example:
+            >>> lattice.clear_changes()  # Clear all
+        """
+        if self._change_cache is None:
+            raise RuntimeError("Call attach_simulation() before using change management features")
+        self._change_cache.clear_changes(status)
+    
+    def activate_changes(self, particles, num_turns_per_step: int = 10,
+                        track_during_ramp: bool = True):
+        """
+        Activate all proposed changes with controlled ramping.
+        
+        This applies all pending changes by:
+        1. Ramping parameters linearly from old to new values
+        2. Tracking particles at each ramp step
+        3. Collecting BPM data during ramping
+        4. Marking changes as completed
+        
+        Args:
+            particles: Particle beam to track during ramping
+            num_turns_per_step: Number of turns to track at each ramp step
+            track_during_ramp: Whether to track particles during ramp
+            
+        Returns:
+            Dictionary with BPM data during ramping (keys: turns, x_mean, y_mean, step)
+            
+        Example:
+            >>> bpm_data = lattice.activate_changes(particles, num_turns_per_step=20)
+        """
+        if self._change_cache is None:
+            raise RuntimeError("Call attach_simulation() before using change management features")
+        return self._change_cache.activate_changes(particles, num_turns_per_step, 
+                                                   track_during_ramp)

@@ -37,6 +37,9 @@ from .types import (
     TrackingParameters,
     ParticleDistribution,
     BeamPositionData,
+    TurnByTurnBPMData,
+    BPMBuffer,
+    RampingBPMData,
     TwissData,
     TrackingResults,
     EngineConfiguration,
@@ -51,8 +54,8 @@ from .types import (
 
 from .base import (
     BaseSimulationEngine,
-    SimulationMonitor,
-    ProgressMonitor
+    SimulationCallback,
+    ProgressCallback
 )
 
 from .registry import (
@@ -77,9 +80,9 @@ __all__ = [
     "Registry",  # Alias
     "Factory",   # Alias
     
-    # Monitoring
-    "SimulationMonitor",
-    "ProgressMonitor",
+    # Event callbacks
+    "SimulationCallback",
+    "ProgressCallback",
     
     # Types and enums
     "SimulationMode",
@@ -89,6 +92,9 @@ __all__ = [
     "TrackingParameters",
     "ParticleDistribution", 
     "BeamPositionData",
+    "TurnByTurnBPMData",
+    "BPMBuffer",
+    "RampingBPMData",
     "TwissData",
     "TrackingResults",
     "EngineConfiguration",
@@ -107,3 +113,24 @@ __all__ = [
 # Initialize logging for the package
 import logging
 logging.getLogger(__name__).addHandler(logging.NullHandler())
+
+# Register XSuite engine if available
+def _register_xsuite_engine():
+    """Register XSuite engine if available."""
+    try:
+        from .xsuite_interface import XSuiteSimulationEngine, XSUITE_AVAILABLE
+        if XSUITE_AVAILABLE:
+            SimulationEngineRegistry.register(
+                name="xsuite",
+                engine_class=XSuiteSimulationEngine,
+                metadata={
+                    "description": "XSuite/XTrack simulation engine",
+                    "version": "latest",
+                    "modes": ["RING", "LINAC", "RAMPING"]
+                }
+            )
+            logging.getLogger(__name__).info("XSuite engine registered")
+    except Exception as e:
+        logging.getLogger(__name__).debug(f"XSuite registration failed: {e}")
+
+_register_xsuite_engine()

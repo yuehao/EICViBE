@@ -3,11 +3,24 @@
 # 
 # Unit Conversion Notes:
 # - EICViBE uses SI units with angles in radians (consistent with XSuite)
-# -
+# - No unit conversion needed for XSuite (both use SI + radians)
+# - Exception: RF cavity lag is converted from radians to degrees for XSuite
+#
+# Parameter Group Notation:
+# - GroupName.parameter: Access parameter from parameter group
+# - parameter: Direct element attribute
+#
+# XSuite Bend Element Notes:
+# - XSuite distinguishes between h (curvature) and k0 (dipole strength)
+# - h is automatically calculated by XSuite from angle and length: h = angle/length
+# - k0 must be set explicitly for proper magnetic field
+# - For pure dipole bends: k0 = h = angle/length (auto-set if kn0 not provided)
+# - If user provides MagneticMultipoleP.kn0, it will be used directly
+# - If not provided, the converter will set both h and k0 = angle/length
+# - Reference: https://xsuite.readthedocs.io/en/latest/line.html#creating-a-simple-line-object
 
 # Element Mappings:
-
-# From EICViBE's elements/parameters to other engines 's element/parameters and possible unit conversions:
+# From EICViBE's elements/parameters to other engines' element/parameters
 
 Drift:
   XSuite:
@@ -20,6 +33,90 @@ Quadrupole:
     type: Quadrupole
     parameters:
       length: length  # meters
-      MagneticMultipoleP.kn1: k1  # 1/m^2
-      MagneticMultipoleP.ks1: k1s  # 1/m^2
-    
+      MagneticMultipoleP.kn1: k1  # 1/m^2 (normal quadrupole strength)
+      MagneticMultipoleP.ks1: k1s  # 1/m^2 (skew quadrupole strength)
+
+Sextupole:
+  XSuite:
+    type: Sextupole
+    parameters:
+      length: length  # meters
+      MagneticMultipoleP.kn2: k2  # 1/m^3 (normal sextupole strength)
+      MagneticMultipoleP.ks2: k2s  # 1/m^3 (skew sextupole strength)
+
+Octupole:
+  XSuite:
+    type: Octupole
+    parameters:
+      length: length  # meters
+      MagneticMultipoleP.kn3: k3  # 1/m^4 (normal octupole strength)
+      MagneticMultipoleP.ks3: k3s  # 1/m^4 (skew octupole strength)
+
+Bend:
+  XSuite:
+    type: Bend
+    # NOTE: For pure dipole bends without explicit kn0, the converter will automatically
+    # set both h and k0 to angle/length. See xsuite_interface.py _convert_element() method.
+    parameters:
+      length: length  # meters (arc length)
+      BendP.angle: angle  # radians (bending angle)
+      BendP.E1: edge_entry_angle  # radians (entry edge angle)
+      BendP.E2: edge_exit_angle  # radians (exit edge angle)
+      #BendP.hgap: edge_entry_hgap  # m (half gap at entry, affects edge focusing)
+      #BendP.h1: edge_entry_f_pole_ref  # 1/m (entry pole face curvature)
+      #BendP.h2: edge_exit_f_pole_ref  # 1/m (exit pole face curvature)
+      #MagneticMultipoleP.kn0: k0  # 1/m (dipole strength) - optional, auto-set if not provided
+      MagneticMultipoleP.kn1: k1  # 1/m^2 (quadrupole component)
+
+RBend:
+  XSuite:
+    type: RBend  # XSuite RBend (rectangular bend) - newer XSuite versions
+    # NOTE: XSuite RBend doesn't have 'length' property - uses 'length_straith' for chord length
+    # For pure dipole bends without explicit k0, h and k0 may be auto-calculated by XSuite
+    parameters:
+      BendP.chord_length: length_straight  # meters (chord length for rectangular bend)
+      BendP.angle: angle  # radians (bending angle)
+      BendP.E1: edge_entry_angle  # radians (entry edge angle, default 0 for RBend)
+      BendP.E2: edge_exit_angle  # radians (exit edge angle, default 0 for RBend)
+      #BendP.hgap: edge_entry_hgap  # m (half gap, affects edge focusing)
+      #BendP.h1: edge_entry_f_pole_ref  # 1/m (entry pole face curvature)
+      #BendP.h2: edge_exit_f_pole_ref  # 1/m (exit pole face curvature)
+      #MagneticMultipoleP.kn0: k0  # 1/m (dipole strength) - optional, auto-set if not provided
+      MagneticMultipoleP.kn1: k1  # 1/m^2 (quadrupole component)
+
+RFCavity:
+  XSuite:
+    type: Cavity
+    parameters:
+      RFP.voltage: voltage  # Volts (RF voltage)
+      RFP.freq: frequency  # Hz (RF frequency)
+      RFP.phase: lag  # degrees (phase lag - XSuite uses degrees for cavity lag)
+      # Note: XSuite Cavity is a thin element (no length parameter)
+      # Physical length preserved by adding drift after Cavity in xsuite_interface.py
+
+Marker:
+  XSuite:
+    type: Marker
+    parameters: {}  # No parameters
+
+Monitor:
+  XSuite:
+    type: BeamPositionMonitor
+    # BeamPositionMonitor records beam centroids (positions) at each turn
+    # Default parameters can be overridden via element parameter groups
+    # Note: stop_at_turn, frev, and sampling_frequency should be set via
+    # configure_bpm_tracking() before tracking begins
+    parameters: {}
+    default_values:
+      start_at_turn: 0
+
+Kicker:
+  XSuite:
+    type: Multipole
+    # Kickers are corrector magnets - map to XSuite Multipole
+    # hkick/vkick are integrated kick angles (radians)
+    parameters:
+      length: length  # meters
+      KickerP.hkick: knl  # horizontal integrated kick angle → knl[0]
+      KickerP.vkick: ksl  # vertical integrated kick angle → ksl[0]
+

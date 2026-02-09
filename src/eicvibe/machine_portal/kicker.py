@@ -1,5 +1,7 @@
 from .element import Element
+from .parameter_group import ParameterGroup
 from eicvibe.models.base import PhysicsBaseModel
+from eicvibe.models.parameter_groups import KickerP
 from pydantic import Field, field_validator
 from typing import Optional
 import matplotlib.pyplot as plt
@@ -15,6 +17,21 @@ class Kicker(Element):
     type: str = Field(default='Kicker', description="Element type")
     plot_color: str = Field(default='C0', description="Color for plotting")
     plot_height: float = Field(default=0.4, ge=0.0, le=2.0, description="Height in beamline plot")
+    
+    def model_post_init(self, __context) -> None:
+        """Initialize Kicker with default KickerP parameter group."""
+        super().model_post_init(__context)
+        
+        # Add default KickerP if not inherited and not already present
+        if self.inherit is None and self.get_parameter_group("KickerP") is None:
+            default_kicker_params = KickerP()
+            kicker_param_group = ParameterGroup(
+                name="KickerP",
+                type="KickerP",
+                parameters=default_kicker_params.model_dump(),
+                subgroups=[]
+            )
+            self.add_parameter_group(kicker_param_group)
     
     @field_validator('length')
     @classmethod

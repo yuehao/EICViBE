@@ -49,15 +49,17 @@ class Bend(Element):
         return s_start + self.length
         
     
-    def plot_in_floorplan(self, ax, entrance_coords, tangent_vector):
+    def plot_in_floorplan(self, ax, entrance_coords, tangent_vector, return_shape=False):
         """Plot the bend element in the floor plan, using an center arc and an annular section to represent a bend magnet.
         Args:
               ax: Matplotlib Axes object to plot on.
               entrance_coords: (x, y) coordinates of the entrance point
               tangent_vector: (dx, dy) vector indicating the direction of the drift representing cosine and sine of the angle with the x-axis.
+              return_shape: If True, return shape polygon for hit detection
         Returns:
               exit_coords: (x, y) coordinates of the exit point
               tangent_vector: (dx, dy) vector indicating the direction of the exit point
+              shape_polygon: (if return_shape=True) List of (x,y) tuples defining annular sector polygon
         """
         # Draw an arc representing the bend
         if len(entrance_coords) != 2 or len(tangent_vector) != 2:
@@ -73,6 +75,9 @@ class Bend(Element):
                     markersize=10, linestyle='None', color=self.plot_color, alpha=0.5)  # Mark the entrance point
             new_tangent_vector = (tangent_vector[0] * np.cos(angle) - tangent_vector[1] * np.sin(angle),
                                   tangent_vector[0] * np.sin(angle) + tangent_vector[1] * np.cos(angle))
+            if return_shape:
+                # Zero-length bend: no shape, return empty polygon
+                return exit_coords, new_tangent_vector, []
             return exit_coords, new_tangent_vector
         
         radius = self.length / abs(angle)
@@ -114,7 +119,34 @@ class Bend(Element):
         exit_coords = (center_x + radius * np.cos(inv_center_angle+angle),
                        center_y + radius * np.sin(inv_center_angle+angle))
         
-
+        # Create rectangle approximation with 4 corners for hit detection
+        if return_shape:
+            # Four corners of the annular sector (approximated as rectangle)
+            # Corner 1: entrance, inner radius
+            corner1_x = center_x + (radius - dipole_width) * np.cos(inv_center_angle)
+            corner1_y = center_y + (radius - dipole_width) * np.sin(inv_center_angle)
+            
+            # Corner 2: entrance, outer radius
+            corner2_x = center_x + (radius + dipole_width) * np.cos(inv_center_angle)
+            corner2_y = center_y + (radius + dipole_width) * np.sin(inv_center_angle)
+            
+            # Corner 3: exit, outer radius
+            corner3_x = center_x + (radius + dipole_width) * np.cos(inv_center_angle + angle)
+            corner3_y = center_y + (radius + dipole_width) * np.sin(inv_center_angle + angle)
+            
+            # Corner 4: exit, inner radius
+            corner4_x = center_x + (radius - dipole_width) * np.cos(inv_center_angle + angle)
+            corner4_y = center_y + (radius - dipole_width) * np.sin(inv_center_angle + angle)
+            
+            shape_polygon = [
+                (corner1_x, corner1_y),
+                (corner2_x, corner2_y),
+                (corner3_x, corner3_y),
+                (corner4_x, corner4_y)
+            ]
+        
+        if return_shape:
+            return exit_coords, new_tangent_vector, shape_polygon
         return exit_coords, new_tangent_vector
 
         

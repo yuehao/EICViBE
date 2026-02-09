@@ -105,15 +105,17 @@ class Quadrupole(Element):
             )
         return s_start + self.length
     
-    def plot_in_floorplan(self, ax, entrance_coords, tangent_vector):
+    def plot_in_floorplan(self, ax, entrance_coords, tangent_vector, return_shape=False):
         """Plot the quadrupole element in the floor plan, using a rectangle to represent the quadrupole.
         Args:
               ax: Matplotlib Axes object to plot on.
               entrance_coords: (x, y) coordinates of the entrance point
               tangent_vector: (dx, dy) vector indicating the direction of the drift representing cosine and sine of the angle with the x-axis.
+              return_shape: If True, return shape corners for hit detection
         Returns:
               exit_coords: (x, y) coordinates of the exit point
               tangent_vector: (dx, dy) vector indicating the direction of the exit point
+              shape_corners: (if return_shape=True) List of 4 (x,y) tuples defining rectangle corners
         """
         # Draw a rectangle representing the quadrupole
         if len(entrance_coords) != 2 or len(tangent_vector) != 2:
@@ -123,11 +125,35 @@ class Quadrupole(Element):
                        entrance_coords[1] + self.length * tangent_vector[1])
         angle = np.arctan2(tangent_vector[1], tangent_vector[0])
         half_width = self.plot_cross_section / 2.0
+        
+        # Rectangle corner (bottom-left in local coordinates)
         rec_corner = (entrance_coords[0] + half_width * np.cos(angle-np.pi/2),
                       entrance_coords[1] + half_width * np.sin(angle-np.pi/2))
+        
+        # Calculate all 4 corners for hit detection if requested
+        if return_shape:
+            # Perpendicular vector (pointing "up" from centerline)
+            perp_vec = np.array([np.cos(angle - np.pi/2), np.sin(angle - np.pi/2)])
+            tang_vec = np.array(tangent_vector)
+            
+            # Four corners: start with bottom edge, go counterclockwise
+            corner1 = entrance_coords + half_width * perp_vec  # entrance, one side
+            corner2 = entrance_coords - half_width * perp_vec  # entrance, other side
+            corner3 = exit_coords - half_width * perp_vec      # exit, other side
+            corner4 = exit_coords + half_width * perp_vec      # exit, one side
+            
+            shape_corners = [
+                (corner1[0], corner1[1]),
+                (corner2[0], corner2[1]),
+                (corner3[0], corner3[1]),
+                (corner4[0], corner4[1])
+            ]
+        
         ax.add_patch(
             Rectangle(rec_corner, self.length, self.plot_cross_section, angle=angle*180/np.pi, ec=self.plot_color,
                       fc=self.plot_color, alpha=0.8, lw=1)
         )
         
+        if return_shape:
+            return exit_coords, tangent_vector, shape_corners
         return exit_coords, tangent_vector
