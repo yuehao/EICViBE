@@ -122,6 +122,31 @@ Kicker:  # Kicker element with its specific parameter groups
       HKICK: KickerP.hkick
       VKICK: KickerP.vkick
       TILT: KickerP.tilt
+
+HKicker:  # Horizontal-only kicker (corrector) element
+  madx:
+    type: hkicker
+    parameters:
+      L: length
+      KICK: KickerP.hkick
+      TILT: KickerP.tilt
+
+VKicker:  # Vertical-only kicker (corrector) element
+  madx:
+    type: vkicker
+    parameters:
+      L: length
+      KICK: KickerP.vkick
+      TILT: KickerP.tilt
+
+Multipole:  # Thin multipole element (general-purpose)
+  madx:
+    type: multipole
+    parameters:
+      LRAD: length
+      TILT: MagneticMultipoleP.tilt
+      KNL: MagneticMultipoleP.kn0
+      KSL: MagneticMultipoleP.ks0
       
 
 

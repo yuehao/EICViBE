@@ -91,13 +91,17 @@ def map_madx_parameters(madx_element, eicvibe_element, madx_mapping: dict):
     rbend_angle = None
     is_rbend = eicvibe_element.type == 'RBend'
     
+    # Parameters that should NOT be skipped when zero (e.g. kicker idle state)
+    ALLOW_ZERO = {'KickerP.hkick', 'KickerP.vkick'}
+
     for madx_param, eicvibe_path in parameter_mappings.items():
         # Get the value from MAD-X element
         madx_value = getattr(madx_element, madx_param.lower(), None)
         
-        # Skip if None, zero, or matches known default values
+        # Skip if None or matches known default values.
+        # Also skip zero unless the target path explicitly allows zero (e.g. kicker kicks).
         if (madx_value is not None and 
-            madx_value != 0 and 
+            (madx_value != 0 or eicvibe_path in ALLOW_ZERO) and 
             madx_value != MADX_DEFAULTS_TO_SKIP.get(madx_param.lower())):
             
             # Apply unit conversion if needed
@@ -382,6 +386,12 @@ def lattice_from_madx_file(madx_file: str, lattice_name: str = "ImportedLattice"
                 # Map MAD-X parameters to EICViBE parameter groups using the mapping
                 # (avoiding known default values that weren't explicitly set)
                 map_madx_parameters(element, element_obj, madx_mapping)
+
+                # Set single_plane for HKicker / VKicker so EICViBE knows the plane
+                if madx_type == 'hkicker':
+                    element_obj.add_parameter('KickerP', 'single_plane', 'H')
+                elif madx_type == 'vkicker':
+                    element_obj.add_parameter('KickerP', 'single_plane', 'V')
 
                 element_pool[element.name] = element_obj
 

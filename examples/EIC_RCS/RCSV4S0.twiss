@@ -46,8 +46,8 @@
 @ DQMIN_PHASE      %le                   0
 @ TITLE            %08s "no-title"
 @ ORIGIN           %17s "5.09.03 Darwin 64"
-@ DATE             %08s "08/02/26"
-@ TIME             %08s "18.26.38"
+@ DATE             %08s "18/02/26"
+@ TIME             %08s "10.02.38"
 * NAME               KEYWORD                             S                  L              ANGLE               BETX               ALFX               BETY               ALFY                MUY                  Y                K1L                K2L                 H1                 H2                  X                 PX                 PY                 DX 
 $ %s                 %s                                %le                %le                %le                %le                %le                %le                %le                %le                %le                %le                %le                %le                %le                %le                %le                %le                %le 
  "RING$START"        "MARKER"                             0                  0                  0        25.99996606   -5.515389269e-15        6.702178227    2.087839116e-08                  0                  0                  0                  0                  0                  0   -9.413425637e-31   -6.868954537e-33                  0   -4.295752478e-06

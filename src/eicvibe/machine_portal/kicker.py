@@ -25,10 +25,11 @@ class Kicker(Element):
         # Add default KickerP if not inherited and not already present
         if self.inherit is None and self.get_parameter_group("KickerP") is None:
             default_kicker_params = KickerP()
+            # Exclude None values so Optional fields don't violate ParameterGroup's type union
             kicker_param_group = ParameterGroup(
                 name="KickerP",
                 type="KickerP",
-                parameters=default_kicker_params.model_dump(),
+                parameters={k: v for k, v in default_kicker_params.model_dump().items() if v is not None},
                 subgroups=[]
             )
             self.add_parameter_group(kicker_param_group)

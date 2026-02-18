@@ -37,7 +37,7 @@ class ParameterGroup(PhysicsBaseModel):
     
     name: str = Field(..., min_length=1, description="Parameter group name")
     type: str = Field(..., min_length=1, description="Parameter group type")
-    parameters: Dict[str, Union[str, float, int, List[float], List[int]]] = Field(
+    parameters: Dict[str, Union[str, float, int, None, List[float], List[int]]] = Field(
         default_factory=dict,
         description="Parameter name-value pairs"
     )

@@ -288,7 +288,19 @@ class KickerP(PhysicsBaseModel):
     hkick: Optional[float] = Field(0.0, description="Horizontal kick angle (radians)")
     vkick: Optional[float] = Field(0.0, description="Vertical kick angle (radians)")
     tilt: Optional[float] = Field(0.0, description="Element rotation angle (radians)")
-    
+    single_plane: Optional[str] = Field(
+        None,
+        description="Plane restriction: 'H' for horizontal-only, 'V' for vertical-only, None for dual-plane",
+    )
+
+    @field_validator('single_plane')
+    @classmethod
+    def validate_single_plane(cls, v):
+        """Validate single_plane is 'H', 'V', or None."""
+        if v is not None and v.upper() not in ('H', 'V'):
+            raise ValueError(f"single_plane must be 'H', 'V', or None, got '{v}'")
+        return v.upper() if v is not None else None
+
     @field_validator('hkick', 'vkick')
     @classmethod
     def validate_kick_angle(cls, v):
@@ -296,6 +308,19 @@ class KickerP(PhysicsBaseModel):
         if v is not None and abs(v) > 0.1:  # 0.1 rad ≈ 5.7 degrees
             raise ValueError(f"Kick angle {v} rad seems unreasonably large (>0.1 rad)")
         return v
+
+    @model_validator(mode='after')
+    def validate_plane_consistency(self):
+        """Validate that a single-plane kicker does not have a kick on the restricted plane."""
+        if self.single_plane == 'H' and self.vkick and self.vkick != 0.0:
+            raise ValueError(
+                f"HKicker (single_plane='H') cannot have a non-zero vkick ({self.vkick})"
+            )
+        if self.single_plane == 'V' and self.hkick and self.hkick != 0.0:
+            raise ValueError(
+                f"VKicker (single_plane='V') cannot have a non-zero hkick ({self.hkick})"
+            )
+        return self
 
 
 class BeamBeamP(PhysicsBaseModel):

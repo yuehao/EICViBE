@@ -60,6 +60,7 @@ KickerP:
   hkick: 0.0
   vkick: 0.0
   tilt: 0.0
+  single_plane: null  # 'H' for horizontal-only, 'V' for vertical-only, null for dual-plane
 
 BeamBeamP:
   sigx: 0.0
