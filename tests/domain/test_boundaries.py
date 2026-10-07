@@ -25,7 +25,7 @@ FORBIDDEN = {
 
 def test_domain_imports_only_stdlib_and_pydantic():
     code = (
-        "import json, sys, eicvibe.domain.lattice\n"
+        "import json, sys, eicvibe.domain.lattice, eicvibe.domain.machine\n"
         "print(json.dumps(sorted({m.split('.')[0] for m in sys.modules})))"
     )
     loaded = set(json.loads(subprocess.check_output([sys.executable, "-c", code], text=True)))

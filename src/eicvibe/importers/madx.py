@@ -104,22 +104,28 @@ def import_madx(
     name: str | None = None,
     strict: bool = False,
     stdout: Any = False,
+    workdir: str | Path | None = None,
 ) -> MadxImport:
     """Run the MAD-X script at ``path`` and import its sequences in their final state.
 
-    The script runs in its own directory, so relative CALLs resolve as in a
-    MAD-X session started there; a STOP ends the script. ``stdout`` goes to
-    cpymad: False hides the MAD-X output, None shows it, a file captures it.
-    ``name`` defaults to the file name without its extension; the other
-    arguments are those of :func:`import_cpymad`.
+    By default the script runs in its own directory, so relative CALLs resolve
+    as in a MAD-X session started there, and any files it writes (TWISS or
+    SURVEY output) land there too. ``workdir`` runs it elsewhere, e.g. in a
+    temporary directory, which keeps a self-contained script from writing
+    beside its source; relative CALLs then resolve from ``workdir``. A STOP
+    ends the script. ``stdout`` goes to cpymad: False hides the MAD-X output,
+    None shows it, a file captures it. ``name`` defaults to the file name
+    without its extension; the other arguments are those of :func:`import_cpymad`.
     """
     from cpymad.madx import Madx
 
     path = Path(path).resolve()
+    if not path.is_file():
+        raise FileNotFoundError(f"no MAD-X script at {path}")
     with Madx(stdout=stdout) as madx:
         try:
-            with madx.chdir(str(path.parent)):
-                madx.call(path.name)
+            with madx.chdir(str(Path(workdir).resolve() if workdir else path.parent)):
+                madx.call(str(path))
         except RuntimeError as error:
             raise RuntimeError(
                 f"MAD-X stopped while running {path}; rerun with stdout=None to see why"

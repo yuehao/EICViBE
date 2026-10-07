@@ -119,6 +119,37 @@ def test_script_runs_with_calls_macros_loops_and_matching(ring_script):
     assert sum(p.kind is ElementKind.BEND for p in layout.placements) == 16
 
 
+def madx_rows(table) -> list[tuple[float, float]]:
+    """(s at exit, length) of each row of a MAD-X table that the importer places."""
+    rows = zip(table.name, table.keyword, table.s, table.l, strict=True)
+    return [
+        (s, length)
+        for name, kind, s, length in rows
+        if "$" not in name and not (kind == "drift" and length == 0)
+    ]
+
+
+@pytest.mark.parametrize(
+    ("script", "sequence", "initial"),
+    [(RING, "ring", {}), (ELEMENTS, "line", {"betx": 10.0, "bety": 10.0})],
+    ids=["ring", "elements"],
+)
+def test_lengths_match_madx_twiss_and_survey(tmp_path, script, sequence, initial):
+    (tmp_path / "optics").mkdir()
+    (tmp_path / "optics" / "strengths.madx").write_text("kqf = 0.5;\nkqd = -0.5;\n")
+    (tmp_path / "lattice.madx").write_text(script)
+    with madx_module.Madx(stdout=False) as madx:
+        with madx.chdir(str(tmp_path)):
+            madx.call("lattice.madx")
+        layout = import_cpymad(madx, [sequence]).lattice.layout(sequence)
+        ours = [(p.s_exit, p.length) for p in layout.placements[1:]]  # placements[0] stands for $start
+        twiss, survey = madx.twiss(sequence=sequence, **initial), madx.survey(sequence=sequence)
+        for table in (twiss, survey):
+            assert ours == pytest.approx(madx_rows(table), rel=1e-12, abs=1e-12)
+        assert layout.length == pytest.approx(survey.s[-1], rel=1e-12)
+        assert layout.length == pytest.approx(twiss.summary.length, rel=1e-9)  # the summary is rounded
+
+
 def test_reimport_keeps_ids_so_diff_shows_only_new_strengths(ring_script):
     first = import_madx(ring_script).lattice
     assert import_madx(ring_script).lattice.digest == first.digest
@@ -241,3 +272,20 @@ def test_several_sequences_share_definitions_and_ions_are_matched_by_mass():
     assert lattice.layout("tl").length == pytest.approx(4.0)
     assert lattice.layout("hsr").placements[0].element.ReferenceP.species_ref == "gold197"
     assert [(n.code, n.subject) for n in result.warnings] == [("no-beam", "tl")]
+
+
+def test_imported_ring_gets_a_registry_whose_bindings_resolve(ring_script):
+    from eicvibe.domain.machine import NamingArea, generate_registry
+
+    lattice = import_madx(ring_script).lattice
+    registry = generate_registry(lattice, areas=[NamingArea(prefix="rcb1", start=0.0, end=80.0)])
+    assert registry.check_against(lattice) == []
+    names = {c.name for c in registry.channels}
+    assert {
+        "rcb1-q1-ps:sp",
+        "rcb1-q6-ps:sp",
+        "rcb1-th10-ps:sp",
+        "rcb1-cav80:sp:volt",
+        "rcb-btun-rdx",
+    } <= names
+    assert sum(name.endswith(":rdx") and "-b" in name for name in names) == 8

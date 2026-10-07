@@ -59,5 +59,9 @@ Signs were checked against MAD-X itself. XROTATION, YROTATION and SROTATION turn
 
 ## Checked on real lattices
 
-- EIC RCS (`RCSV3.madx`): three MATCH blocks with USE_MACRO, nested sequences, and a deferred voltage set after matching. Imported 5367 occurrences over 1421.257 m with no position warnings.
-- RHIC 250 GeV protons: 7821 occurrences over 3833.845 m. The import takes about 7.6 s, of which 5.3 s is MAD-X running the script.
+Positions and lengths were compared element by element with MAD-X TWISS and SURVEY tables, after the import in the same session. They agree exactly. The EICViBE length equals the SURVEY length exactly and the declared sequence length to within 1e-10 m, which is float summation over thousands of elements. The TWISS summary LENGTH is rounded to 10 significant digits. `test_lengths_match_madx_twiss_and_survey` repeats this comparison on the test lattices, including an RBEND and rotations.
+
+| Lattice | Occurrences | EICViBE length | MAD-X TWISS output (LENGTH) |
+| --- | --- | --- | --- |
+| EIC RCS (`RCSV3.madx`): three MATCH blocks with USE_MACRO, nested sequences, a deferred voltage set after matching | 5367 | 1421.257252858 m | 1421.257253 (also in the saved `RCSV3.twiss`, MAD-X 5.09.01) |
+| RHIC 250 GeV protons; the import takes about 7.6 s, of which 5.3 s is MAD-X running the script | 7821 | 3833.845181459 m | 3833.845181 (also in the saved `test.twiss`, MAD-X 5.04.02) |
