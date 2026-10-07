@@ -1,0 +1,144 @@
+"""Immutable, identity-stable description of an accelerator lattice.
+
+- :class:`Lattice`: one revision's machine content, validated and immutable.
+- :class:`LatticeBuilder`: the authoring API that produces lattices.
+- :class:`ElementDefinition` and the parameter groups: element physics.
+- :func:`diff`: revision differences matched by stable id.
+- :func:`diagnose`: plausibility warnings.
+
+Units, signs and reference conventions are in
+:mod:`eicvibe.domain.lattice.conventions`.
+"""
+
+from .builder import LatticeBuilder
+from .conventions import SPECIES, Species
+from .diagnostics import Diagnostic, diagnose
+from .diff import Change, ChangeKind, diff
+from .elements import ALLOWED_GROUPS, ElementDefinition, ElementKind
+from .ids import SequentialIds, derived_id, random_id
+from .limits import (
+    PLACEHOLDER_LIMITS,
+    Limit,
+    LimitEntry,
+    LimitSource,
+    ParameterLimits,
+    placeholder_limits,
+    tunable_parameters,
+)
+from .model import (
+    FORMAT_VERSION,
+    Branch,
+    BranchKind,
+    ForkDirection,
+    ForkLink,
+    ForkSide,
+    InitialConditions,
+    Lattice,
+    Occurrence,
+    ParameterOverride,
+    SharedComponent,
+    Traversal,
+)
+from .parameters import (
+    GROUP_TYPES,
+    MAX_MULTIPOLE_ORDER,
+    RFP,
+    ApertureLocation,
+    ApertureP,
+    ApertureShape,
+    ApertureVertex,
+    ApertureVertices,
+    BeamBeamP,
+    BendP,
+    BendRefGeometry,
+    BodyShiftP,
+    CavityType,
+    ControlP,
+    FloorP,
+    MagneticMultipoleP,
+    MetaP,
+    MultipoleGeometry,
+    ParameterGroup,
+    ParameterInfo,
+    ParticleP,
+    PatchP,
+    ReferenceChangeP,
+    ReferenceP,
+    SolenoidP,
+    TrackingP,
+    TwissP,
+    ZeroPhase,
+    parameter_info,
+    parameters_of,
+)
+from .topology import BranchLayout, ForkEdge, PlacedElement, Topology
+
+__all__ = [
+    "tunable_parameters",
+    "placeholder_limits",
+    "ParameterLimits",
+    "LimitSource",
+    "LimitEntry",
+    "Limit",
+    "PLACEHOLDER_LIMITS",
+    "ALLOWED_GROUPS",
+    "FORMAT_VERSION",
+    "GROUP_TYPES",
+    "SPECIES",
+    "RFP",
+    "ApertureLocation",
+    "ApertureP",
+    "ApertureShape",
+    "ApertureVertex",
+    "ApertureVertices",
+    "BeamBeamP",
+    "BendP",
+    "BendRefGeometry",
+    "BodyShiftP",
+    "Branch",
+    "BranchKind",
+    "BranchLayout",
+    "Change",
+    "CavityType",
+    "ChangeKind",
+    "ControlP",
+    "Diagnostic",
+    "ElementDefinition",
+    "ElementKind",
+    "FloorP",
+    "ForkDirection",
+    "ForkEdge",
+    "ForkLink",
+    "ForkSide",
+    "InitialConditions",
+    "Lattice",
+    "LatticeBuilder",
+    "MAX_MULTIPOLE_ORDER",
+    "MagneticMultipoleP",
+    "MetaP",
+    "MultipoleGeometry",
+    "Occurrence",
+    "ParameterGroup",
+    "ParameterInfo",
+    "ParameterOverride",
+    "ParticleP",
+    "PatchP",
+    "PlacedElement",
+    "ReferenceChangeP",
+    "ReferenceP",
+    "SequentialIds",
+    "SharedComponent",
+    "SolenoidP",
+    "Species",
+    "Topology",
+    "TrackingP",
+    "Traversal",
+    "TwissP",
+    "ZeroPhase",
+    "derived_id",
+    "diagnose",
+    "diff",
+    "parameter_info",
+    "parameters_of",
+    "random_id",
+]

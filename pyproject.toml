@@ -1,0 +1,40 @@
+[project]
+name = "eicvibe"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Yue Hao", email = "haoyue@msu.edu" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "pydantic>=2.12",
+]
+
+[project.scripts]
+eicvibe = "eicvibe:main"
+
+[project.optional-dependencies]
+madx = [
+    "cpymad>=1.19",
+]
+
+[build-system]
+requires = ["uv_build>=0.12.10,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "cpymad>=1.19",
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 110
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
