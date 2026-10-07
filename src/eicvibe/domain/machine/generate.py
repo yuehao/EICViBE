@@ -14,6 +14,10 @@ the default scheme:
   and their readbacks;
 - a periodic branch has a tune monitor, ``<machine>-btun-rdx`` and ``-rdy``.
 
+A shared component (one magnet that several branches pass through) gets no
+device here, since one magnet must not appear as several devices.
+:func:`add_shared_magnet_supply` describes its single supply explicitly.
+
 Device ids derive from the lattice (the occurrence a device sits at, or the
 branch of a tune monitor), not from names, so renaming areas or tokens keeps
 every device's identity. :meth:`MachineRegistry.naming_problems` reports the
@@ -47,6 +51,8 @@ from .registry import (
 PLACEHOLDER_GRADIENT_PER_AMPERE = {1: 0.1, 2: 1.0, 3: 10.0}
 #: Placeholder integrated corrector field per ampere, T m.
 PLACEHOLDER_CORRECTOR_PER_AMPERE = 1e-3
+#: Placeholder dipole field per ampere, T (a septum supply).
+PLACEHOLDER_DIPOLE_PER_AMPERE = 1e-3
 #: Placeholder current ranges, A: magnets run to twice their design current or at least this.
 PLACEHOLDER_MAGNET_CURRENT = 100.0
 PLACEHOLDER_CORRECTOR_CURRENT = 50.0
@@ -107,17 +113,114 @@ def generate_machine_registry(
     )
 
 
-def _add_branch(builder: _Builder, lattice: Lattice, layout, areas: Iterable[NamingArea] | None) -> None:
+def add_shared_magnet_supply(
+    registry: MachineRegistry,
+    lattice: Lattice,
+    component: str,
+    *,
+    home: str,
+    driven: Iterable[str],
+    areas: Iterable[NamingArea] | None = None,
+    abbreviation: str = "sptm",
+    scheme: NamingScheme | None = None,
+) -> MachineRegistry:
+    """``registry`` with the one supply of a shared magnet, such as a septum.
+
+    The magnet is one device at every traversal of ``component``. Its supply
+    sets the dipole field (``MagneticMultipoleP.Kn0``) seen by the traversals
+    in roles ``driven``, which must be bends of one design field, and by no
+    other traversal. A septum is pulsed: its field is on for the injected and
+    extracted beams (traversals modelled as bends) and off when the stored
+    beam passes (a traversal modelled as a field-free kicker), so the stored
+    beam never sees the setting. The bends should give their field
+    explicitly, with ``BendP.Kn0_from_g_ref`` false, so that a supply at 0 A
+    means no field rather than the reference field.
+
+    The device is named from the slot of the ``home`` traversal, e.g. the
+    ring's: ``<area><abbreviation><position>-ps`` (``sptm`` is "septum magnet
+    for injection or extraction" in the naming repository). ``areas`` are the
+    naming areas of that branch (default: one area named after it). The
+    device id derives from the component, not the name.
+    """
+    scheme = scheme or NamingScheme()
+    shared = next((c for c in lattice.shared_components if component in (c.id, c.name)), None)
+    if shared is None:
+        raise KeyError(f"no shared component {component!r}")
+    roles = {t.role: lattice.placement(t.occurrence) for t in shared.traversals}
+    missing = [r for r in (home, *driven) if r not in roles]
+    if missing:
+        raise KeyError(f"{shared.name!r} has no traversal {', '.join(map(repr, missing))}")
+    targets = [roles[r] for r in driven]
+    if not targets:
+        raise ValueError("a shared magnet supply needs at least one driven traversal")
+    fields, rigidities = [], []
+    for placed in targets:
+        bend = placed.element.BendP if placed.kind is ElementKind.BEND else None
+        if bend is None or placed.length == 0.0:
+            raise ValueError(f"{placed.name!r} must be a bend with length to be driven by a supply")
+        fields.append(bend.angle_ref / placed.length)
+        rigidities.append(_rigidity(lattice, lattice.layout(placed.branch_id)))
+    if any(
+        not math.isclose(f * r, fields[0] * rigidities[0], rel_tol=1e-9)
+        for f, r in zip(fields, rigidities, strict=True)
+    ):
+        raise ValueError(f"the driven traversals of {shared.name!r} ask for different fields")
+    if any(not math.isclose(r, rigidities[0], rel_tol=1e-9) for r in rigidities):
+        raise ValueError(f"the driven traversals of {shared.name!r} have different reference rigidities")
+
+    home_layout = lattice.layout(roles[home].branch_id)
+    if areas is None:
+        areas = (_default_area(home_layout),)
+    home_id = roles[home].id
+    slots = slot_names(
+        [p for p in home_layout.placements if p.id == home_id], tuple(areas), lambda _: abbreviation
+    )
+    builder = _Builder(lattice.name, scheme)
+    device = builder.device(
+        f"{slots[home_id]}-{scheme.supply}",
+        DeviceType.POWER_SUPPLY,
+        shared.id,
+        tuple(t.occurrence for t in shared.traversals),
+    )
+    design = fields[0]
+    calibration = Calibration(
+        coefficients=(0.0, (-1.0 if design < 0 else 1.0) * PLACEHOLDER_DIPOLE_PER_AMPERE),
+        engineering_unit="A",
+        field_unit="T",
+    )
+    top = max(2.0 * abs(design) * rigidities[0] / PLACEHOLDER_DIPOLE_PER_AMPERE, PLACEHOLDER_MAGNET_CURRENT)
+    binding = ParameterBinding(
+        targets=tuple(p.id for p in targets), parameter="MagneticMultipoleP.Kn0", calibration=calibration
+    )
+    builder.setting(device, (), "A", (0.0, top), binding)
+    return MachineRegistry(
+        name=registry.name,
+        lattice=registry.lattice,
+        devices=(*registry.devices, *builder.devices),
+        channels=(*registry.channels, *builder.channels),
+    )
+
+
+def _rigidity(lattice: Lattice, layout) -> float:
     conditions = lattice.initial_conditions(layout.id)
     reference = conditions.reference if conditions else None
     if reference is None or reference.pc_ref is None or reference.species_ref not in SPECIES:
         raise ValueError(
             f"branch {layout.branch.name!r} needs a reference particle with pc_ref and a known species"
         )
-    rigidity = rigidity_from_P(reference.pc_ref, charge=SPECIES[reference.species_ref].charge)
+    return rigidity_from_P(reference.pc_ref, charge=SPECIES[reference.species_ref].charge)
+
+
+def _default_area(layout) -> NamingArea:
+    """The whole branch as one area named after it, with positions from its start."""
+    prefix = re.sub(r"[^a-z0-9]", "", layout.branch.name.lower()).lstrip("0123456789") or "area"
+    return NamingArea(prefix=prefix, start=0.0, end=layout.length + 1.0)
+
+
+def _add_branch(builder: _Builder, lattice: Lattice, layout, areas: Iterable[NamingArea] | None) -> None:
+    rigidity = _rigidity(lattice, layout)
     if areas is None:
-        prefix = re.sub(r"[^a-z0-9]", "", layout.branch.name.lower()).lstrip("0123456789") or "area"
-        areas = (NamingArea(prefix=prefix, start=0.0, end=layout.length + 1.0),)
+        areas = (_default_area(layout),)
     areas = tuple(areas)
     slots = slot_names(layout.placements, areas, builder.scheme.device)
     for placement in layout.placements:

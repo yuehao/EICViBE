@@ -107,12 +107,22 @@ def test_bar_mode_retunes_fifteen_ltr_quadrupoles(ein):
     assert all(lattice.placement(s.occurrence).branch_id == lattice.layout("ltr").id for s in ein.bar_mode)
 
 
-def test_registry_covers_every_branch_but_not_the_shared_septum(ein):
+def test_registry_covers_every_branch_and_the_septum_once(ein):
+    lattice = ein.lattice
     registry = ein_registry(ein)
-    assert registry.check_against(ein.lattice) == []
+    assert registry.check_against(lattice) == []
     assert {d.name.split("-")[0] for d in registry.devices} == set(TEMPORARY_AREAS.values())
-    traversals = {t.occurrence for t in ein.lattice.shared_components[0].traversals}
-    assert not any(set(d.occurrences) & traversals for d in registry.devices)
+    traversals = {t.occurrence for t in lattice.shared_components[0].traversals}
+    [septum] = [d for d in registry.devices if set(d.occurrences) & traversals]
+    assert septum.name == "bar-sptm18-ps" and set(septum.occurrences) == traversals
+    # One pulsed supply: the field of the injection and extraction bends, never the stored beam's kicker.
+    setting = registry.channel("bar-sptm18-ps:sp")
+    assert {lattice.placement(t).name for t in setting.binding.targets} == {"iseptum", "eseptum"}
+    for name, branch in (("iseptum", "itl"), ("eseptum", "etl")):
+        bend = lattice.placement(name, branch=branch).element
+        assert bend.MagneticMultipoleP.Kn0 == pytest.approx(bend.BendP.angle_ref / bend.length)
+        assert not bend.BendP.Kn0_from_g_ref  # so that 0 A means no field
+    assert lattice.placement("septum", branch="bar").kind.value == "Kicker"
 
 
 def test_temporary_names_can_change_without_changing_devices(ein):
@@ -135,3 +145,30 @@ def test_save_writes_the_lattice_and_its_companions(ein, tmp_path):
 
 def test_assembly_is_reproducible(ein):
     assert build_ein(FOLDER).lattice.digest == ein.lattice.digest
+
+
+def test_the_floor_plan_closes_through_the_one_septum(ein):
+    from eicvibe.geometry import floor_geometry
+
+    lattice = ein.lattice
+    geometry = floor_geometry(lattice)
+    assert all(b.placed_by or b.branch == lattice.root_branch for b in geometry.branches.values())
+    [closure] = geometry.closures  # the loop LTR -> ITL -> BAR -> ETL -> LTR
+    assert closure.position_error < 1e-9 and closure.angle_error < 1e-9
+
+    def frames(name, branch):
+        placed = lattice.placement(name, branch=branch)
+        return geometry.branches[placed.branch_id].frames[placed.index]
+
+    # One rectangular magnet: a bend for the injected and extracted beams, a pulsed-off kicker
+    # for the stored beam, which passes along its axis. The injected beam leaves it 1.75 mrad
+    # (its e2) off the stored orbit, and the extracted beam enters 1.75 mrad off.
+    injection, circulation, extraction = (
+        frames("iseptum", "itl"),
+        frames("septum", "bar"),
+        frames("eseptum", "etl"),
+    )
+    assert circulation.exit.r == pytest.approx(injection.exit.r, abs=1e-12)
+    assert circulation.exit.angles[0] - injection.exit.angles[0] == pytest.approx(1.75e-3)
+    assert extraction.entrance.r == pytest.approx(circulation.entrance.r, abs=1e-12)
+    assert extraction.entrance.angles[0] - circulation.entrance.angles[0] == pytest.approx(1.75e-3)

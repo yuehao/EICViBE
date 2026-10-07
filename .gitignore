@@ -12,3 +12,9 @@ wheels/
 CURRENT_CODE_AUDIT.md
 IMPLEMENTATION_ROADMAP.md
 REBUILD_PLAN.md
+
+# Web client
+web/node_modules/
+web/test-results/
+web/playwright-report/
+src/eicvibe/api/static/

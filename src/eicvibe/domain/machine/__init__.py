@@ -1,6 +1,6 @@
 """Devices and channels of the control system, named after EIC-SEG-RSI-009 (ADR 0003)."""
 
-from .generate import generate_machine_registry, generate_registry
+from .generate import add_shared_magnet_supply, generate_machine_registry, generate_registry
 from .naming import (
     EicName,
     NamingArea,
@@ -46,6 +46,7 @@ __all__ = [
     "ParameterBinding",
     "ParsedName",
     "ValueType",
+    "add_shared_magnet_supply",
     "default_repository",
     "eic_device",
     "generate_machine_registry",

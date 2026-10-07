@@ -19,7 +19,16 @@ Branches and connections, in beam order:
   operation the beam continues along ``ltr``;
 - ``itl`` to ``bar`` through the septum: ISEPTUM and the ring SEPTUM are the
   injection and circulation traversals of the shared component ``bar_septum``;
-- ``bar`` to ``etl`` through the same septum, whose extraction traversal is ESEPTUM;
+- ``bar`` to ``etl`` through the same septum, whose extraction traversal is ESEPTUM.
+  The septum is one magnet that each line models for its own beam. Its field
+  is on for the injected and extracted beams, so ISEPTUM and ESEPTUM are
+  bends; it is pulsed so that the stored beam does not see it, so the BAR's
+  SEPTUM is a kicker. It is rectangular (the bends' faces are parallel, 0.4 m
+  apart along the stored beam), and the floor geometry joins the lines at its
+  faces, which closes the LTR-ITL-BAR-ETL loop exactly. Its one pulsed supply,
+  ``bar-sptm18-ps`` with the temporary names, sets the field of ISEPTUM and
+  ESEPTUM, which therefore give it explicitly (``Kn0``, not the reference
+  field), so that a supply at 0 A means no field;
 - ``etl`` back to ``ltr``, landing just after LTR_MARK_P2;
 - ``ltr`` to ``rcs`` at the injection point, the marker right after MQA_US;
 - a fork at the extraction point, the marker right after ES.PIP03, to
@@ -29,7 +38,6 @@ The RCS file is written at its extraction energy (9 GeV, 30 MV per cavity).
 As in EIN_connection.ipynb, the RCS is pinned at injection: 0.75 GeV and the
 RF of the parameter database's ramp at t = 0. Which path the beam takes is a
 scenario choice, not part of the lattice (ADR 0001). Not modelled yet: the
-+1.75 mrad frame rotation of the septum handoffs (floor geometry) and the
 preinjector, which exists as GPT and PARMELA input only.
 
 Names are temporary: SEG has not assigned EIC area prefixes to these
@@ -57,6 +65,7 @@ from eicvibe.domain.machine import (
     NamingArea,
     NamingRepository,
     NamingScheme,
+    add_shared_magnet_supply,
     default_repository,
     generate_machine_registry,
 )
@@ -98,6 +107,9 @@ TEMPORARY_AREAS: Mapping[str, str] = MappingProxyType(
 )
 
 _RINGS = {"bar", "rcs"}
+#: The septum ITL, BAR and ETL share: a bend for injected and extracted beam, a kicker for the stored beam.
+SEPTUM = "bar_septum"
+_SEPTUM_DRIVEN = ("injection", "extraction")
 _BRANCHES = ("ltr", "itl", "bar", "etl", "rcs", "rte")
 
 
@@ -184,6 +196,17 @@ def build_ein(
         cavities = [p for p in draft.layout("rcs").placements if p.kind is ElementKind.RFCAVITY]
         for definition in {p.definition.id for p in cavities}:
             builder.update_element(definition, RFP={"voltage": rcs_rf_voltage / len(cavities)})
+    # The septum's own supply sets its field for the injected and extracted beams: state it, so
+    # that zero means no field instead of the reference field.
+    [septum] = draft.shared_components
+    for traversal in septum.traversals:
+        if traversal.role in _SEPTUM_DRIVEN:
+            placed = draft.placement(traversal.occurrence)
+            builder.update_element(
+                placed.definition.id,
+                MagneticMultipoleP={"Kn0": placed.element.BendP.angle_ref / placed.length},
+                BendP={"Kn0_from_g_ref": False},
+            )
     lattice = builder.build()
 
     bar_mode = (
@@ -222,11 +245,23 @@ def ein_registry(
 ) -> MachineRegistry:
     """Devices and channels of every EIN branch, named with ``areas`` and ``scheme``.
 
-    Device ids do not depend on the names, so a registry regenerated with
-    official names keeps the identity of every device.
+    The shared septum is one device at its three traversals, with one pulsed
+    supply that sets the field of the injection and extraction bends and
+    never that of the BAR's kicker. Device ids do not depend on the names, so
+    a registry regenerated with official names keeps the identity of every device.
     """
     lattice = ein.lattice if isinstance(ein, Ein) else ein
-    return generate_machine_registry(lattice, ein_areas(lattice, areas), scheme=scheme)
+    named = ein_areas(lattice, areas)
+    registry = generate_machine_registry(lattice, named, scheme=scheme)
+    return add_shared_magnet_supply(
+        registry,
+        lattice,
+        SEPTUM,
+        home="circulation",
+        driven=_SEPTUM_DRIVEN,
+        areas=named["bar"],
+        scheme=scheme,
+    )
 
 
 def ein_repository(areas: Mapping[str, str] | None = None) -> NamingRepository:
