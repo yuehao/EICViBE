@@ -9,10 +9,11 @@ authors = [
 requires-python = ">=3.14"
 dependencies = [
     "pydantic>=2.12",
+    "ruamel-yaml>=0.18",
 ]
 
 [project.scripts]
-eicvibe = "eicvibe:main"
+eicvibe = "eicvibe.store.cli:main"
 eicvibe-web = "eicvibe.api.__main__:main"
 
 [project.optional-dependencies]

@@ -48,9 +48,10 @@ export function Inspector({ digest, occurrence, branchName, describe, onGo, onGo
       <header>
         <h2>
           <i className="swatch" style={{ background: swatch(detail.kind) }} />
-          {detail.name}
+          {detail.eic_name ?? detail.name}
         </h2>
         <div className="muted">
+          {detail.eic_name ? <>lattice name <code>{detail.name}</code> · </> : null}
           {detail.kind}
           {detail.element !== detail.name ? <> · element <code>{detail.element}</code></> : null} · branch{" "}
           <button type="button" className="link" onClick={() => onGoBranch(detail.branch)}>
@@ -194,6 +195,9 @@ export function Inspector({ digest, occurrence, branchName, describe, onGo, onGo
                   ))}
                 </tbody>
               </table>
+              {device.power.map((power) => (
+                <PowerCircuit key={power.circuit} power={power} detail={detail} describe={describe} />
+              ))}
             </div>
           ))}
         </section>
@@ -235,6 +239,52 @@ function PoseRow({ label, pose }: { label: string; pose: Pose }) {
         <td key={k + 3}>{formatNumber(v, 7)}</td>
       ))}
     </tr>
+  );
+}
+
+type Power = OccurrenceDetail["devices"][number]["power"][number];
+
+/** A supply's circuit as it concerns the magnet shown: string or alone, what it sets, transfer function. */
+function PowerCircuit({ power, detail, describe }: { power: Power; detail: OccurrenceDetail; describe: Props["describe"] }) {
+  const names = (ids: string[]) => {
+    const shown = ids.slice(0, 6).map((id) => describe(id)?.name ?? id);
+    return shown.join(", ") + (ids.length > 6 ? ` and ${ids.length - 6} more` : "");
+  };
+  return (
+    <div className="power">
+      <div>
+        {power.series ? (
+          <>
+            <strong>string {power.name}</strong> <span className="muted">· {power.magnets} magnets in series</span>
+          </>
+        ) : (
+          <strong>powered on its own</strong>
+        )}
+      </div>
+      {power.parameter ? (
+        <>
+          <div>
+            sets <code>{power.parameter}</code>
+            {power.polarity === -1 ? <span className="muted"> · wired reversed</span> : null}
+          </div>
+          {power.transfer ? (
+            <div>
+              {power.transfer.summary}{" "}
+              <span className={`badge ${power.transfer.source}`} title="Where the transfer function comes from">
+                {power.transfer.source}
+              </span>
+            </div>
+          ) : null}
+          {power.design_current != null ? (
+            <div className="muted">
+              design: {formatNumber(power.design_current, 6)} {power.transfer?.engineering_unit ?? ""}
+            </div>
+          ) : null}
+        </>
+      ) : (
+        <div className="muted">sets {names(power.occurrences.filter((o) => o !== detail.id))}, not this traversal</div>
+      )}
+    </div>
   );
 }
 

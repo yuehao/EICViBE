@@ -18,6 +18,11 @@ import { readTheme, useCanvas, type Theme } from "./useCanvas";
 
 const RULER = 22;
 const FLAGS = 18;
+/** Space left and right of the visible s range, px, so the ends of a branch stand clear of the edges. */
+const MARGIN = 24;
+
+/** Width the visible s range spans, px. */
+const span = (width: number) => Math.max(width - 2 * MARGIN, 1);
 
 export interface LinearViewHandle {
   showAll(): void;
@@ -42,7 +47,8 @@ interface Flag {
   branch: string;
   occurrence: string | null;
   landing: number;
-  x?: number;
+  /** Clickable extent of the drawn flag and its label, px; undefined when out of view. */
+  hit?: [number, number];
 }
 
 export function LinearView(props: Props) {
@@ -81,10 +87,12 @@ export function LinearView(props: Props) {
       const shown = range.get();
       if (!branch || !shown) return;
       const { s0, s1 } = shown;
-      const k = width / (s1 - s0);
+      const k = span(width) / (s1 - s0);
       if (readout.current)
         readout.current.textContent = `${branch.name}: s ${formatMetres(Math.max(s0, 0), 2)} – ${formatMetres(Math.min(s1, branch.length), 2)} of ${formatMetres(branch.length, 2)} m`;
-      const toX = (s: number) => (s - s0) * k;
+      const toX = (s: number) => MARGIN + (s - s0) * k;
+      // The margins show a little more of the branch, where there is more to show.
+      const sLeft = Math.max(s0 - MARGIN / k, 0), sRight = Math.min(s1 + MARGIN / k, branch.length);
       const top = RULER + FLAGS, axis = top + (height - top) / 2;
       // Height of a dipole block; other kinds are fractions of it (kinds.ts), as in the earlier viewer.
       const dipole = Math.min(40, Math.max(14, (height - top) * 0.34));
@@ -108,7 +116,7 @@ export function LinearView(props: Props) {
       ctx.textAlign = "center";
       ctx.lineWidth = 1;
       ctx.beginPath();
-      for (let s = Math.ceil(s0 / step) * step; s <= s1; s += step) {
+      for (let s = Math.ceil(sLeft / step) * step; s <= sRight + 1e-9; s += step) {
         const x = Math.round(toX(s)) + 0.5;
         ctx.moveTo(x, RULER - 4);
         ctx.lineTo(x, height);
@@ -117,13 +125,13 @@ export function LinearView(props: Props) {
       ctx.stroke();
       ctx.strokeStyle = t.axis;
       ctx.beginPath();
-      ctx.moveTo(0, axis + 0.5);
-      ctx.lineTo(width, axis + 0.5);
+      ctx.moveTo(Math.max(toX(0), 0), axis + 0.5); // the beam line exists over the branch only
+      ctx.lineTo(Math.min(toX(branch.length), width), axis + 0.5);
       ctx.stroke();
 
       // Elements in view
-      const first = occurrenceAt(branch, s0);
-      const last = occurrenceAt(branch, s1);
+      const first = occurrenceAt(branch, sLeft);
+      const last = occurrenceAt(branch, sRight);
       const labels: [number, number, string][] = [];
       ctx.globalAlpha = 0.85;
       for (let i = first; i <= last; i++) {
@@ -131,7 +139,7 @@ export function LinearView(props: Props) {
         if (!r || (branch.kinds[i] === "Marker" && k < 20)) continue;
         ctx.fillStyle = kindColor(branch.kinds[i]!, t.dark);
         ctx.fillRect(r.x, r.y, r.w, r.h);
-        if (r.w > 40) labels.push([r.x + r.w / 2, r.below ? r.y + r.h + 11 : r.y - 4, branch.names[i]!]);
+        if (r.w > 40) labels.push([r.x + r.w / 2, r.below ? r.y + r.h + 11 : r.y - 4, branch.labels[i]!]);
       }
       ctx.globalAlpha = 1;
       ctx.fillStyle = t.text;
@@ -148,10 +156,12 @@ export function LinearView(props: Props) {
       const forkColor = kindColor("Fork", t.dark);
       ctx.textAlign = "left";
       for (const flag of flags.current) {
-        flag.x = undefined;
-        if (flag.s < s0 || flag.s > s1) continue;
+        flag.hit = undefined;
+        if (flag.s < sLeft || flag.s > sRight) continue;
         const x = Math.round(toX(flag.s)) + 0.5;
-        flag.x = x;
+        const label = ctx.measureText(flag.label).width;
+        const onRight = x + 3 + label <= width; // else the label goes left of its line
+        flag.hit = onRight ? [x - 4, x + 3 + label] : [x - 3 - label, x + 4];
         ctx.strokeStyle = forkColor;
         ctx.setLineDash([4, 3]);
         ctx.beginPath();
@@ -160,7 +170,7 @@ export function LinearView(props: Props) {
         ctx.stroke();
         ctx.setLineDash([]);
         ctx.fillStyle = forkColor;
-        ctx.fillText(flag.label, x + 3, RULER + 12);
+        ctx.fillText(flag.label, onRight ? x + 3 : x - 3 - label, RULER + 12);
       }
 
       // Hover and selection: an outline around the element's own block.
@@ -225,13 +235,13 @@ export function LinearView(props: Props) {
     };
     const sAt = (x: number) => {
       const shown = range.get()!;
-      return shown.s0 + (x / sizeRef.current.width) * (shown.s1 - shown.s0);
+      return shown.s0 + ((x - MARGIN) / span(sizeRef.current.width)) * (shown.s1 - shown.s0);
     };
     const pick = (x: number, y: number): Target | null => {
       const b = state.current.branch;
       const shown = range.get();
       if (!b || !shown || y < RULER + FLAGS) return null;
-      const k = sizeRef.current.width / (shown.s1 - shown.s0);
+      const k = span(sizeRef.current.width) / (shown.s1 - shown.s0);
       const s = sAt(x);
       const tolerance = 4 / k;
       let best: number | null = null, bestScore = Infinity;
@@ -250,7 +260,7 @@ export function LinearView(props: Props) {
       return best === null ? null : { branch: b.id, index: best };
     };
     const flagAt = (x: number, y: number) =>
-      y < RULER + FLAGS ? flags.current.find((f) => f.x !== undefined && Math.abs(f.x - x) < 40 && x >= f.x - 4) : undefined;
+      y < RULER + FLAGS ? flags.current.find((f) => f.hit && x >= f.hit[0] && x <= f.hit[1]) : undefined;
     const showTip = (x: number, y: number, target: Target | null) => {
       const tip = tooltip.current;
       const b = state.current.branch;
@@ -263,7 +273,8 @@ export function LinearView(props: Props) {
       const strength = strengthText(b, i, (v) => formatNumber(v, 5));
       tip.textContent = "";
       const lines = [
-        b.names[i]!,
+        b.labels[i]!,
+        ...(b.eicNames[i] ? [`lattice name ${b.names[i]}`] : []),
         `${b.kinds[i]} · s = ${formatMetres(b.s[i]!, 4)} … ${formatMetres(b.s[i]! + b.lengths[i]!, 4)} m`,
         ...(strength ? [strength] : []),
         ...(b.devices[i] ? [b.devices[i]!] : []),
@@ -291,7 +302,7 @@ export function LinearView(props: Props) {
         const dx = p.x - start.x;
         if (dragged || Math.abs(dx) > 3) {
           dragged = true;
-          const ds = (dx / sizeRef.current.width) * (start.range.s1 - start.range.s0);
+          const ds = (dx / span(sizeRef.current.width)) * (start.range.s1 - start.range.s0);
           range.set(clampRange({ s0: start.range.s0 - ds, s1: start.range.s1 - ds }, limits(b)));
           if (tooltip.current) tooltip.current.hidden = true;
         }

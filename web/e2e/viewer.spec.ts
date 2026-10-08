@@ -9,10 +9,11 @@ async function open(page: Page, hash = "") {
   await expect(rows(page).first()).toBeVisible();
 }
 
+/** Select an element by its lattice name through the search box. */
 async function find(page: Page, name: string) {
   await page.getByLabel("Find element").fill(name);
-  await page.getByRole("option", { name: new RegExp(`^${name}\\b`) }).first().click();
-  await expect(page.getByTestId("inspector").getByRole("heading", { name })).toBeVisible();
+  await page.getByRole("option", { name: new RegExp(`\\b${name}\\b`) }).first().click();
+  await expect(page.getByTestId("inspector").getByText(name, { exact: true }).first()).toBeVisible();
 }
 
 test("shows the floor plan, the linear view and the element table", async ({ page }) => {
@@ -36,15 +37,18 @@ test("a selection is linked across views and survives a reload of its URL", asyn
   await open(page);
   await rows(page).filter({ hasText: "QD_3" }).click();
   const inspector = page.getByTestId("inspector");
-  await expect(inspector.getByRole("heading", { name: "QD_3" })).toBeVisible();
+  await expect(inspector.getByRole("heading", { name: /^dr-q\d+/ })).toBeVisible(); // its EIC name
+  await expect(inspector.getByText("QD_3", { exact: true })).toBeVisible(); // and its lattice name
   await expect(inspector.getByText("dr-")).not.toHaveCount(0); // device names from the registry
-  await expect(inspector.getByText(/drives MagneticMultipoleP\.Kn1/)).toBeVisible();
+  await expect(inspector.getByText("string QD")).toBeVisible(); // a quadrupole family on one supply
+  await expect(inspector.getByText(/magnets in series/)).toBeVisible();
+  await expect(inspector.getByText(/field = 0\.1 T\/m\/A × I/)).toBeVisible(); // its transfer function
   await expect(page).toHaveURL(/sel=occ_/);
   const url = page.url();
 
   const other = await page.context().newPage();
   await other.goto(url);
-  await expect(other.getByTestId("inspector").getByRole("heading", { name: "QD_3" })).toBeVisible();
+  await expect(other.getByTestId("inspector").getByText("QD_3", { exact: true })).toBeVisible();
   await expect(other.locator(".tr.selected")).toContainText("QD_3");
 });
 

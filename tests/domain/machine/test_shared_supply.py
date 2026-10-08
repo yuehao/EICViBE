@@ -6,7 +6,8 @@ import pytest
 
 from eicvibe.domain.lattice import LatticeBuilder, SequentialIds
 from eicvibe.domain.lattice.conventions import rigidity_from_P
-from eicvibe.domain.machine import NamingArea, add_shared_magnet_supply, generate_machine_registry
+from eicvibe.domain.machine import NamingArea, SharedMagnet, generate_machine_registry
+from eicvibe.domain.machine.power import circuit_strengths, magnet_current
 
 PC = 0.75e9
 RIGIDITY = rigidity_from_P(PC, charge=-1)
@@ -33,11 +34,10 @@ def septum_lattice(drive_kicker: bool = False):
     return b.build()
 
 
-def with_supply(lattice, prefix="dr", **options):
-    registry = generate_machine_registry(lattice)
+def with_supply(lattice, prefix="dr", home="circulation", driven=("injection", "extraction")):
     areas = (NamingArea(prefix=prefix, start=0.0, end=lattice.layout("ring").length + 1.0),)
-    options = {"home": "circulation", "driven": ("injection", "extraction"), "areas": areas, **options}
-    return add_shared_magnet_supply(registry, lattice, "septum", **options)
+    shared = {"septum": SharedMagnet(home=home, driven=driven)}
+    return generate_machine_registry(lattice, {"ring": areas, "inj": None, "ext": None}, shared=shared)
 
 
 def test_the_septum_is_one_device_at_every_traversal():
@@ -48,22 +48,31 @@ def test_the_septum_is_one_device_at_every_traversal():
     assert set(device.occurrences) == traversals
     assert device.name == "dr-sptm2-ps"  # the ring slot: its exit is 2.4 m from the start
     assert [c.name for c in registry.channels_of(device.id)] == ["dr-sptm2-ps:sp", "dr-sptm2-ps:rb"]
+    # One magnet, one name, at every traversal; no traversal is named on its own.
+    [slot] = [s for s in registry.slots if set(s.occurrences) & traversals]
+    assert slot.name == "dr-sptm2" and set(slot.occurrences) == traversals
     assert registry.check_against(lattice) == []
     renamed = with_supply(lattice, prefix="xr")
-    assert renamed.devices[-1].id == device.id and renamed.devices[-1].name == "xr-sptm2-ps"
+    [again] = [d for d in renamed.devices if d.id == device.id]
+    assert again.name == "xr-sptm2-ps"
 
 
 def test_its_setting_drives_the_bends_and_never_the_stored_beam():
     lattice = septum_lattice()
-    setting = with_supply(lattice).channel("dr-sptm2-ps:sp")
-    driven = {lattice.placement(t).name for t in setting.binding.targets}
-    assert driven == {"SI_1", "SX_1"} and setting.binding.parameter == "MagneticMultipoleP.Kn0"
-    calibration, (low, high) = setting.binding.calibration, setting.control_limits
+    registry = with_supply(lattice)
+    setting = registry.channel("dr-sptm2-ps:sp")
+    [magnet] = registry.circuit(setting.binding.circuit).magnets  # one magnet, one transfer function ...
+    driven = {lattice.placement(t).name for t in magnet.occurrences}
+    assert driven == {"SI_1", "SX_1"} and magnet.parameter == "MagneticMultipoleP.Kn0"  # ... for two beams
+    low, high = setting.control_limits
     design = ANGLE / LENGTH
-    current = calibration.to_engineering(design, low, high, rigidity=RIGIDITY)
+    current = magnet_current(lattice, magnet, design, (low, high))
     assert low == 0.0 < current < high  # a positive current gives the design field of either sign
-    assert calibration.to_model(current, rigidity=RIGIDITY) == pytest.approx(design)
-    assert calibration.to_model(0.0, rigidity=RIGIDITY) == 0.0  # and 0 A no field
+    strengths = circuit_strengths(lattice, registry.circuit(setting.binding.circuit), current)
+    assert list(strengths.values()) == pytest.approx([design, design])  # one field, both beams
+    assert all(
+        v == 0.0 for v in circuit_strengths(lattice, registry.circuit(setting.binding.circuit), 0.0).values()
+    )
 
 
 def test_only_bends_can_be_driven_and_names_must_exist():
@@ -73,4 +82,4 @@ def test_only_bends_can_be_driven_and_names_must_exist():
     with pytest.raises(KeyError, match="no traversal 'stored'"):
         with_supply(lattice, home="stored")
     with pytest.raises(KeyError, match="no shared component"):
-        add_shared_magnet_supply(generate_machine_registry(lattice), lattice, "kicker", home="x", driven=())
+        generate_machine_registry(lattice, shared={"kicker": SharedMagnet(home="x", driven=())})

@@ -1,68 +1,177 @@
-"""A registry generated from a lattice, with EIC names (ADR 0003, plan step 2).
+"""A starting description of a machine's devices, generated from its lattice (ADR 0003).
 
 The virtual accelerator needs devices before the real device list exists.
-Devices are named from their lattice slots (EIC-SEG-RSI-009 Rev 02, see
-:mod:`.naming`), with the tokens of a :class:`~.naming.NamingScheme`. With
-the default scheme:
+:func:`describe_machine` applies rules to a lattice and returns a
+:class:`~.description.MachineDescription`, which is what a machine's naming
+and device files hold; people then edit those files (:mod:`eicvibe.store`).
+:func:`generate_machine_registry` assembles a registry straight from the rules.
 
-- every quadrupole, sextupole, octupole and corrector has its own supply,
-  ``<slot>-ps``, with ``:sp`` and ``:rb`` (as the standard's example
-  "es6-qf50_2-ps, the supply powering the second focusing quadrupole"); a
+The rules, with EIC names (EIC-SEG-RSI-009 Rev 02, :mod:`.naming`) for every
+element that has a device abbreviation, drifts and markers included, as in
+the ESR naming table (``ltr-q6``, ``ltr-dt5``):
+
+- every bend, quadrupole, sextupole and octupole is on a power circuit
+  (:mod:`.power`) whose supply has ``:sp`` and ``:rb``, in A. A magnet
+  powered on its own has the supply ``<name>-ps`` (as the standard's example
+  "es6-qf50_2-ps, the supply powering the second focusing quadrupole"). The
+  kinds in ``series`` are wired in strings instead: magnets of one kind in a
+  branch with the same length and the same design strength (within
+  :data:`SERIES_LENGTH_TOLERANCE` and :data:`SERIES_STRENGTH_TOLERANCE`),
+  whatever their lattice definitions, most likely share a supply. It is
+  named after the string's first magnet. A magnet at zero strength has no
+  family current to share and is powered on its own;
+- every corrector has its own supply, with one circuit per plane; a
   two-plane corrector has ``:sp:h``, ``:sp:v`` and their readbacks;
-- every BPM (Instrument) reads ``<slot>:rdx`` and ``<slot>:rdy``, in mm;
-- every RF cavity has ``<slot>:sp:volt`` (MV), ``<slot>:sp:phase`` (deg)
+- every BPM (Instrument) reads ``<name>:rdx`` and ``<name>:rdy``, in mm;
+- every RF cavity has ``<name>:sp:volt`` (MV), ``<name>:sp:phase`` (deg)
   and their readbacks;
-- a periodic branch has a tune monitor, ``<machine>-btun-rdx`` and ``-rdy``.
+- a periodic branch has a tune monitor, ``<machine>-btun-rdx`` and ``-rdy``;
+- a magnet that several branches pass through (a shared component, given
+  in ``shared``) is named once and has one supply, which sets the bends at
+  its ``driven`` traversals and nothing else: a septum's field is on for the
+  injected and extracted beams and pulsed off for the stored beam.
 
-A shared component (one magnet that several branches pass through) gets no
-device here, since one magnet must not appear as several devices.
-:func:`add_shared_magnet_supply` describes its single supply explicitly.
-
-Device ids derive from the lattice (the occurrence a device sits at, or the
-branch of a tune monitor), not from names, so renaming areas or tokens keeps
-every device's identity. :meth:`MachineRegistry.naming_problems` reports the
-tokens the naming repository does not list yet. Calibrations are linear
-placeholders with typical magnitudes and the polarity of the design value,
-so supplies run at positive currents; replace them with measured transfer
-functions.
+Each magnet's transfer function is a linear placeholder of typical
+magnitude, per length (integrated only for a thin magnet), and its polarity
+that of its design value, so supplies run at positive currents; replace
+them, magnet by magnet, with measured curves or a transfer-function service.
+Ids derive from the description's keys and the lattice's ids, never from
+names, so renaming areas or tokens keeps every device's identity.
 """
 
 import math
-import re
 from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 
-from ..lattice import SPECIES, ElementKind, Lattice
-from ..lattice.conventions import rigidity_from_P
-from ..lattice.ids import derived_id
-from .naming import NamingArea, NamingScheme, non_lattice_name, slot_names
-from .registry import (
-    Calibration,
-    Channel,
-    ChannelRole,
-    Device,
-    DeviceType,
-    MachineRegistry,
-    Observable,
-    ObservableBinding,
-    ParameterBinding,
+from ..lattice import ElementKind, Lattice
+from .description import (
+    Bpm,
+    MachineDescription,
+    Naming,
+    RfStation,
+    SharedName,
+    Supply,
+    SupplyCircuit,
+    TuneMonitor,
+    assemble_registry,
+    default_area,
 )
+from .naming import NamingArea, NamingScheme
+from .power import CircuitMagnet, PolynomialTransfer, design_value, rigidity
+from .registry import MachineRegistry
 
 #: Placeholder field per ampere: T/m for a quadrupole, T/m^2 for a sextupole, T/m^3 for an octupole.
 PLACEHOLDER_GRADIENT_PER_AMPERE = {1: 0.1, 2: 1.0, 3: 10.0}
 #: Placeholder integrated corrector field per ampere, T m.
 PLACEHOLDER_CORRECTOR_PER_AMPERE = 1e-3
-#: Placeholder dipole field per ampere, T (a septum supply).
+#: Placeholder dipole field per ampere, T.
 PLACEHOLDER_DIPOLE_PER_AMPERE = 1e-3
 #: Placeholder current ranges, A: magnets run to twice their design current or at least this.
 PLACEHOLDER_MAGNET_CURRENT = 100.0
 PLACEHOLDER_CORRECTOR_CURRENT = 50.0
 
-_ORDER = {ElementKind.QUADRUPOLE: 1, ElementKind.SEXTUPOLE: 2, ElementKind.OCTUPOLE: 3}
+#: Magnets of one kind whose lengths (m) and design strengths (relative) agree within these are
+#: taken to be one family, wired in series where their kind is.
+SERIES_LENGTH_TOLERANCE = 1e-6
+SERIES_STRENGTH_TOLERANCE = 1e-6
+
+#: Magnets on power circuits, by the multipole order of their main field.
+_ORDER = {ElementKind.BEND: 0, ElementKind.QUADRUPOLE: 1, ElementKind.SEXTUPOLE: 2, ElementKind.OCTUPOLE: 3}
 
 
-def _field_unit(power: int) -> str:
-    """T/m^power, the field unit of a multipole of that many transverse derivatives."""
-    return {0: "T", 1: "T/m"}.get(power, f"T/m^{power}")
+@dataclass(frozen=True)
+class SharedMagnet:
+    """A magnet that several branches pass through, such as a septum.
+
+    It is named at the ``home`` traversal (with ``abbreviation``), and its
+    supply sets the field of the bends at the ``driven`` traversals only.
+    """
+
+    home: str
+    driven: tuple[str, ...]
+    abbreviation: str = "sptm"
+
+
+def placeholder_transfer(order: int, *, thin: bool = False) -> PolynomialTransfer:
+    """The placeholder transfer function of a magnet whose main field has ``order``."""
+    per_ampere = PLACEHOLDER_DIPOLE_PER_AMPERE if order == 0 else PLACEHOLDER_GRADIENT_PER_AMPERE[order]
+    power = order - 1 if thin else order
+    unit = {-1: "T m", 0: "T", 1: "T/m"}.get(power, f"T/m^{power}")
+    return PolynomialTransfer(coefficients=(0.0, per_ampere), field_unit=unit, integrated=thin)
+
+
+def corrector_transfer() -> PolynomialTransfer:
+    return PolynomialTransfer(
+        coefficients=(0.0, PLACEHOLDER_CORRECTOR_PER_AMPERE), field_unit="T m", integrated=True
+    )
+
+
+def describe_machine(
+    lattice: Lattice,
+    branches: Mapping[str, Iterable[NamingArea] | None] | Iterable[str] | None = None,
+    *,
+    scheme: NamingScheme | None = None,
+    series: Mapping[str, Iterable[ElementKind]] | None = None,
+    shared: Mapping[str, SharedMagnet] | None = None,
+) -> MachineDescription:
+    """Naming rules and devices of the given branches (all by default), by the rules above.
+
+    ``branches`` maps branch names to their naming areas (None: one area
+    named after the branch), or lists branch names. ``series`` maps branch
+    names to the magnet kinds wired there in strings. ``shared`` maps shared
+    component names to how their one magnet is named and powered.
+    """
+    if branches is None:
+        branches = [b.name for b in lattice.branches]
+    if not isinstance(branches, Mapping):
+        branches = dict.fromkeys(branches)
+    shared = dict(shared or {})
+    components = {c.name: c for c in lattice.shared_components}
+    naming = Naming.from_scheme(
+        scheme or NamingScheme(),
+        # Written out even where they are the default, so the naming file shows every rule.
+        areas={
+            lattice.layout(n).id: tuple(a) if a is not None else (default_area(lattice, n),)
+            for n, a in branches.items()
+        },
+        shared=tuple(
+            SharedName(component=_component(components, name).id, home=m.home, abbreviation=m.abbreviation)
+            for name, m in shared.items()
+        ),
+    )
+    kinds = {lattice.layout(n).id: frozenset(k) for n, k in (series or {}).items()}
+    supplies: list[Supply] = []
+    bpms: list[Bpm] = []
+    rf: list[RfStation] = []
+    tunes: list[TuneMonitor] = []
+    for name in branches:
+        layout = lattice.layout(name)
+        _describe_branch(lattice, layout, kinds.get(layout.id, frozenset()), supplies, bpms, rf)
+        if layout.periodic:
+            tunes.append(TuneMonitor(branch=layout.id))
+    for name, magnet in shared.items():
+        supplies.append(_shared_supply(lattice, _component(components, name), magnet))
+    return MachineDescription(
+        lattice=lattice.name,
+        naming=naming,
+        supplies=tuple(supplies),
+        bpms=tuple(bpms),
+        rf=tuple(rf),
+        tune_monitors=tuple(tunes),
+    )
+
+
+def generate_machine_registry(
+    lattice: Lattice,
+    branches: Mapping[str, Iterable[NamingArea] | None] | Iterable[str] | None = None,
+    *,
+    scheme: NamingScheme | None = None,
+    series: Mapping[str, Iterable[ElementKind]] | None = None,
+    shared: Mapping[str, SharedMagnet] | None = None,
+) -> MachineRegistry:
+    """The registry of :func:`describe_machine`'s description."""
+    description = describe_machine(lattice, branches, scheme=scheme, series=series, shared=shared)
+    return assemble_registry(lattice, description)
 
 
 def generate_registry(
@@ -71,86 +180,150 @@ def generate_registry(
     *,
     areas: Iterable[NamingArea] | None = None,
     scheme: NamingScheme | None = None,
+    series: Iterable[ElementKind] = (),
 ) -> MachineRegistry:
-    """Devices and channels for one branch of ``lattice`` (the root branch by default).
+    """The registry of one branch's devices (the root branch by default).
 
     ``areas`` assign EIC area prefixes and clock positions along the branch,
     e.g. :func:`~eicvibe.domain.machine.naming.ring_sectors` for the ESR. By
     default the whole branch is one area named after the branch, with
     positions in metres from its start. The branch's BeginningEle must carry
-    the reference particle, which scales the placeholder calibrations.
+    the reference particle, which scales the placeholder ranges.
     """
     name = branch or lattice.root_branch
-    return generate_machine_registry(lattice, {name: areas} if areas is not None else [name], scheme=scheme)
+    return generate_machine_registry(lattice, {name: areas}, scheme=scheme, series={name: series})
 
 
-def generate_machine_registry(
-    lattice: Lattice,
-    branches: Mapping[str, Iterable[NamingArea] | None] | Iterable[str] | None = None,
-    *,
-    scheme: NamingScheme | None = None,
-) -> MachineRegistry:
-    """Devices and channels for several branches, every branch by default, in one registry.
+def _round_up(value: float, digits: int = 3) -> float:
+    """``value`` rounded up to ``digits`` significant digits, for ranges people read."""
+    scale = 10.0 ** (math.floor(math.log10(abs(value))) - digits + 1)
+    return round(math.ceil(value / scale - 1e-9) * scale, 12)
 
-    ``branches`` maps branch names to their naming areas (None: one area
-    named after the branch), or lists branch names. Traversals of a shared
-    component (e.g. a septum seen from a ring and from its transfer lines)
-    get no device here: one piece of hardware must not appear as several, so
-    such devices are described explicitly.
+
+def _component(components, name: str):
+    if name not in components:
+        raise KeyError(f"no shared component {name!r}")
+    return components[name]
+
+
+def _main_parameter(placement, order: int) -> str:
+    """The parameter a magnet's circuit sets: integrated where the lattice gives it so."""
+    group = placement.element.MagneticMultipoleP
+    integrated = group is not None and getattr(group, f"Kn{order}L") != 0.0
+    return f"MagneticMultipoleP.Kn{order}{'L' if integrated else ''}"
+
+
+def _strings(placements: list) -> list[list]:
+    """Magnets that most likely share a supply: one kind, the same length and the same design strength.
+
+    Compared as integrated strengths, so a lattice may give either form.
+    Magnets at zero strength are left out. Strings keep beam order.
     """
-    if branches is None:
-        branches = [b.name for b in lattice.branches]
-    if not isinstance(branches, Mapping):
-        branches = dict.fromkeys(branches)
-    builder = _Builder(lattice.name, scheme or NamingScheme())
-    for name, areas in branches.items():
-        _add_branch(builder, lattice, lattice.layout(name), areas)
-    return MachineRegistry(
-        name=f"{lattice.name}-generated",
-        lattice=lattice.name,
-        devices=tuple(builder.devices),
-        channels=tuple(builder.channels),
+    groups: list[tuple[tuple, list]] = []
+    for placement in placements:
+        parameter = _main_parameter(placement, _ORDER[placement.kind])
+        value = design_value(placement, parameter)
+        integrated = value if parameter.endswith("L") else value * placement.length
+        if integrated == 0.0:
+            continue
+        for (kind, length, strength), members in groups:
+            if (
+                kind is placement.kind
+                and abs(length - placement.length) <= SERIES_LENGTH_TOLERANCE
+                and math.isclose(strength, integrated, rel_tol=SERIES_STRENGTH_TOLERANCE)
+            ):
+                members.append(placement)
+                break
+        else:
+            groups.append(((placement.kind, placement.length, integrated), [placement]))
+    return [members for _, members in groups if len(members) > 1]
+
+
+def _describe_branch(lattice, layout, series: frozenset, supplies: list, bpms: list, rf: list) -> None:
+    branch_rigidity = rigidity(lattice, layout.id)
+    placements = [p for p in layout.placements if lattice.component_of(p.id) is None]
+    string_of = {}
+    for string in _strings([p for p in placements if p.kind in series and p.kind in _ORDER]):
+        for placement in string:
+            string_of[placement.id] = string
+    for placement in placements:
+        kind = placement.kind
+        if kind in _ORDER:
+            string = string_of.get(placement.id)
+            if string is None:
+                supplies.append(
+                    _magnet_supply([placement], f"{layout.branch.name}/{placement.name}", branch_rigidity)
+                )
+            elif placement.id == string[0].id:  # the first magnet of a string brings in the whole string
+                families = sorted({p.definition.name for p in string})
+                supplies.append(_magnet_supply(string, "+".join(families), branch_rigidity))
+        elif kind is ElementKind.KICKER:
+            supplies.append(_corrector_supply(placement, f"{layout.branch.name}/{placement.name}"))
+        elif kind is ElementKind.INSTRUMENT:
+            bpms.append(Bpm(occurrence=placement.id))
+        elif kind is ElementKind.RFCAVITY:
+            voltage = placement.element.RFP.voltage if placement.element.RFP else 0.0
+            top = _round_up(max(2.0 * voltage / 1e6, 1.0))
+            rf.append(RfStation(occurrence=placement.id, voltage=(0.0, top)))
+
+
+def _magnet_supply(members: list, key: str, branch_rigidity: float) -> Supply:
+    """One supply driving ``members`` in series, or one magnet alone.
+
+    The supply's range covers twice the largest design current, or at least
+    :data:`PLACEHOLDER_MAGNET_CURRENT`.
+    """
+    order = _ORDER[members[0].kind]
+    magnets, tops, designs = [], [], []
+    for placement in members:
+        parameter = _main_parameter(placement, order)
+        design = design_value(placement, parameter)
+        thin = placement.length == 0.0
+        transfer = placeholder_transfer(order, thin=thin)
+        magnets.append(
+            CircuitMagnet(
+                occurrences=(placement.id,),
+                parameter=parameter,
+                transfer=transfer,
+                polarity=-1 if design < 0 else 1,
+            )
+        )
+        per_length = design if thin or not parameter.endswith("L") else design / placement.length
+        tops.append(2.0 * abs(per_length) * branch_rigidity / transfer.coefficients[1])
+        designs.append(design)
+    top = _round_up(max(*tops, PLACEHOLDER_MAGNET_CURRENT))
+    limits = (0.0, top) if any(designs) else (-top, top)
+    return Supply(key=key, circuits=(SupplyCircuit(limits=limits, magnets=tuple(magnets)),))
+
+
+def _corrector_supply(placement, key: str) -> Supply:
+    tags = placement.element.tags
+    planes = [(None, "Kn0L")] if "HCOR" in tags else [(None, "Ks0L")] if "VCOR" in tags else []
+    planes = planes or [("h", "Kn0L"), ("v", "Ks0L")]
+    limits = (-PLACEHOLDER_CORRECTOR_CURRENT, PLACEHOLDER_CORRECTOR_CURRENT)
+    circuits = tuple(
+        SupplyCircuit(
+            plane=plane,
+            limits=limits,
+            magnets=(
+                CircuitMagnet(
+                    occurrences=(placement.id,),
+                    parameter=f"MagneticMultipoleP.{parameter}",
+                    transfer=corrector_transfer(),
+                ),
+            ),
+        )
+        for plane, parameter in planes
     )
+    return Supply(key=key, circuits=circuits)
 
 
-def add_shared_magnet_supply(
-    registry: MachineRegistry,
-    lattice: Lattice,
-    component: str,
-    *,
-    home: str,
-    driven: Iterable[str],
-    areas: Iterable[NamingArea] | None = None,
-    abbreviation: str = "sptm",
-    scheme: NamingScheme | None = None,
-) -> MachineRegistry:
-    """``registry`` with the one supply of a shared magnet, such as a septum.
-
-    The magnet is one device at every traversal of ``component``. Its supply
-    sets the dipole field (``MagneticMultipoleP.Kn0``) seen by the traversals
-    in roles ``driven``, which must be bends of one design field, and by no
-    other traversal. A septum is pulsed: its field is on for the injected and
-    extracted beams (traversals modelled as bends) and off when the stored
-    beam passes (a traversal modelled as a field-free kicker), so the stored
-    beam never sees the setting. The bends should give their field
-    explicitly, with ``BendP.Kn0_from_g_ref`` false, so that a supply at 0 A
-    means no field rather than the reference field.
-
-    The device is named from the slot of the ``home`` traversal, e.g. the
-    ring's: ``<area><abbreviation><position>-ps`` (``sptm`` is "septum magnet
-    for injection or extraction" in the naming repository). ``areas`` are the
-    naming areas of that branch (default: one area named after it). The
-    device id derives from the component, not the name.
-    """
-    scheme = scheme or NamingScheme()
-    shared = next((c for c in lattice.shared_components if component in (c.id, c.name)), None)
-    if shared is None:
-        raise KeyError(f"no shared component {component!r}")
-    roles = {t.role: lattice.placement(t.occurrence) for t in shared.traversals}
-    missing = [r for r in (home, *driven) if r not in roles]
+def _shared_supply(lattice: Lattice, component, magnet: SharedMagnet) -> Supply:
+    roles = {t.role: lattice.placement(t.occurrence) for t in component.traversals}
+    missing = [r for r in (magnet.home, *magnet.driven) if r not in roles]
     if missing:
-        raise KeyError(f"{shared.name!r} has no traversal {', '.join(map(repr, missing))}")
-    targets = [roles[r] for r in driven]
+        raise KeyError(f"{component.name!r} has no traversal {', '.join(map(repr, missing))}")
+    targets = [roles[r] for r in magnet.driven]
     if not targets:
         raise ValueError("a shared magnet supply needs at least one driven traversal")
     fields, rigidities = [], []
@@ -159,210 +332,22 @@ def add_shared_magnet_supply(
         if bend is None or placed.length == 0.0:
             raise ValueError(f"{placed.name!r} must be a bend with length to be driven by a supply")
         fields.append(bend.angle_ref / placed.length)
-        rigidities.append(_rigidity(lattice, lattice.layout(placed.branch_id)))
+        rigidities.append(rigidity(lattice, placed.branch_id))
     if any(
         not math.isclose(f * r, fields[0] * rigidities[0], rel_tol=1e-9)
         for f, r in zip(fields, rigidities, strict=True)
     ):
-        raise ValueError(f"the driven traversals of {shared.name!r} ask for different fields")
+        raise ValueError(f"the driven traversals of {component.name!r} ask for different fields")
     if any(not math.isclose(r, rigidities[0], rel_tol=1e-9) for r in rigidities):
-        raise ValueError(f"the driven traversals of {shared.name!r} have different reference rigidities")
-
-    home_layout = lattice.layout(roles[home].branch_id)
-    if areas is None:
-        areas = (_default_area(home_layout),)
-    home_id = roles[home].id
-    slots = slot_names(
-        [p for p in home_layout.placements if p.id == home_id], tuple(areas), lambda _: abbreviation
-    )
-    builder = _Builder(lattice.name, scheme)
-    device = builder.device(
-        f"{slots[home_id]}-{scheme.supply}",
-        DeviceType.POWER_SUPPLY,
-        shared.id,
-        tuple(t.occurrence for t in shared.traversals),
-    )
+        raise ValueError(f"the driven traversals of {component.name!r} have different reference rigidities")
     design = fields[0]
-    calibration = Calibration(
-        coefficients=(0.0, (-1.0 if design < 0 else 1.0) * PLACEHOLDER_DIPOLE_PER_AMPERE),
-        engineering_unit="A",
-        field_unit="T",
+    one = CircuitMagnet(
+        occurrences=tuple(p.id for p in targets),
+        parameter="MagneticMultipoleP.Kn0",
+        transfer=placeholder_transfer(0),
+        polarity=-1 if design < 0 else 1,
     )
-    top = max(2.0 * abs(design) * rigidities[0] / PLACEHOLDER_DIPOLE_PER_AMPERE, PLACEHOLDER_MAGNET_CURRENT)
-    binding = ParameterBinding(
-        targets=tuple(p.id for p in targets), parameter="MagneticMultipoleP.Kn0", calibration=calibration
+    top = _round_up(
+        max(2.0 * abs(design) * rigidities[0] / PLACEHOLDER_DIPOLE_PER_AMPERE, PLACEHOLDER_MAGNET_CURRENT)
     )
-    builder.setting(device, (), "A", (0.0, top), binding)
-    return MachineRegistry(
-        name=registry.name,
-        lattice=registry.lattice,
-        devices=(*registry.devices, *builder.devices),
-        channels=(*registry.channels, *builder.channels),
-    )
-
-
-def _rigidity(lattice: Lattice, layout) -> float:
-    conditions = lattice.initial_conditions(layout.id)
-    reference = conditions.reference if conditions else None
-    if reference is None or reference.pc_ref is None or reference.species_ref not in SPECIES:
-        raise ValueError(
-            f"branch {layout.branch.name!r} needs a reference particle with pc_ref and a known species"
-        )
-    return rigidity_from_P(reference.pc_ref, charge=SPECIES[reference.species_ref].charge)
-
-
-def _default_area(layout) -> NamingArea:
-    """The whole branch as one area named after it, with positions from its start."""
-    prefix = re.sub(r"[^a-z0-9]", "", layout.branch.name.lower()).lstrip("0123456789") or "area"
-    return NamingArea(prefix=prefix, start=0.0, end=layout.length + 1.0)
-
-
-def _add_branch(builder: _Builder, lattice: Lattice, layout, areas: Iterable[NamingArea] | None) -> None:
-    rigidity = _rigidity(lattice, layout)
-    if areas is None:
-        areas = (_default_area(layout),)
-    areas = tuple(areas)
-    slots = slot_names(layout.placements, areas, builder.scheme.device)
-    for placement in layout.placements:
-        slot = slots.get(placement.id)
-        kind = placement.element.kind
-        if slot is None or lattice.component_of(placement.id) is not None:
-            continue
-        if kind in _ORDER:
-            builder.magnet(slot, placement, _ORDER[kind], rigidity)
-        elif kind is ElementKind.KICKER:
-            builder.corrector(slot, placement)
-        elif kind is ElementKind.INSTRUMENT:
-            builder.bpm(slot, placement)
-        elif kind is ElementKind.RFCAVITY:
-            builder.rf_station(slot, placement)
-    if layout.periodic:
-        builder.tune_monitor(re.match(r"[a-z]+", areas[0].prefix)[0], layout.branch)
-
-
-class _Builder:
-    def __init__(self, namespace: str, scheme: NamingScheme) -> None:
-        self.namespace = namespace
-        self.scheme = scheme
-        self.devices: list[Device] = []
-        self.channels: list[Channel] = []
-
-    def device(self, name: str, kind: DeviceType, anchor: str, occurrences: tuple[str, ...] = ()) -> Device:
-        """A device whose id derives from ``anchor`` (an occurrence or branch id), not from its name."""
-        device_id = derived_id("dev", self.namespace, anchor, kind.value)
-        device = Device(id=device_id, name=name, type=kind, occurrences=occurrences)
-        self.devices.append(device)
-        return device
-
-    def setting(
-        self,
-        device: Device,
-        signals: tuple[str, ...],
-        unit: str,
-        limits: tuple[float, float],
-        binding: ParameterBinding,
-    ) -> None:
-        """A setting ``<device>:<sp>[:...]`` and its readback ``<device>:<rb>[:...]``."""
-        name = ":".join((device.name, self.scheme.setpoint, *signals))
-        readback = ":".join((device.name, self.scheme.readback, *signals))
-        self.channels += [
-            Channel(
-                name=name,
-                device=device.id,
-                role=ChannelRole.SETTING,
-                unit=unit,
-                control_limits=limits,
-                binding=binding,
-            ),
-            Channel(name=readback, device=device.id, role=ChannelRole.READBACK, unit=unit, readback_of=name),
-        ]
-
-    def supply(self, slot: str, placement) -> Device:
-        name = f"{slot}-{self.scheme.supply}"
-        return self.device(name, DeviceType.POWER_SUPPLY, placement.id, (placement.id,))
-
-    def magnet(self, slot: str, placement, order: int, rigidity: float) -> None:
-        element = placement.element
-        group = element.MagneticMultipoleP
-        integrated = group is not None and getattr(group, f"Kn{order}L") != 0.0
-        parameter = f"Kn{order}L" if integrated else f"Kn{order}"
-        design = getattr(group, parameter) if group is not None else 0.0
-        polarity = -1.0 if design < 0 else 1.0
-        # An integrated strength takes an integrated field; a thin magnet counts as 1 m long here.
-        length = (element.length or 1.0) if integrated else 1.0
-        per_ampere = PLACEHOLDER_GRADIENT_PER_AMPERE[order] * length
-        calibration = Calibration(
-            coefficients=(0.0, polarity * per_ampere),
-            engineering_unit="A",
-            field_unit=_field_unit(order - 1 if integrated else order),
-        )
-        top = max(2.0 * abs(design) * rigidity / per_ampere, PLACEHOLDER_MAGNET_CURRENT)
-        limits = (0.0, top) if design != 0.0 else (-top, top)
-        binding = ParameterBinding(
-            targets=(placement.id,), parameter=f"MagneticMultipoleP.{parameter}", calibration=calibration
-        )
-        self.setting(self.supply(slot, placement), (), "A", limits, binding)
-
-    def corrector(self, slot: str, placement) -> None:
-        supply = self.supply(slot, placement)
-        tags = placement.element.tags
-        horizontal, vertical = self.scheme.planes
-        planes = [((), "Kn0L")] if "HCOR" in tags else [((), "Ks0L")] if "VCOR" in tags else []
-        planes = planes or [((horizontal,), "Kn0L"), ((vertical,), "Ks0L")]
-        calibration = Calibration(
-            coefficients=(0.0, PLACEHOLDER_CORRECTOR_PER_AMPERE), engineering_unit="A", field_unit="T m"
-        )
-        limits = (-PLACEHOLDER_CORRECTOR_CURRENT, PLACEHOLDER_CORRECTOR_CURRENT)
-        for signals, parameter in planes:
-            binding = ParameterBinding(
-                targets=(placement.id,), parameter=f"MagneticMultipoleP.{parameter}", calibration=calibration
-            )
-            self.setting(supply, signals, "A", limits, binding)
-
-    def bpm(self, slot: str, placement) -> None:
-        bpm = self.device(slot, DeviceType.BPM, placement.id, (placement.id,))
-        for signal, observable in (
-            (self.scheme.position_x, Observable.ORBIT_X),
-            (self.scheme.position_y, Observable.ORBIT_Y),
-        ):
-            binding = ObservableBinding(observable=observable, target=placement.id, scale=1e3)
-            self.channels.append(
-                Channel(
-                    name=f"{slot}:{signal}",
-                    device=bpm.id,
-                    role=ChannelRole.MEASUREMENT,
-                    unit="mm",
-                    binding=binding,
-                )
-            )
-
-    def rf_station(self, slot: str, placement) -> None:
-        cavity = self.device(slot, DeviceType.RF_STATION, placement.id, (placement.id,))
-        volts = Calibration(coefficients=(0.0, 1e6), engineering_unit="MV", field_unit="V", normalized=False)
-        degrees = Calibration(
-            coefficients=(0.0, math.pi / 180), engineering_unit="deg", field_unit="rad", normalized=False
-        )
-        rf = placement.element.RFP
-        top = max(2.0 * (rf.voltage if rf else 0.0) / 1e6, 1.0)
-        targets = (placement.id,)
-        voltage = ParameterBinding(targets=targets, parameter="RFP.voltage", calibration=volts)
-        phase = ParameterBinding(targets=targets, parameter="RFP.phase", calibration=degrees)
-        self.setting(cavity, (self.scheme.rf_voltage,), "MV", (0.0, top), voltage)
-        self.setting(cavity, (self.scheme.rf_phase,), "deg", (-180.0, 360.0), phase)
-
-    def tune_monitor(self, machine: str, branch) -> None:
-        name = non_lattice_name(machine, self.scheme.tune_monitor)
-        monitor = self.device(name, DeviceType.TUNE_MONITOR, branch.id)
-        for signal, observable in (
-            (self.scheme.tune_x, Observable.TUNE_X),
-            (self.scheme.tune_y, Observable.TUNE_Y),
-        ):
-            binding = ObservableBinding(observable=observable, target=branch.id)
-            self.channels.append(
-                Channel(
-                    name=non_lattice_name(machine, self.scheme.tune_monitor, signals=(signal,)),
-                    device=monitor.id,
-                    role=ChannelRole.MEASUREMENT,
-                    binding=binding,
-                )
-            )
+    return Supply(key=component.name, circuits=(SupplyCircuit(limits=(0.0, top), magnets=(one,)),))

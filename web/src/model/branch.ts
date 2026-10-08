@@ -13,7 +13,12 @@ export interface BranchModel {
   length: number;
   n: number;
   ids: string[];
+  /** Lattice (design) names. */
   names: string[];
+  /** EIC names from the machine registry, null where there is none. */
+  eicNames: (string | null)[];
+  /** What views show: the EIC name, or the lattice name without one. */
+  labels: string[];
   kinds: string[];
   elements: string[];
   s: Float64Array;
@@ -74,6 +79,8 @@ export function branchModel(data: BranchData, summary: BranchSummary, order: num
     n,
     ids: table.id,
     names: table.name,
+    eicNames: table.eic_name,
+    labels: table.name.map((name, i) => table.eic_name[i] ?? name),
     kinds: table.kind,
     elements: table.element,
     s: Float64Array.from(table.s),

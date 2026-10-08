@@ -586,6 +586,22 @@ table.poses td {
   margin: 4px 0 8px;
 }
 
+.power {
+  margin: 4px 0 2px;
+  padding-left: 8px;
+  border-left: 2px solid var(--border);
+}
+
+.badge.placeholder {
+  background: var(--border);
+  color: var(--text);
+}
+
+.badge.measured {
+  background: #2f9e44;
+  color: #fff;
+}
+
 .copy {
   margin-left: 4px;
   padding: 0 4px;

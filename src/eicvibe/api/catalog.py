@@ -8,9 +8,12 @@ can be computed once and shared. When a file changes on disk the catalog
 loads the new revision on its next refresh; recent older revisions stay
 available, so a client looking at one is not disturbed.
 
-A lattice file ``<stem>_lattice.json`` is paired with the machine registry
-``<stem>_registry.json`` beside it, if that registry describes the lattice.
-A folder contributes every ``*_lattice.json`` in it.
+A source is a machine folder (with ``machine.yaml``; :mod:`eicvibe.store`),
+whose lattice and registry are read from the files people edit, so a saved
+edit shows on the next refresh; or a folder of machine folders; or a lattice
+file ``<stem>_lattice.json``, paired with the machine registry
+``<stem>_registry.json`` beside it if that registry describes the lattice;
+or a folder of such files.
 """
 
 import gzip
@@ -28,6 +31,8 @@ from pydantic import BaseModel
 
 from eicvibe.domain.lattice import Lattice
 from eicvibe.domain.machine import MachineRegistry
+from eicvibe.store import FileError, is_machine, load_machine, source_files
+from eicvibe.store.machine import read_index
 
 from .schemas import SCHEMA_VERSION, LatticeEntry
 from .views import RevisionViews
@@ -63,14 +68,35 @@ class _Once:
         self.value: Payload | None = None
 
 
+def _code_tag() -> str:
+    """Changes whenever the code that builds responses does.
+
+    Part of every ETag, so a browser that cached a response from another
+    server version revalidates to the new one instead of getting 304.
+    """
+    from eicvibe.geometry import floor
+
+    from . import schemas, views
+
+    digest = hashlib.sha256(str(SCHEMA_VERSION).encode())
+    for module in (schemas, views, floor):
+        digest.update(Path(module.__file__).read_bytes())
+    return digest.hexdigest()[:10]
+
+
+CODE_TAG = _code_tag()
+
+
 @dataclass(eq=False)
 class Revision:
-    """One loaded lattice revision and its cached responses."""
+    """One loaded lattice revision, with the registry it was loaded with, and its cached responses."""
 
     source: str
     path: Path
     views: RevisionViews
     loaded_at: datetime
+    registry_tag: str = "none"
+    """Hash of the registry file, or "none": names and devices are part of every response."""
     _cache: dict[str, _Once] = field(default_factory=dict, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
@@ -84,7 +110,7 @@ class Revision:
 
     def etag(self, key: str) -> str:
         """Validator of the response ``key``, known without building it."""
-        return f'"{self.digest[:16]}-{_short_hash(key)}-v{SCHEMA_VERSION}"'
+        return f'"{self.digest[:16]}-{self.registry_tag[:8]}-{_short_hash(key)}-{CODE_TAG}"'
 
     def payload(self, key: str, build: Callable[[], BaseModel], *, keep: bool = True) -> Payload:
         """The response ``key``, built by ``build`` on first use and, if ``keep``, shared afterwards."""
@@ -118,7 +144,9 @@ def _short_hash(text: str) -> str:
 class _Source:
     name: str
     lattice: Path
+    """The lattice file, or the machine folder."""
     registry: Path | None
+    machine: bool = False
 
 
 def _registry_for(path: Path) -> Path | None:
@@ -133,30 +161,47 @@ def _source_name(path: Path) -> str:
 
 
 def discover(paths: Iterable[Path | str]) -> list[_Source]:
-    """Lattice files named by ``paths``: files as given, folders by their ``*_lattice.json``."""
-    found: list[Path] = []
+    """Sources named by ``paths``: machine folders, folders of them, lattice files, folders of those."""
+    found: list[tuple[str, Path, bool]] = []
     for item in map(Path, paths):
-        if item.is_dir():
-            found += sorted(item.glob(f"*{LATTICE_SUFFIX}"))
+        if is_machine(item):
+            found.append((_machine_name(item), item, True))
+        elif item.is_dir():
+            found += [(_machine_name(m), m, True) for m in sorted(item.iterdir()) if is_machine(m)]
+            found += [(_source_name(p), p, False) for p in sorted(item.glob(f"*{LATTICE_SUFFIX}"))]
         elif item.is_file():
-            found.append(item)
+            found.append((_source_name(item), item, False))
         else:
-            raise FileNotFoundError(f"no lattice file or folder at {item}")
+            raise FileNotFoundError(f"no machine folder, lattice file or folder at {item}")
     sources, names = [], set()
-    for path in found:
-        name, n = _source_name(path), 2
+    for base, path, machine in found:
+        name, n = base, 2
         while name in names:
-            name, n = f"{_source_name(path)}-{n}", n + 1
+            name, n = f"{base}-{n}", n + 1
         names.add(name)
-        sources.append(_Source(name, path.resolve(), _registry_for(path)))
+        registry = None if machine else _registry_for(path)
+        sources.append(_Source(name, path.resolve(), registry, machine))
     return sources
 
 
+def _machine_name(folder: Path) -> str:
+    try:
+        return str(read_index(folder)["name"])
+    except FileError:
+        return folder.name
+
+
 def load_revision(source: _Source) -> Revision:
+    if source.machine:
+        machine = load_machine(source.lattice)
+        registry_tag = hashlib.sha256(machine.registry.model_dump_json().encode()).hexdigest()[:12]
+        views = RevisionViews(machine.lattice, machine.registry, source=source.name)
+        return Revision(source.name, source.lattice, views, datetime.now(UTC), registry_tag)
     lattice = Lattice.from_json(source.lattice.read_text())
-    registry = None
+    registry, registry_tag = None, "none"
     if source.registry is not None:
-        candidate = MachineRegistry.model_validate_json(source.registry.read_text())
+        text = source.registry.read_bytes()
+        candidate = MachineRegistry.model_validate_json(text)
         problems = (
             candidate.check_against(lattice) if candidate.lattice == lattice.name else ["other lattice"]
         )
@@ -165,9 +210,9 @@ def load_revision(source: _Source) -> Revision:
                 "ignoring %s: it does not match %s (%s)", source.registry, source.lattice, problems[0]
             )
         else:
-            registry = candidate
+            registry, registry_tag = candidate, hashlib.sha256(text).hexdigest()[:12]
     views = RevisionViews(lattice, registry, source=source.name)
-    return Revision(source.name, source.lattice, views, datetime.now(UTC))
+    return Revision(source.name, source.lattice, views, datetime.now(UTC), registry_tag)
 
 
 class Catalog:
@@ -187,6 +232,10 @@ class Catalog:
 
     @staticmethod
     def _stamp(source: _Source) -> tuple:
+        if source.machine:  # every file people edit; adding or removing one counts too
+            return tuple(
+                (str(f), f.stat().st_mtime_ns, f.stat().st_size) for f in source_files(source.lattice)
+            )
         files = (source.lattice, source.registry) if source.registry else (source.lattice,)
         return tuple((s.st_mtime_ns, s.st_size) for s in (f.stat() for f in files))
 
@@ -218,7 +267,9 @@ class Catalog:
     def _install(self, name: str, stamp: tuple, revision: Revision) -> None:
         with self._lock:
             self._stamps[name] = stamp
-            revision = self._revisions.get(revision.digest, revision)
+            known = self._revisions.get(revision.digest)
+            if known is not None and known.registry_tag == revision.registry_tag:
+                revision = known  # the same lattice and registry: keep its cached responses
             revisions = OrderedDict(self._revisions)
             revisions[revision.digest] = revision
             revisions.move_to_end(revision.digest)

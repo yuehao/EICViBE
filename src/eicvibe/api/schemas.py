@@ -1,4 +1,4 @@
-"""Response bodies of the lattice viewer API, version 1.
+"""Response bodies of the lattice viewer API, schema version 2.
 
 They are the contract with the web client: ``web/src/api/schema.d.ts`` is
 generated from the OpenAPI document of these models (``npm run
@@ -13,8 +13,9 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-#: Bumped when a response changes shape; part of every ETag.
-SCHEMA_VERSION = 1
+#: Bumped when a response changes shape; the web client refuses other versions.
+#: 2: element EIC names (``eic_name``) and setting targets. 3: power circuits.
+SCHEMA_VERSION = 3
 
 
 class _Model(BaseModel):
@@ -121,6 +122,8 @@ class LatticeSummary(_Model):
     kinds: dict[str, int] = Field(description="Occurrence count by element kind")
     devices: int = Field(description="Devices in the registry; 0 without one")
     channels: int
+    circuits: int = Field(description="Power circuits in the registry")
+    strings: int = Field(description="Circuits that drive several magnets in series")
 
 
 class Column(_Model):
@@ -142,7 +145,10 @@ class BranchTable(_Model):
     """
 
     id: list[str]
-    name: list[str]
+    name: list[str] = Field(description="Lattice (design) name of the occurrence")
+    eic_name: list[str | None] = Field(
+        description="EIC name (EIC-SEG-RSI-009) of the element, from the machine registry; null without one"
+    )
     kind: list[str]
     element: list[str] = Field(description="Name of the placed element definition")
     s: list[float] = Field(description="s at the entrance, m")
@@ -191,7 +197,34 @@ class Channel(_Model):
     control_limits: tuple[float, float] | None
     parameter: str | None = Field(description="Lattice parameter a setting drives")
     targets: list[str] = Field(description="Occurrences or definitions whose parameter the setting drives")
+    circuit: str | None = Field(description="Power circuit whose current the setting is")
     observable: str | None = Field(description="Beam quantity a measurement reads")
+
+
+class Transfer(_Model):
+    """A magnet's transfer function, from its supply's current to its field."""
+
+    kind: str = Field(description="polynomial, table or service")
+    summary: str = Field(description="E.g. field = 0.001 T/A x I")
+    engineering_unit: str
+    field_unit: str
+    integrated: bool = Field(description="Field integrated over the magnet")
+    source: str = Field(description="placeholder or measured")
+
+
+class Power(_Model):
+    """One power circuit of a supply, seen from one occurrence."""
+
+    circuit: str
+    name: str = Field(description="The family a string powers, or the magnet")
+    setting: str | None = Field(description="The setting channel, in the supply's engineering unit")
+    series: bool = Field(description="Several magnets in series on the supply")
+    magnets: int
+    occurrences: list[str] = Field(description="Every occurrence the circuit sets")
+    parameter: str | None = Field(description="The parameter it sets here; null where it sets none")
+    polarity: int | None
+    transfer: Transfer | None = Field(description="This magnet's transfer function")
+    design_current: float | None = Field(description="Current giving this magnet its design value")
 
 
 class Device(_Model):
@@ -199,6 +232,7 @@ class Device(_Model):
     name: str
     type: str
     channels: list[Channel]
+    power: list[Power] = Field(description="The power circuits of a supply")
 
 
 class ForkLink(_Model):
@@ -210,7 +244,8 @@ class ForkLink(_Model):
 class OccurrenceDetail(_Model):
     schema_version: int = SCHEMA_VERSION
     id: str
-    name: str
+    name: str = Field(description="Lattice (design) name")
+    eic_name: str | None = Field(description="EIC name of the element, from the machine registry")
     kind: str
     element: str
     element_id: str

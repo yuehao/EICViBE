@@ -18,6 +18,9 @@ export type Pose = Schemas["Pose"];
 
 const BASE = "/api/v1";
 
+/** The response schema this client reads (eicvibe.api.schemas.SCHEMA_VERSION). */
+export const SCHEMA_VERSION = 3;
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,

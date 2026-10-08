@@ -7,7 +7,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { api, ApiError, type LatticeEntry, type LatticeSummary } from "./api/client";
+import { api, ApiError, SCHEMA_VERSION, type LatticeEntry, type LatticeSummary } from "./api/client";
 import { ElementTable } from "./components/ElementTable";
 import { FloorPlan, type FloorPlanHandle } from "./components/FloorPlan";
 import { Inspector } from "./components/Inspector";
@@ -92,6 +92,13 @@ export function App() {
     api.summary(digest).then(
       (s) => {
         if (stop) return;
+        if (s.schema_version !== SCHEMA_VERSION) {
+          setError(
+            `This page reads API version ${SCHEMA_VERSION}, but the server sends ${s.schema_version}. ` +
+              "Reload the page; if that does not help, restart eicvibe-web.",
+          );
+          return;
+        }
         setSummary(s);
         const order = branchOrder(s);
         const wanted = s.branches.find((b) => b.name === pending.current.branch)?.id;
@@ -102,8 +109,12 @@ export function App() {
           api.branch(digest, id).then(
             (data) => {
               if (stop) return;
-              const model = branchModel(data, branch, order.indexOf(id));
-              setModels((m) => new Map(m).set(id, model));
+              try {
+                const model = branchModel(data, branch, order.indexOf(id));
+                setModels((m) => new Map(m).set(id, model));
+              } catch (e) {
+                setError(`Cannot read branch ${branch.name} (${(e as Error).message}). Reload the page.`);
+              }
             },
             (e: Error) => !stop && setError(`Cannot load branch ${branch.name}: ${e.message}`),
           );

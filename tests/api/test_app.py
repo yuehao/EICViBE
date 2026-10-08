@@ -14,7 +14,8 @@ from fastapi.testclient import TestClient  # noqa: E402
 from eicvibe.api import Catalog, create_app  # noqa: E402
 from eicvibe.api.views import RevisionViews  # noqa: E402
 from eicvibe.domain.lattice import Lattice, LatticeBuilder, SequentialIds  # noqa: E402
-from eicvibe.domain.machine import generate_registry  # noqa: E402
+from eicvibe.domain.lattice.conventions import rigidity_from_P  # noqa: E402
+from eicvibe.domain.machine import NamingArea, generate_registry  # noqa: E402
 
 ROOT = Path(__file__).parents[2]
 
@@ -76,7 +77,9 @@ def test_branch_columns_line_up(client):
     data = client.get(f"/api/v1/lattices/{digest_of(client)}/branches/ring").json()
     table, floor = data["table"], data["floor"]
     n = len(table["id"])
-    assert n == 41 and all(len(table[k]) == n for k in ("name", "kind", "element", "s", "length", "device"))
+    assert n == 41 and all(
+        len(table[k]) == n for k in ("name", "eic_name", "kind", "element", "s", "length", "device")
+    )
     assert all(len(column) == n for column in table["values"].values())
     assert {c["key"] for c in table["columns"]} == {
         "angle",
@@ -91,6 +94,8 @@ def test_branch_columns_line_up(client):
     first_quad = table["kind"].index("Quadrupole")
     assert table["values"]["Kn1"][first_quad] == 0.3 and table["values"]["Kn1L"][first_quad] == 0.15
     assert table["values"]["Kn1"][0] is None and table["device"][first_quad].endswith("-ps")
+    assert table["eic_name"][first_quad] == "ring-q1" and table["eic_name"][0] is None  # BeginningEle
+    assert table["device"][first_quad] == table["eic_name"][first_quad] + "-ps"
     sextupole = table["kind"].index("Sextupole")
     assert table["values"]["Kn2"][sextupole] == pytest.approx(0.5)
     assert len(floor["offsets"]) == n + 1 and floor["offsets"][-1] == len(floor["x"]) == len(floor["z"])
@@ -110,6 +115,7 @@ def test_occurrence_detail_with_devices_and_overrides(client):
     table = client.get(f"/api/v1/lattices/{digest}/branches/ring").json()["table"]
     quad = table["id"][table["kind"].index("Quadrupole")]
     detail = client.get(f"/api/v1/lattices/{digest}/occurrences/{quad}").json()
+    assert (detail["name"], detail["eic_name"]) == ("QF_1", "ring-q1")
     [group] = detail["groups"]
     assert group["group"] == "MagneticMultipoleP"
     assert group["parameters"] == [
@@ -123,7 +129,12 @@ def test_occurrence_detail_with_devices_and_overrides(client):
     ]
     [device] = detail["devices"]
     setting = next(c for c in device["channels"] if c["role"] == "setting")
-    assert setting["parameter"] == "MagneticMultipoleP.Kn1" and setting["name"].endswith(":sp")
+    assert setting["circuit"] and setting["name"].endswith(":sp")
+    [power] = device["power"]  # its supply's circuit, seen from this magnet
+    assert (power["series"], power["parameter"], power["polarity"]) == (False, "MagneticMultipoleP.Kn1", 1)
+    assert power["transfer"]["summary"] == "field = 0.1 T/m/A × I"
+    assert power["transfer"]["source"] == "placeholder"
+    assert power["design_current"] == pytest.approx(0.3 * rigidity_from_P(1e9, charge=-1) / 0.1)
     assert detail["entrance"]["z"] < detail["exit"]["z"]
     assert client.get(f"/api/v1/lattices/{digest}/occurrences/nope").status_code == 404
     assert client.get(f"/api/v1/lattices/{digest}/branches/nope").status_code == 404
@@ -203,3 +214,48 @@ def test_the_demo_machine_is_complete(tmp_path):
     assert all(b.placed_by for b in summary.branches if b.name != "ring")
     assert summary.closures == [] and summary.diagnostics == [] and summary.devices > 0
     assert revision.views.registry.check_against(revision.lattice) == []
+
+
+def test_a_changed_registry_reaches_clients_whose_cache_holds_the_old_one(client, folder):
+    digest = digest_of(client)
+    url = f"/api/v1/lattices/{digest}/branches/ring"
+    before = client.get(url)
+    lattice = Lattice.from_json((folder / "demo_lattice.json").read_text())
+    renamed = generate_registry(lattice, "ring", areas=(NamingArea(prefix="xr", start=0.0, end=100.0),))
+    (folder / "demo_registry.json").write_text(renamed.model_dump_json())
+    after = client.get(url, headers={"If-None-Match": before.headers["etag"]})  # a browser revalidating
+    assert digest_of(client) == digest  # the same lattice revision ...
+    assert after.status_code == 200 and after.headers["etag"] != before.headers["etag"]  # ... but new content
+    assert after.json()["table"]["eic_name"][1].startswith("xr-")
+
+
+def test_the_web_client_reads_the_schema_version_the_server_sends():
+    from eicvibe.api.schemas import SCHEMA_VERSION
+
+    client = ROOT / "web/src/api/client.ts"
+    if not client.exists():
+        pytest.skip("web client not present")
+    assert f"export const SCHEMA_VERSION = {SCHEMA_VERSION};" in client.read_text()
+
+
+def test_a_machine_folder_is_served_and_edits_show(tmp_path):
+    from eicvibe.domain.machine import describe_machine
+    from eicvibe.store import write_machine
+
+    lattice = build()
+    folder = tmp_path / "demo"
+    write_machine(folder, lattice, describe_machine(lattice))
+    client = TestClient(create_app(Catalog([tmp_path], refresh_interval=0.0), static_dir=None))
+    [entry] = client.get("/api/v1/lattices").json()
+    assert (
+        entry["source"] == "demo"
+        and entry["registry"]
+        and entry["digest"] == lattice.digest.removeprefix("sha256:")
+    )
+    naming = folder / "naming.yaml"
+    naming.write_text(naming.read_text().replace("  ring: ring\n", "  ring: xr\n"))  # an edit to the naming
+    table = client.get(f"/api/v1/lattices/{entry['digest']}/branches/ring").json()["table"]
+    assert table["eic_name"][1].startswith("xr-")  # served at once, same lattice revision
+    broken = folder / "lattice" / "ring.yaml"
+    broken.write_text(broken.read_text() + "  - {name: X, element: NOPE}\n")  # a mistake while editing
+    assert digest_of(client) == entry["digest"]  # the last good revision stays

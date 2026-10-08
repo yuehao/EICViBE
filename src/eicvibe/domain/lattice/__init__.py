@@ -13,7 +13,7 @@ Units, signs and reference conventions are in
 from .builder import LatticeBuilder
 from .conventions import SPECIES, Species
 from .diagnostics import Diagnostic, diagnose
-from .diff import Change, ChangeKind, diff
+from .diff import Change, ChangeKind, adopt_ids, diff
 from .elements import ALLOWED_GROUPS, ElementDefinition, ElementKind
 from .ids import SequentialIds, derived_id, random_id
 from .limits import (
@@ -137,6 +137,7 @@ __all__ = [
     "ZeroPhase",
     "derived_id",
     "diagnose",
+    "adopt_ids",
     "diff",
     "parameter_info",
     "parameters_of",

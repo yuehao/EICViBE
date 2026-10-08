@@ -17,7 +17,14 @@ from eicvibe.domain.lattice import (
     parameter_info,
 )
 from eicvibe.domain.machine import MachineRegistry
-from eicvibe.domain.machine.registry import ObservableBinding, ParameterBinding
+from eicvibe.domain.machine.power import (
+    PolynomialTransfer,
+    TableTransfer,
+    TransferFunction,
+    design_value,
+    magnet_current,
+)
+from eicvibe.domain.machine.registry import CircuitBinding, ObservableBinding, ParameterBinding
 from eicvibe.geometry import FloorGeometry, Frame, element_path, floor_geometry
 
 from . import schemas
@@ -117,6 +124,40 @@ def _row_values(placed: PlacedElement) -> dict[str, float | None]:
     return values
 
 
+def _transfer(transfer: TransferFunction) -> schemas.Transfer:
+    return schemas.Transfer(
+        kind=transfer.kind,
+        summary=_transfer_summary(transfer),
+        engineering_unit=transfer.engineering_unit,
+        field_unit=transfer.field_unit,
+        integrated=transfer.integrated,
+        source=transfer.source.value,
+    )
+
+
+def _transfer_summary(transfer) -> str:
+    """A transfer function in words, e.g. "field = 0.001 T/A x I"."""
+    field = "integrated field" if transfer.integrated else "field"
+    unit = f"{transfer.field_unit}/{transfer.engineering_unit}"
+    if isinstance(transfer, PolynomialTransfer):
+        c = transfer.coefficients
+        if len(c) == 2:
+            offset = f" {'+' if c[0] >= 0 else '-'} {abs(c[0]):g} {transfer.field_unit}" if c[0] else ""
+            return f"{field} = {c[1]:g} {unit} × I{offset}"
+        return f"{field}: polynomial of degree {len(c) - 1} in I"
+    if isinstance(transfer, TableTransfer):
+        return (
+            f"{field}: measured curve of {len(transfer.currents)} points, "
+            f"{transfer.currents[0]:g} to {transfer.currents[-1]:g} {transfer.engineering_unit}"
+        )
+    text = f"{field} from service {transfer.service!r}, magnet {transfer.magnet!r}"
+    if transfer.hysteresis:
+        text += ", with hysteresis"
+    if transfer.fallback is not None:
+        text += f"; offline: {_transfer_summary(transfer.fallback).split(' = ', 1)[-1]}"
+    return text
+
+
 class RevisionViews:
     """Payloads of one lattice revision; each is computed once, on first use."""
 
@@ -147,6 +188,10 @@ class RevisionViews:
         for channel in self.registry.channels if self.registry else ():
             found[channel.device].append(channel)
         return found
+
+    def _eic_name(self, occurrence: str) -> str | None:
+        slot = self.registry.slot_of(occurrence) if self.registry else None
+        return slot.name if slot else None
 
     def _paths(self, branch_id: str) -> list[tuple]:
         """Floor path of every occurrence of a branch (by id)."""
@@ -218,12 +263,20 @@ class RevisionViews:
             ],
             shared_components=[self._component(c) for c in lattice.shared_components],
             diagnostics=[
-                schemas.Diagnostic(code=d.code, message=d.message, subject=d.subject)
-                for d in lattice.diagnose()
+                *(
+                    schemas.Diagnostic(code=d.code, message=d.message, subject=d.subject)
+                    for d in lattice.diagnose()
+                ),
+                *(
+                    schemas.Diagnostic(code="power-string", message=problem, subject=lattice.name)
+                    for problem in (self.registry.power_problems(lattice) if self.registry else ())
+                ),
             ],
             kinds=dict(sorted(kinds.items())),
             devices=len(self.registry.devices) if self.registry else 0,
             channels=len(self.registry.channels) if self.registry else 0,
+            circuits=len(self.registry.circuits) if self.registry else 0,
+            strings=sum(c.series for c in self.registry.circuits) if self.registry else 0,
         )
 
     @property
@@ -269,6 +322,7 @@ class RevisionViews:
             table=schemas.BranchTable(
                 id=[p.id for p in placements],
                 name=[p.name for p in placements],
+                eic_name=[self._eic_name(p.id) for p in placements],
                 kind=[p.kind.value for p in placements],
                 element=[p.definition.name for p in placements],
                 s=[_position(p.s_enter) for p in placements],
@@ -320,6 +374,7 @@ class RevisionViews:
         return schemas.OccurrenceDetail(
             id=placed.id,
             name=placed.name,
+            eic_name=self._eic_name(placed.id),
             kind=placed.kind.value,
             element=placed.definition.name,
             element_id=placed.definition.id,
@@ -337,10 +392,10 @@ class RevisionViews:
             component=component and self._component(component),
             entrance=pose(frames.entrance),
             exit=pose(frames.exit),
-            devices=[self._device(d) for d in self._devices_at.get(placed.id, ())],
+            devices=[self._device(d, placed) for d in self._devices_at.get(placed.id, ())],
         )
 
-    def _device(self, device) -> schemas.Device:
+    def _device(self, device, placed: PlacedElement) -> schemas.Device:
         channels = []
         for channel in self._channels_of.get(device.id, ()):
             binding = channel.binding
@@ -352,7 +407,36 @@ class RevisionViews:
                     control_limits=channel.control_limits,
                     parameter=binding.parameter if isinstance(binding, ParameterBinding) else None,
                     targets=list(binding.targets) if isinstance(binding, ParameterBinding) else [],
+                    circuit=binding.circuit if isinstance(binding, CircuitBinding) else None,
                     observable=binding.observable.value if isinstance(binding, ObservableBinding) else None,
                 )
             )
-        return schemas.Device(id=device.id, name=device.name, type=device.type.value, channels=channels)
+        power = [self._power(c, placed) for c in self.registry.circuits if c.device == device.id]
+        return schemas.Device(
+            id=device.id, name=device.name, type=device.type.value, channels=channels, power=power
+        )
+
+    def _power(self, circuit, placed: PlacedElement) -> schemas.Power:
+        setting = self.registry.setting_of(circuit.id)
+        magnet = next((m for m in circuit.magnets if placed.id in m.occurrences), None)
+        design = None
+        if magnet is not None and setting is not None and setting.control_limits is not None:
+            try:
+                value = design_value(placed, magnet.parameter)
+                design = magnet_current(
+                    self.lattice, magnet, value, setting.control_limits, occurrence=placed.id
+                )
+            except ValueError, LookupError:
+                design = None
+        return schemas.Power(
+            circuit=circuit.id,
+            name=circuit.name,
+            setting=setting.name if setting else None,
+            series=circuit.series,
+            magnets=len(circuit.magnets),
+            occurrences=[o for m in circuit.magnets for o in m.occurrences],
+            parameter=magnet.parameter if magnet else None,
+            polarity=magnet.polarity if magnet else None,
+            transfer=_transfer(magnet.transfer) if magnet else None,
+            design_current=design,
+        )

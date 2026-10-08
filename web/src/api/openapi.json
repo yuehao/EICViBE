@@ -40,7 +40,7 @@
       "$ref": "#/components/schemas/BranchFloor"
      },
      "schema_version": {
-      "default": 1,
+      "default": 3,
       "title": "Schema Version",
       "type": "integer"
      },
@@ -208,6 +208,21 @@
       "title": "Device",
       "type": "array"
      },
+     "eic_name": {
+      "description": "EIC name (EIC-SEG-RSI-009) of the element, from the machine registry; null without one",
+      "items": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ]
+      },
+      "title": "Eic Name",
+      "type": "array"
+     },
      "element": {
       "description": "Name of the placed element definition",
       "items": {
@@ -253,6 +268,7 @@
       "type": "array"
      },
      "name": {
+      "description": "Lattice (design) name of the occurrence",
       "items": {
        "type": "string"
       },
@@ -289,6 +305,7 @@
     "required": [
      "id",
      "name",
+     "eic_name",
      "kind",
      "element",
      "s",
@@ -304,6 +321,18 @@
    },
    "Channel": {
     "properties": {
+     "circuit": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Power circuit whose current the setting is",
+      "title": "Circuit"
+     },
      "control_limits": {
       "anyOf": [
        {
@@ -377,6 +406,7 @@
      "control_limits",
      "parameter",
      "targets",
+     "circuit",
      "observable"
     ],
     "title": "Channel",
@@ -461,6 +491,14 @@
       "title": "Name",
       "type": "string"
      },
+     "power": {
+      "description": "The power circuits of a supply",
+      "items": {
+       "$ref": "#/components/schemas/Power"
+      },
+      "title": "Power",
+      "type": "array"
+     },
      "type": {
       "title": "Type",
       "type": "string"
@@ -470,7 +508,8 @@
      "id",
      "name",
      "type",
-     "channels"
+     "channels",
+     "power"
     ],
     "title": "Device",
     "type": "object"
@@ -679,6 +718,11 @@
       "title": "Channels",
       "type": "integer"
      },
+     "circuits": {
+      "description": "Power circuits in the registry",
+      "title": "Circuits",
+      "type": "integer"
+     },
      "closures": {
       "items": {
        "$ref": "#/components/schemas/Closure"
@@ -733,7 +777,7 @@
       "title": "Root Branch"
      },
      "schema_version": {
-      "default": 1,
+      "default": 3,
       "title": "Schema Version",
       "type": "integer"
      },
@@ -747,6 +791,11 @@
      "source": {
       "title": "Source",
       "type": "string"
+     },
+     "strings": {
+      "description": "Circuits that drive several magnets in series",
+      "title": "Strings",
+      "type": "integer"
      }
     },
     "required": [
@@ -761,7 +810,9 @@
      "diagnostics",
      "kinds",
      "devices",
-     "channels"
+     "channels",
+     "circuits",
+     "strings"
     ],
     "title": "LatticeSummary",
     "type": "object"
@@ -788,6 +839,18 @@
       },
       "title": "Devices",
       "type": "array"
+     },
+     "eic_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "EIC name of the element, from the machine registry",
+      "title": "Eic Name"
      },
      "element": {
       "title": "Element",
@@ -837,6 +900,7 @@
       "type": "number"
      },
      "name": {
+      "description": "Lattice (design) name",
       "title": "Name",
       "type": "string"
      },
@@ -849,7 +913,7 @@
       "type": "number"
      },
      "schema_version": {
-      "default": 1,
+      "default": 3,
       "title": "Schema Version",
       "type": "integer"
      },
@@ -864,6 +928,7 @@
     "required": [
      "id",
      "name",
+     "eic_name",
      "kind",
      "element",
      "element_id",
@@ -969,6 +1034,109 @@
     "title": "Pose",
     "type": "object"
    },
+   "Power": {
+    "description": "One power circuit of a supply, seen from one occurrence.",
+    "properties": {
+     "circuit": {
+      "title": "Circuit",
+      "type": "string"
+     },
+     "design_current": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Current giving this magnet its design value",
+      "title": "Design Current"
+     },
+     "magnets": {
+      "title": "Magnets",
+      "type": "integer"
+     },
+     "name": {
+      "description": "The family a string powers, or the magnet",
+      "title": "Name",
+      "type": "string"
+     },
+     "occurrences": {
+      "description": "Every occurrence the circuit sets",
+      "items": {
+       "type": "string"
+      },
+      "title": "Occurrences",
+      "type": "array"
+     },
+     "parameter": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "The parameter it sets here; null where it sets none",
+      "title": "Parameter"
+     },
+     "polarity": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Polarity"
+     },
+     "series": {
+      "description": "Several magnets in series on the supply",
+      "title": "Series",
+      "type": "boolean"
+     },
+     "setting": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "The setting channel, in the supply's engineering unit",
+      "title": "Setting"
+     },
+     "transfer": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/Transfer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "This magnet's transfer function"
+     }
+    },
+    "required": [
+     "circuit",
+     "name",
+     "setting",
+     "series",
+     "magnets",
+     "occurrences",
+     "parameter",
+     "polarity",
+     "transfer",
+     "design_current"
+    ],
+    "title": "Power",
+    "type": "object"
+   },
    "Reference": {
     "properties": {
      "E_tot": {
@@ -1039,6 +1207,49 @@
      "traversals"
     ],
     "title": "SharedComponent",
+    "type": "object"
+   },
+   "Transfer": {
+    "description": "A magnet's transfer function, from its supply's current to its field.",
+    "properties": {
+     "engineering_unit": {
+      "title": "Engineering Unit",
+      "type": "string"
+     },
+     "field_unit": {
+      "title": "Field Unit",
+      "type": "string"
+     },
+     "integrated": {
+      "description": "Field integrated over the magnet",
+      "title": "Integrated",
+      "type": "boolean"
+     },
+     "kind": {
+      "description": "polynomial, table or service",
+      "title": "Kind",
+      "type": "string"
+     },
+     "source": {
+      "description": "placeholder or measured",
+      "title": "Source",
+      "type": "string"
+     },
+     "summary": {
+      "description": "E.g. field = 0.001 T/A x I",
+      "title": "Summary",
+      "type": "string"
+     }
+    },
+    "required": [
+     "kind",
+     "summary",
+     "engineering_unit",
+     "field_unit",
+     "integrated",
+     "source"
+    ],
+    "title": "Transfer",
     "type": "object"
    },
    "Traversal": {

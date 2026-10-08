@@ -1,2 +1,1 @@
-def main() -> None:
-    print("Hello from eicvibe!")
+"""EICViBE: the EIC virtual beam environment."""

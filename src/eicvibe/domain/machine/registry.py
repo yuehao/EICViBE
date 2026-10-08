@@ -1,10 +1,13 @@
 """Devices and channels the control system exposes, and how they relate to the lattice (ADR 0003).
 
-A :class:`MachineRegistry` lists devices (power supplies, BPMs, RF stations)
-and their channels, each a pvAccess PV with a role, a Normative Type, a unit
-and limits. A setting channel binds to a lattice parameter through a
-:class:`Calibration`; a measurement channel binds to an observable such as
-the closed orbit at a BPM. The registry is kept outside the
+A :class:`MachineRegistry` lists the EIC names of the lattice elements, the
+devices (power supplies, BPMs, RF stations) and their channels, each a
+pvAccess PV with a role, a Normative Type, a unit and limits, and the power
+circuits (:mod:`.power`): which magnets each supply drives, alone or as a
+string in series, and each magnet's transfer function. A magnet supply's
+setting binds to its circuit; another setting binds to a lattice parameter
+through a :class:`Calibration` (an RF voltage, say); a measurement channel
+binds to an observable such as the closed orbit at a BPM. The registry is kept outside the
 :class:`~eicvibe.domain.lattice.Lattice`, keyed by its stable ids, because
 hardware changes independently of lattice revisions.
 """
@@ -18,6 +21,7 @@ from pydantic import Field, model_validator
 from ..lattice import ALLOWED_GROUPS, Lattice, parameter_info
 from ..lattice._base import DomainModel, Id, Label, Real
 from .naming import EicName, NamingRepository, default_repository
+from .power import CalibrationSource, CircuitMagnet, PowerCircuit, TransferService, string_problems
 
 
 class DeviceType(StrEnum):
@@ -59,13 +63,6 @@ class Observable(StrEnum):
     """Fractional horizontal tune of a periodic branch."""
     TUNE_Y = "tune_y"
     """Fractional vertical tune of a periodic branch."""
-
-
-class CalibrationSource(StrEnum):
-    PLACEHOLDER = "placeholder"
-    """Generic value for a device type; not a property of the real device."""
-    MEASURED = "measured"
-    """From magnet or device measurements."""
 
 
 class Calibration(DomainModel):
@@ -139,7 +136,26 @@ class ObservableBinding(DomainModel):
     scale: Real = Field(1.0, description="Channel units per SI unit, e.g. 1000 for mm")
 
 
-Binding = Annotated[ParameterBinding | ObservableBinding, Field(discriminator="kind")]
+class CircuitBinding(DomainModel):
+    """A supply's setting: the current of a power circuit, which sets the magnets on it."""
+
+    kind: Literal["circuit"] = "circuit"
+    circuit: Id
+
+
+Binding = Annotated[ParameterBinding | ObservableBinding | CircuitBinding, Field(discriminator="kind")]
+
+
+class Slot(DomainModel):
+    """The EIC name of one physical lattice element, ``aa-ddpp:nn`` (e.g. ``es6-q7``, ``es6-dt5``).
+
+    Every element with a device abbreviation has one, drifts and markers
+    included, as in the ESR naming table. A magnet that several branches
+    pass through (a shared component) is one slot with several occurrences.
+    """
+
+    name: EicName
+    occurrences: tuple[Id, ...] = Field(min_length=1, description="Occurrences of the element")
 
 
 class Device(DomainModel):
@@ -172,36 +188,53 @@ class Channel(DomainModel):
             raise ValueError(f"{self.name}: readback_of is required for, and only for, a readback")
         if isinstance(self.binding, ObservableBinding) and self.role is not ChannelRole.MEASUREMENT:
             raise ValueError(f"{self.name}: only a measurement binds to an observable")
-        if isinstance(self.binding, ParameterBinding) and self.role is not ChannelRole.SETTING:
-            raise ValueError(f"{self.name}: only a setting binds to a lattice parameter")
+        if (
+            isinstance(self.binding, ParameterBinding | CircuitBinding)
+            and self.role is not ChannelRole.SETTING
+        ):
+            raise ValueError(f"{self.name}: only a setting binds to a lattice parameter or a circuit")
         if self.role is ChannelRole.SETTING and self.control_limits is None:
             raise ValueError(f"{self.name}: a setting needs control limits")
         return self
 
 
 class MachineRegistry(DomainModel):
-    """Devices and channels of one machine, for one lattice."""
+    """Element names, devices, channels and power circuits of one machine, for one lattice."""
 
     format_version: Literal[1] = 1
     name: Label
     lattice: Label = Field(description="Name of the lattice the bindings refer to")
+    slots: tuple[Slot, ...] = Field((), description="EIC names of the lattice elements")
     devices: tuple[Device, ...] = ()
     channels: tuple[Channel, ...] = ()
+    circuits: tuple[PowerCircuit, ...] = Field((), description="Which magnets each supply drives, and how")
 
     @model_validator(mode="after")
     def _consistent(self) -> Self:
         problems = []
         for what, names in (
+            ("element name", [s.name for s in self.slots]),
+            ("element occurrence", [o for s in self.slots for o in s.occurrences]),
             ("device id", [d.id for d in self.devices]),
             ("device name", [d.name for d in self.devices]),
             ("channel name", [c.name for c in self.channels]),
+            ("circuit id", [c.id for c in self.circuits]),
         ):
             problems += [f"duplicate {what} {n!r}" for n in sorted({n for n in names if names.count(n) > 1})]
         devices = {d.id for d in self.devices}
+        supplies = {d.id for d in self.devices if d.type is DeviceType.POWER_SUPPLY}
+        circuits = {c.id for c in self.circuits}
+        problems += [
+            f"circuit {c.name}: {c.device!r} is not a power supply"
+            for c in self.circuits
+            if c.device not in supplies
+        ]
         settings = {c.name: c for c in self.channels if c.role is ChannelRole.SETTING}
         for channel in self.channels:
             if channel.device not in devices:
                 problems.append(f"{channel.name}: unknown device {channel.device!r}")
+            if isinstance(channel.binding, CircuitBinding) and channel.binding.circuit not in circuits:
+                problems.append(f"{channel.name}: unknown circuit {channel.binding.circuit!r}")
             if channel.readback_of is not None:
                 setting = settings.get(channel.readback_of)
                 if setting is None:
@@ -213,6 +246,59 @@ class MachineRegistry(DomainModel):
         if problems:
             raise ValueError("; ".join(problems))
         return self
+
+    @cached_property
+    def _slot_by_occurrence(self) -> dict[str, Slot]:
+        return {o: s for s in self.slots for o in s.occurrences}
+
+    def slot_of(self, occurrence: str) -> Slot | None:
+        """The EIC name of the element an occurrence places, if it has one."""
+        return self._slot_by_occurrence.get(occurrence)
+
+    @cached_property
+    def _circuits(self) -> dict[str, PowerCircuit]:
+        return {c.id: c for c in self.circuits}
+
+    def circuit(self, circuit_id: str) -> PowerCircuit:
+        try:
+            return self._circuits[circuit_id]
+        except KeyError:
+            raise KeyError(f"no circuit {circuit_id!r}") from None
+
+    @cached_property
+    def _magnets_at(self) -> dict[str, list[tuple[PowerCircuit, CircuitMagnet]]]:
+        found: dict[str, list] = {}
+        for circuit in self.circuits:
+            for magnet in circuit.magnets:
+                for occurrence in magnet.occurrences:
+                    found.setdefault(occurrence, []).append((circuit, magnet))
+        return found
+
+    def circuits_at(self, occurrence: str) -> tuple[tuple[PowerCircuit, CircuitMagnet], ...]:
+        """The circuits that set a parameter of the magnet at an occurrence, each with its entry for it."""
+        return tuple(self._magnets_at.get(occurrence, ()))
+
+    def setting_of(self, circuit_id: str) -> Channel | None:
+        """The setting channel that drives a circuit."""
+        return next(
+            (
+                c
+                for c in self.channels
+                if isinstance(c.binding, CircuitBinding) and c.binding.circuit == circuit_id
+            ),
+            None,
+        )
+
+    def power_problems(
+        self, lattice: Lattice, services: dict[str, TransferService] | None = None
+    ) -> list[str]:
+        """Strings whose magnets need different currents for their design values."""
+        problems = []
+        for circuit in self.circuits:
+            setting = self.setting_of(circuit.id)
+            if circuit.series and setting is not None and setting.control_limits is not None:
+                problems += string_problems(lattice, circuit, setting.control_limits, services)
+        return problems
 
     @cached_property
     def _by_name(self) -> dict[str, Channel]:
@@ -233,7 +319,11 @@ class MachineRegistry(DomainModel):
         """Names with abbreviations the naming repository does not list (yet), one line per name."""
         repository = repository or default_repository()
         found = []
-        for name in (*(d.name for d in self.devices), *(c.name for c in self.channels)):
+        for name in (
+            *(s.name for s in self.slots),
+            *(d.name for d in self.devices),
+            *(c.name for c in self.channels),
+        ):
             if problems := repository.problems(name):
                 found.append(f"{name}: {', '.join(problems)} not in the repository")
         return found
@@ -246,6 +336,22 @@ class MachineRegistry(DomainModel):
         definitions = {e.id: e for e in lattice.elements}
         occurrences = {o.id: o for b in lattice.branches for o in b.occurrences}
         branches = {b.id: b for b in lattice.branches}
+        for slot in self.slots:
+            problems += [
+                f"{slot.name}: no occurrence {o!r}" for o in slot.occurrences if o not in occurrences
+            ]
+        for circuit in self.circuits:
+            for magnet in circuit.magnets:
+                group = magnet.parameter.partition(".")[0]
+                for occurrence in magnet.occurrences:
+                    if occurrence not in occurrences:
+                        problems.append(f"circuit {circuit.name}: no occurrence {occurrence!r}")
+                        continue
+                    element = definitions[occurrences[occurrence].element]
+                    if group not in ALLOWED_GROUPS[element.kind]:
+                        problems.append(
+                            f"circuit {circuit.name}: {element.kind.value} {element.name!r} has no {group}"
+                        )
         for channel in self.channels:
             binding = channel.binding
             if isinstance(binding, ParameterBinding):

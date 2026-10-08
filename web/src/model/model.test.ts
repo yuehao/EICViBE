@@ -25,6 +25,7 @@ const data: BranchData = {
   table: {
     id: ["a", "b", "c", "d"],
     name: ["qf", "d1", "qd", "bpm"],
+    eic_name: ["line-q1", "line-dt3", "line-q4", null],
     kind: ["Quadrupole", "Drift", "Quadrupole", "Instrument"],
     element: ["QF", "D", "QD", "BPM"],
     s: [0, 1, 3, 4],
@@ -49,6 +50,11 @@ const data: BranchData = {
 
 describe("branch model", () => {
   const model = branchModel(data, summary, 0);
+
+  it("shows EIC names, and the lattice name where there is none", () => {
+    expect(model.labels).toEqual(["line-q1", "line-dt3", "line-q4", "bpm"]);
+    expect(model.names[0]).toBe("qf");
+  });
 
   it("puts focusing quadrupoles above the axis and defocusing ones below", () => {
     expect(Array.from(model.polarity)).toEqual([1, 0, -1, 0]);

@@ -146,7 +146,7 @@ export interface components {
             floor: components["schemas"]["BranchFloor"];
             /**
              * Schema Version
-             * @default 1
+             * @default 3
              */
             schema_version: number;
             table: components["schemas"]["BranchTable"];
@@ -214,6 +214,11 @@ export interface components {
              */
             device: (string | null)[];
             /**
+             * Eic Name
+             * @description EIC name (EIC-SEG-RSI-009) of the element, from the machine registry; null without one
+             */
+            eic_name: (string | null)[];
+            /**
              * Element
              * @description Name of the placed element definition
              */
@@ -229,7 +234,10 @@ export interface components {
             kind: string[];
             /** Length */
             length: number[];
-            /** Name */
+            /**
+             * Name
+             * @description Lattice (design) name of the occurrence
+             */
             name: string[];
             /**
              * S
@@ -246,6 +254,11 @@ export interface components {
         };
         /** Channel */
         Channel: {
+            /**
+             * Circuit
+             * @description Power circuit whose current the setting is
+             */
+            circuit: string | null;
             /** Control Limits */
             control_limits: [
                 number,
@@ -313,6 +326,11 @@ export interface components {
             id: string;
             /** Name */
             name: string;
+            /**
+             * Power
+             * @description The power circuits of a supply
+             */
+            power: components["schemas"]["Power"][];
             /** Type */
             type: string;
         };
@@ -406,6 +424,11 @@ export interface components {
             branches: components["schemas"]["BranchSummary"][];
             /** Channels */
             channels: number;
+            /**
+             * Circuits
+             * @description Power circuits in the registry
+             */
+            circuits: number;
             /** Closures */
             closures: components["schemas"]["Closure"][];
             /**
@@ -432,13 +455,18 @@ export interface components {
             root_branch: string | null;
             /**
              * Schema Version
-             * @default 1
+             * @default 3
              */
             schema_version: number;
             /** Shared Components */
             shared_components: components["schemas"]["SharedComponent"][];
             /** Source */
             source: string;
+            /**
+             * Strings
+             * @description Circuits that drive several magnets in series
+             */
+            strings: number;
         };
         /** OccurrenceDetail */
         OccurrenceDetail: {
@@ -447,6 +475,11 @@ export interface components {
             component: components["schemas"]["SharedComponent"] | null;
             /** Devices */
             devices: components["schemas"]["Device"][];
+            /**
+             * Eic Name
+             * @description EIC name of the element, from the machine registry
+             */
+            eic_name: string | null;
             /** Element */
             element: string;
             /** Element Id */
@@ -464,7 +497,10 @@ export interface components {
             kind: string;
             /** Length */
             length: number;
-            /** Name */
+            /**
+             * Name
+             * @description Lattice (design) name
+             */
             name: string;
             /** S Enter */
             s_enter: number;
@@ -472,7 +508,7 @@ export interface components {
             s_exit: number;
             /**
              * Schema Version
-             * @default 1
+             * @default 3
              */
             schema_version: number;
             /** Tags */
@@ -512,6 +548,50 @@ export interface components {
             /** Z */
             z: number;
         };
+        /**
+         * Power
+         * @description One power circuit of a supply, seen from one occurrence.
+         */
+        Power: {
+            /** Circuit */
+            circuit: string;
+            /**
+             * Design Current
+             * @description Current giving this magnet its design value
+             */
+            design_current: number | null;
+            /** Magnets */
+            magnets: number;
+            /**
+             * Name
+             * @description The family a string powers, or the magnet
+             */
+            name: string;
+            /**
+             * Occurrences
+             * @description Every occurrence the circuit sets
+             */
+            occurrences: string[];
+            /**
+             * Parameter
+             * @description The parameter it sets here; null where it sets none
+             */
+            parameter: string | null;
+            /** Polarity */
+            polarity: number | null;
+            /**
+             * Series
+             * @description Several magnets in series on the supply
+             */
+            series: boolean;
+            /**
+             * Setting
+             * @description The setting channel, in the supply's engineering unit
+             */
+            setting: string | null;
+            /** @description This magnet's transfer function */
+            transfer: components["schemas"]["Transfer"] | null;
+        };
         /** Reference */
         Reference: {
             /**
@@ -535,6 +615,36 @@ export interface components {
             name: string;
             /** Traversals */
             traversals: components["schemas"]["Traversal"][];
+        };
+        /**
+         * Transfer
+         * @description A magnet's transfer function, from its supply's current to its field.
+         */
+        Transfer: {
+            /** Engineering Unit */
+            engineering_unit: string;
+            /** Field Unit */
+            field_unit: string;
+            /**
+             * Integrated
+             * @description Field integrated over the magnet
+             */
+            integrated: boolean;
+            /**
+             * Kind
+             * @description polynomial, table or service
+             */
+            kind: string;
+            /**
+             * Source
+             * @description placeholder or measured
+             */
+            source: string;
+            /**
+             * Summary
+             * @description E.g. field = 0.001 T/A x I
+             */
+            summary: string;
         };
         /** Traversal */
         Traversal: {

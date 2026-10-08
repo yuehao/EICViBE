@@ -9,7 +9,7 @@ part of the viewer has something to show.
 import math
 from pathlib import Path
 
-from eicvibe.domain.lattice import Lattice, LatticeBuilder, SequentialIds
+from eicvibe.domain.lattice import ElementKind, Lattice, LatticeBuilder, SequentialIds
 from eicvibe.domain.machine import NamingArea, generate_machine_registry
 
 CELLS = 12
@@ -61,6 +61,9 @@ def write_demo(folder: Path) -> Path:
         "injection": None,
         "extraction": (NamingArea(prefix="dx", start=0.0, end=lattice.layout("extraction").length + 1.0),),
     }
-    registry = generate_machine_registry(lattice, areas)
+    # The ring's dipoles and quadrupole families are strings; the lines' magnets have their own supplies.
+    registry = generate_machine_registry(
+        lattice, areas, series={"ring": (ElementKind.BEND, ElementKind.QUADRUPOLE)}
+    )
     (folder / "demo_registry.json").write_text(registry.model_dump_json(indent=1))
     return path

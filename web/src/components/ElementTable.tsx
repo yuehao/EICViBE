@@ -16,7 +16,7 @@ const ROW = 24;
 const OVERSCAN = 8;
 const HIDDEN_KEY = "eicvibe.table.hiddenKinds";
 
-type SortKey = "index" | "name" | "kind" | "s" | "length" | "device" | string;
+type SortKey = "index" | "name" | "lattice" | "kind" | "s" | "length" | "device" | string;
 
 interface Props {
   branch: BranchModel | null;
@@ -36,7 +36,9 @@ function haystack(branch: BranchModel): string[] {
   let found = haystacks.get(branch);
   if (!found) {
     found = branch.names.map((name, i) =>
-      [name, branch.elements[i], branch.kinds[i], branch.devices[i] ?? "", branch.components[i] ?? ""].join(" ").toLowerCase(),
+      [branch.eicNames[i] ?? "", name, branch.elements[i], branch.kinds[i], branch.devices[i] ?? "", branch.components[i] ?? ""]
+        .join(" ")
+        .toLowerCase(),
     );
     haystacks.set(branch, found);
   }
@@ -130,7 +132,7 @@ export function ElementTable(props: Props) {
   if (!branch) return <div className="table-empty">No branch loaded</div>;
 
   const columns = branch.columns;
-  const template = `52px minmax(130px, 1.4fr) 112px 92px 76px ${columns.map(() => "92px").join(" ")} minmax(120px, 1fr)`;
+  const template = `52px minmax(110px, 1fr) minmax(120px, 1.2fr) 112px 92px 76px ${columns.map(() => "92px").join(" ")} minmax(120px, 1fr)`;
   const first = Math.max(0, Math.floor(scrollTop / ROW) - OVERSCAN);
   const last = Math.min(rows.length, Math.ceil((scrollTop + viewport) / ROW) + OVERSCAN);
   const header = (key: SortKey, label: string, title?: string, numeric = false) => (
@@ -191,7 +193,8 @@ export function ElementTable(props: Props) {
       <div className="table-scroll" ref={scroller} onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)} data-testid="element-table">
         <div className="tr head" style={{ gridTemplateColumns: template }}>
           {header("index", "#", "Position in the branch", true)}
-          {header("name", "name")}
+          {header("name", "name", "EIC name (EIC-SEG-RSI-009); the lattice name where there is none")}
+          {header("lattice", "lattice name", "Name in the lattice (design) files")}
           {header("kind", "kind")}
           {header("s", "s [m]", "s at the entrance", true)}
           {header("length", "L [m]", "Length", true)}
@@ -247,7 +250,8 @@ const Row = memo(function Row({ branch, i, top, template, selected, hover, onSel
       aria-selected={selected}
     >
       <span className="num muted">{i}</span>
-      <span className="name" title={branch.elements[i] !== branch.names[i] ? `element ${branch.elements[i]}` : undefined}>
+      <span className="name">{branch.labels[i]}</span>
+      <span className="muted" title={branch.elements[i] !== branch.names[i] ? `element ${branch.elements[i]}` : undefined}>
         {branch.names[i]}
       </span>
       <span>
@@ -271,6 +275,8 @@ const Row = memo(function Row({ branch, i, top, template, selected, hover, onSel
 function sortValue(branch: BranchModel, key: SortKey): (i: number) => number | string | null {
   switch (key) {
     case "name":
+      return (i) => branch.labels[i]!;
+    case "lattice":
       return (i) => branch.names[i]!;
     case "kind":
       return (i) => branch.kinds[i]!;
@@ -292,11 +298,11 @@ function csvField(value: string | number | null | undefined): string {
 }
 
 function exportCsv(branch: BranchModel, rows: Int32Array, latticeName: string) {
-  const head = ["index", "name", "kind", "element", "s [m]", "L [m]", ...branch.columns.map((c) => `${c.key}${c.unit ? ` [${c.unit}]` : ""}`), "device", "id"];
+  const head = ["index", "eic name", "lattice name", "kind", "element", "s [m]", "L [m]", ...branch.columns.map((c) => `${c.key}${c.unit ? ` [${c.unit}]` : ""}`), "device", "id"];
   const lines = [head.map(csvField).join(",")];
   for (const i of rows)
     lines.push(
-      [i, branch.names[i], branch.kinds[i], branch.elements[i], branch.s[i], branch.lengths[i], ...branch.columns.map((c) => branch.values[c.key]?.[i]), branch.devices[i], branch.ids[i]]
+      [i, branch.eicNames[i], branch.names[i], branch.kinds[i], branch.elements[i], branch.s[i], branch.lengths[i], ...branch.columns.map((c) => branch.values[c.key]?.[i]), branch.devices[i], branch.ids[i]]
         .map(csvField)
         .join(","),
     );

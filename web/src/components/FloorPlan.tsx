@@ -262,7 +262,8 @@ export function FloorPlan(props: Props) {
       const i = target.index;
       const strength = strengthText(branch, i, (value) => formatNumber(value, 5));
       tip.replaceChildren(
-        line("strong", branch.names[i]!),
+        line("strong", branch.labels[i]!),
+        ...(branch.eicNames[i] ? [line("span", `lattice name ${branch.names[i]}`)] : []),
         line("span", `${branch.kinds[i]} · ${branch.name} · s = ${formatMetres(branch.s[i]!, 3)} m · L = ${formatNumber(branch.lengths[i]!, 5)} m`),
         ...(strength ? [line("span", strength)] : []),
         ...(branch.devices[i] ? [line("span", branch.devices[i]!)] : []),
@@ -581,7 +582,7 @@ function drawLabels(
       const key = cell(lx, ly);
       if (taken.has(key) || taken.has(key + 1) || taken.has(key - 1)) continue;
       taken.add(key);
-      ctx.fillText(branch.names[i]!, lx, ly);
+      ctx.fillText(branch.labels[i]!, lx, ly);
     }
   }
   ctx.textBaseline = "alphabetic";

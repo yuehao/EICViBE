@@ -172,3 +172,38 @@ def _plain(value: Any) -> Any:
     if isinstance(value, tuple):
         return list(value)
     return value
+
+
+def adopt_ids(new, old):
+    """``new`` with the ids of ``old`` wherever an entity kept its name.
+
+    A lattice imported again from changed design files gets fresh ids; with
+    the ids of the revision it replaces, the elements, occurrences (by branch
+    and name), branches and shared components that are still there keep their
+    identity, so devices stay attached and :func:`diff` shows what changed.
+    """
+    from .model import Lattice
+
+    ids: dict[str, str] = {}
+    old_branches = {b.name: b for b in old.branches}
+    ids |= {e.id: old.element(e.name).id for e in new.elements if e.name in {x.name for x in old.elements}}
+    for branch in new.branches:
+        previous = old_branches.get(branch.name)
+        if previous is None:
+            continue
+        ids[branch.id] = previous.id
+        names = {o.name: o.id for o in previous.occurrences}
+        ids |= {o.id: names[o.name] for o in branch.occurrences if o.name in names}
+    old_components = {c.name: c.id for c in old.shared_components}
+    ids |= {c.id: old_components[c.name] for c in new.shared_components if c.name in old_components}
+    return Lattice.from_dict(_replace_ids(new.to_dict(), ids))
+
+
+def _replace_ids(value: Any, ids: Mapping[str, str]) -> Any:
+    if isinstance(value, dict):
+        return {k: _replace_ids(v, ids) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_replace_ids(v, ids) for v in value]
+    if isinstance(value, str):
+        return ids.get(value, value)
+    return value

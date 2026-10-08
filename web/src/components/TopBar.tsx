@@ -143,7 +143,8 @@ export function TopBar(props: Props) {
               </p>
               {summary.devices ? (
                 <p className="muted">
-                  {summary.devices} devices, {summary.channels} channels in the registry
+                  {summary.devices} devices, {summary.channels} channels and {summary.circuits} power circuits (
+                  {summary.strings} series strings) in the registry
                 </p>
               ) : (
                 <p className="muted">No machine registry: device names are not shown.</p>
@@ -169,17 +170,25 @@ function Search({ models, branchOrder, onFind }: { models: Map<string, BranchMod
   const results = useMemo(() => {
     const needle = text.trim().toLowerCase();
     if (needle.length < 2) return [];
-    const found: (Target & { name: string; branchName: string; kind: string; exact: boolean })[] = [];
+    const found: (Target & { name: string; lattice: string | null; branchName: string; kind: string; exact: boolean })[] = [];
     for (const id of branchOrder) {
       const model = models.get(id);
       if (!model) continue;
       for (let i = 0; i < model.n && found.length < 200; i++) {
         if (isDrift(model.kinds[i]!)) continue;
-        const name = model.names[i]!;
-        const lower = name.toLowerCase();
+        const name = model.labels[i]!, lattice = model.names[i]!;
+        const lower = name.toLowerCase(), latticeLower = lattice.toLowerCase();
         const device = model.devices[i]?.toLowerCase() ?? "";
-        if (lower.includes(needle) || device.includes(needle))
-          found.push({ branch: id, index: i, name, branchName: model.name, kind: model.kinds[i]!, exact: lower === needle });
+        if (lower.includes(needle) || latticeLower.includes(needle) || device.includes(needle))
+          found.push({
+            branch: id,
+            index: i,
+            name,
+            lattice: lattice === name ? null : lattice,
+            branchName: model.name,
+            kind: model.kinds[i]!,
+            exact: lower === needle || latticeLower === needle,
+          });
       }
     }
     return found.sort((a, b) => Number(b.exact) - Number(a.exact)).slice(0, 40);
@@ -231,7 +240,7 @@ function Search({ models, branchOrder, onFind }: { models: Map<string, BranchMod
               }}
             >
               <i className="swatch" style={{ background: swatch(r.kind) }} />
-              {r.name} <span className="muted">{r.branchName}</span>
+              {r.name} <span className="muted">{r.lattice ? `${r.lattice} · ` : ""}{r.branchName}</span>
             </li>
           ))}
         </ul>
