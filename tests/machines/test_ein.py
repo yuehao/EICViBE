@@ -9,7 +9,6 @@ import pytest
 pytest.importorskip("cpymad.madx")
 
 from eicvibe.domain.lattice import Lattice  # noqa: E402
-from eicvibe.domain.machine import MachineRegistry  # noqa: E402
 from eicvibe.machines.ein import (  # noqa: E402
     RCSV5S1,
     TEMPORARY_AREAS,
@@ -17,8 +16,10 @@ from eicvibe.machines.ein import (  # noqa: E402
     build_ein,
     ein_registry,
     ein_repository,
-    save_ein,
+    update_ein_machine,
+    write_ein_machine,
 )
+from eicvibe.store import build_machine, check_machine, load_machine, read_settings  # noqa: E402
 
 FOLDER = Path(os.environ.get("EICVIBE_EIN_FOLDER", "/Users/haoyue/Research/EIC/virtual_accelerator/EIN"))
 pytestmark = pytest.mark.skipif(not (FOLDER / "EICVIBE_lattice/madx").exists(), reason="EIN folder not found")
@@ -107,12 +108,46 @@ def test_bar_mode_retunes_fifteen_ltr_quadrupoles(ein):
     assert all(lattice.placement(s.occurrence).branch_id == lattice.layout("ltr").id for s in ein.bar_mode)
 
 
-def test_registry_covers_every_branch_but_not_the_shared_septum(ein):
+def test_registry_covers_every_branch_and_the_septum_once(ein):
+    lattice = ein.lattice
     registry = ein_registry(ein)
-    assert registry.check_against(ein.lattice) == []
+    assert registry.check_against(lattice) == []
     assert {d.name.split("-")[0] for d in registry.devices} == set(TEMPORARY_AREAS.values())
-    traversals = {t.occurrence for t in ein.lattice.shared_components[0].traversals}
-    assert not any(set(d.occurrences) & traversals for d in registry.devices)
+    traversals = {t.occurrence for t in lattice.shared_components[0].traversals}
+    [septum] = [d for d in registry.devices if set(d.occurrences) & traversals]
+    assert septum.name == "bar-sptm18-ps" and set(septum.occurrences) == traversals
+    # One pulsed supply: the field of the injection and extraction bends, never the stored beam's kicker.
+    setting = registry.channel("bar-sptm18-ps:sp")
+    [magnet] = registry.circuit(setting.binding.circuit).magnets  # one magnet, one transfer function
+    assert {lattice.placement(t).name for t in magnet.occurrences} == {"iseptum", "eseptum"}
+    for name, branch in (("iseptum", "itl"), ("eseptum", "etl")):
+        bend = lattice.placement(name, branch=branch).element
+        assert bend.MagneticMultipoleP.Kn0 == pytest.approx(bend.BendP.angle_ref / bend.length)
+        assert not bend.BendP.Kn0_from_g_ref  # so that 0 A means no field
+    assert lattice.placement("septum", branch="bar").kind.value == "Kicker"
+
+
+def test_every_ein_element_has_an_eic_name(ein):
+    lattice = ein.lattice
+    registry = ein_registry(ein)
+    unnamed = {
+        p.kind.value
+        for b in lattice.branches
+        for p in lattice.layout(b.id).placements
+        if not registry.slot_of(p.id)
+    }
+    assert unnamed == {"BeginningEle", "Fork", "Patch"}  # bookkeeping only
+    names = {
+        p.name: registry.slot_of(p.id).name
+        for p in lattice.layout("ltr").placements
+        if registry.slot_of(p.id)
+    }
+    assert (
+        names["ltr_pip01_l1001"] == "ltr-q1:1" and names["ltr_pip01_l1002"] == "ltr-q1:2"
+    )  # one metre, two quads
+    assert names["ltr_pip03_l1012"] == "ltr-q6"
+    assert registry.slot_of(lattice.placement("iseptum", branch="itl").id).name == "bar-sptm18"  # one magnet
+    assert not [p for p in registry.naming_problems(ein_repository()) if "signal" not in p]
 
 
 def test_temporary_names_can_change_without_changing_devices(ein):
@@ -124,14 +159,94 @@ def test_temporary_names_can_change_without_changing_devices(ein):
     assert problems and all("area" not in p for p in problems)  # only signal tokens awaiting approval remain
 
 
-def test_save_writes_the_lattice_and_its_companions(ein, tmp_path):
-    paths = save_ein(ein, tmp_path)
+def test_a_new_machine_folder_holds_the_lattice_devices_and_bar_mode(ein, tmp_path):
+    folder = tmp_path / "machine"
+    write_ein_machine(ein, folder)
+    machine = load_machine(folder)
+    assert machine.lattice == ein.lattice and machine.registry == ein_registry(ein)
+    assert machine.source["madx"].startswith("MAD-X") and len(machine.source["files"]) == 9
+    bar_mode = read_settings(folder, "bar_mode", machine.lattice)
+    assert {(b.occurrence, b.parameter, b.value) for b in bar_mode} == {
+        (b.occurrence, b.parameter, b.value) for b in ein.bar_mode
+    }
+    assert check_machine(folder) == []
+    paths = build_machine(folder)
     assert Lattice.from_json(paths["lattice"].read_text()) == ein.lattice
-    assert MachineRegistry.model_validate_json(paths["registry"].read_text()).check_against(ein.lattice) == []
-    manifest = json.loads(paths["manifest"].read_text())
-    assert manifest["lattice_digest"] == ein.lattice.digest and len(manifest["sources"]) == 9
-    assert len(json.loads(paths["bar_mode"].read_text())["settings"]) == 15
+    assert json.loads(paths["manifest"].read_text())["lattice_digest"] == ein.lattice.digest
+
+
+def test_importing_again_keeps_identities_and_shows_what_changed(ein, tmp_path):
+    folder = tmp_path / "machine"
+    write_ein_machine(ein, folder)
+    assert update_ein_machine(ein, folder) == ()  # the design files have not changed
+    ltr = folder / "lattice" / "ltr.yaml"
+    text = ltr.read_text()
+    old = "ltr.ltr_pip01_l1001: {kind: Quadrupole, length: 0.3, MagneticMultipoleP: {Kn1: "
+    assert old in text
+    ltr.write_text(text.replace(old, old + "1"))  # someone edited a strength in the lattice files
+    changes = update_ein_machine(ein, folder)
+    assert [(c.entity, c.field) for c in changes] == [("element", "MagneticMultipoleP.Kn1")]
+    power = (folder / "devices" / "power.yaml").read_text()
+    update_ein_machine(ein, folder, write=True)  # the design files win
+    assert load_machine(folder).lattice == ein.lattice
+    assert (folder / "devices" / "power.yaml").read_text() == power  # devices are not touched
 
 
 def test_assembly_is_reproducible(ein):
     assert build_ein(FOLDER).lattice.digest == ein.lattice.digest
+
+
+def test_the_floor_plan_closes_through_the_one_septum(ein):
+    from eicvibe.geometry import floor_geometry
+
+    lattice = ein.lattice
+    geometry = floor_geometry(lattice)
+    assert all(b.placed_by or b.branch == lattice.root_branch for b in geometry.branches.values())
+    [closure] = geometry.closures  # the loop LTR -> ITL -> BAR -> ETL -> LTR
+    assert closure.position_error < 1e-9 and closure.angle_error < 1e-9
+
+    def frames(name, branch):
+        placed = lattice.placement(name, branch=branch)
+        return geometry.branches[placed.branch_id].frames[placed.index]
+
+    # One rectangular magnet: a bend for the injected and extracted beams, a pulsed-off kicker
+    # for the stored beam, which passes along its axis. The injected beam leaves it 1.75 mrad
+    # (its e2) off the stored orbit, and the extracted beam enters 1.75 mrad off.
+    injection, circulation, extraction = (
+        frames("iseptum", "itl"),
+        frames("septum", "bar"),
+        frames("eseptum", "etl"),
+    )
+    assert circulation.exit.r == pytest.approx(injection.exit.r, abs=1e-12)
+    assert circulation.exit.angles[0] - injection.exit.angles[0] == pytest.approx(1.75e-3)
+    assert extraction.entrance.r == pytest.approx(circulation.entrance.r, abs=1e-12)
+    assert extraction.entrance.angles[0] - circulation.entrance.angles[0] == pytest.approx(1.75e-3)
+
+
+def test_ring_magnets_are_strung_by_family_and_line_magnets_powered_alone(ein):
+    lattice = ein.lattice
+    registry = ein_registry(ein)
+    assert registry.power_problems(lattice) == []
+    powered = {o for c in registry.circuits for m in c.magnets for o in m.occurrences}
+    magnets = {"Bend", "Quadrupole", "Sextupole", "Kicker"}
+    unpowered = {
+        p.name
+        for b in lattice.branches
+        for p in lattice.layout(b.id).placements
+        if p.kind.value in magnets and p.id not in powered
+    }
+    assert unpowered == {"septum"}  # bends included; only the septum's stored-beam traversal is never set
+    dipoles = next(c for c in registry.circuits if c.name == "rcs.b0")
+    assert len(dipoles.magnets) == 156 and registry.setting_of(dipoles.id).name == "rcs-dh111-ps:sp"
+    # Strings join magnets of one length and design strength; in the BAR and RCS these are the lattice
+    # families: the main, weak and "orig" dipoles differ in strength, so they are three strings.
+    strings = sorted((c.name, len(c.magnets)) for c in registry.circuits if c.series)
+    assert ("rcs.b0_weak", 4) in strings and ("rcs.b0_orig", 2) in strings and ("bar.bd", 8) in strings
+    assert len(strings) == 20 and not any("+" in name for name, _ in strings)
+    by_branch = {}
+    for circuit in registry.circuits:
+        branch = lattice.branch(lattice.placement(circuit.magnets[0].occurrences[0]).branch_id).name
+        by_branch.setdefault(branch, set()).add(circuit.series)
+    assert by_branch["ltr"] == by_branch["rte"] == {False} and by_branch["rcs"] == {False, True}
+    alone = ein_registry(ein, series={})  # everything on its own supply
+    assert not any(c.series for c in alone.circuits)

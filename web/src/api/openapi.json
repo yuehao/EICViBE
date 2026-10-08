@@ -1,0 +1,1548 @@
+{
+ "components": {
+  "schemas": {
+   "Bounds": {
+    "description": "Extent of a branch on the floor, m.",
+    "properties": {
+     "x_max": {
+      "title": "X Max",
+      "type": "number"
+     },
+     "x_min": {
+      "title": "X Min",
+      "type": "number"
+     },
+     "z_max": {
+      "title": "Z Max",
+      "type": "number"
+     },
+     "z_min": {
+      "title": "Z Min",
+      "type": "number"
+     }
+    },
+    "required": [
+     "x_min",
+     "x_max",
+     "z_min",
+     "z_max"
+    ],
+    "title": "Bounds",
+    "type": "object"
+   },
+   "BranchData": {
+    "properties": {
+     "branch": {
+      "title": "Branch",
+      "type": "string"
+     },
+     "floor": {
+      "$ref": "#/components/schemas/BranchFloor"
+     },
+     "schema_version": {
+      "default": 3,
+      "title": "Schema Version",
+      "type": "integer"
+     },
+     "table": {
+      "$ref": "#/components/schemas/BranchTable"
+     }
+    },
+    "required": [
+     "branch",
+     "table",
+     "floor"
+    ],
+    "title": "BranchData",
+    "type": "object"
+   },
+   "BranchFloor": {
+    "description": "Reference orbit on the floor: occurrence i spans points ``offsets[i]`` to ``offsets[i+1] - 1``.",
+    "properties": {
+     "offsets": {
+      "items": {
+       "type": "integer"
+      },
+      "title": "Offsets",
+      "type": "array"
+     },
+     "theta": {
+      "description": "Heading at each occurrence's entrance, rad",
+      "items": {
+       "type": "number"
+      },
+      "title": "Theta",
+      "type": "array"
+     },
+     "x": {
+      "items": {
+       "type": "number"
+      },
+      "title": "X",
+      "type": "array"
+     },
+     "y": {
+      "items": {
+       "type": "number"
+      },
+      "title": "Y",
+      "type": "array"
+     },
+     "z": {
+      "items": {
+       "type": "number"
+      },
+      "title": "Z",
+      "type": "array"
+     }
+    },
+    "required": [
+     "offsets",
+     "x",
+     "y",
+     "z",
+     "theta"
+    ],
+    "title": "BranchFloor",
+    "type": "object"
+   },
+   "BranchSummary": {
+    "properties": {
+     "bounds": {
+      "$ref": "#/components/schemas/Bounds"
+     },
+     "id": {
+      "title": "Id",
+      "type": "string"
+     },
+     "kind": {
+      "title": "Kind",
+      "type": "string"
+     },
+     "length": {
+      "title": "Length",
+      "type": "number"
+     },
+     "name": {
+      "title": "Name",
+      "type": "string"
+     },
+     "occurrences": {
+      "title": "Occurrences",
+      "type": "integer"
+     },
+     "placed_by": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Fork occurrence that places this branch on the floor",
+      "title": "Placed By"
+     },
+     "reference": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/Reference"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Reference particle at the branch start, if given"
+     }
+    },
+    "required": [
+     "id",
+     "name",
+     "kind",
+     "length",
+     "occurrences",
+     "placed_by",
+     "bounds",
+     "reference"
+    ],
+    "title": "BranchSummary",
+    "type": "object"
+   },
+   "BranchTable": {
+    "description": "Per-occurrence values in beam order, one list per field.\n\n``Kn1`` and ``Kn1L`` (and the same for ``Kn2``) combine both ways a lattice\ncan give a strength: ``Kn1L = Kn1 * length + Kn1L`` and, for an element\nwith length, ``Kn1 = Kn1L / length``. A value is null where it does not\napply to the element's kind.",
+    "properties": {
+     "columns": {
+      "items": {
+       "$ref": "#/components/schemas/Column"
+      },
+      "title": "Columns",
+      "type": "array"
+     },
+     "component": {
+      "description": "Shared component an occurrence is a traversal of",
+      "items": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ]
+      },
+      "title": "Component",
+      "type": "array"
+     },
+     "device": {
+      "description": "Names of the devices at the occurrence, comma separated",
+      "items": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ]
+      },
+      "title": "Device",
+      "type": "array"
+     },
+     "eic_name": {
+      "description": "EIC name (EIC-SEG-RSI-009) of the element, from the machine registry; null without one",
+      "items": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ]
+      },
+      "title": "Eic Name",
+      "type": "array"
+     },
+     "element": {
+      "description": "Name of the placed element definition",
+      "items": {
+       "type": "string"
+      },
+      "title": "Element",
+      "type": "array"
+     },
+     "fork_to": {
+      "description": "Branch a fork leads to",
+      "items": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ]
+      },
+      "title": "Fork To",
+      "type": "array"
+     },
+     "id": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Id",
+      "type": "array"
+     },
+     "kind": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Kind",
+      "type": "array"
+     },
+     "length": {
+      "items": {
+       "type": "number"
+      },
+      "title": "Length",
+      "type": "array"
+     },
+     "name": {
+      "description": "Lattice (design) name of the occurrence",
+      "items": {
+       "type": "string"
+      },
+      "title": "Name",
+      "type": "array"
+     },
+     "s": {
+      "description": "s at the entrance, m",
+      "items": {
+       "type": "number"
+      },
+      "title": "S",
+      "type": "array"
+     },
+     "values": {
+      "additionalProperties": {
+       "items": {
+        "anyOf": [
+         {
+          "type": "number"
+         },
+         {
+          "type": "null"
+         }
+        ]
+       },
+       "type": "array"
+      },
+      "description": "Numeric columns by key; see ``columns``",
+      "title": "Values",
+      "type": "object"
+     }
+    },
+    "required": [
+     "id",
+     "name",
+     "eic_name",
+     "kind",
+     "element",
+     "s",
+     "length",
+     "values",
+     "columns",
+     "device",
+     "fork_to",
+     "component"
+    ],
+    "title": "BranchTable",
+    "type": "object"
+   },
+   "Channel": {
+    "properties": {
+     "circuit": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Power circuit whose current the setting is",
+      "title": "Circuit"
+     },
+     "control_limits": {
+      "anyOf": [
+       {
+        "maxItems": 2,
+        "minItems": 2,
+        "prefixItems": [
+         {
+          "type": "number"
+         },
+         {
+          "type": "number"
+         }
+        ],
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Control Limits"
+     },
+     "name": {
+      "title": "Name",
+      "type": "string"
+     },
+     "observable": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Beam quantity a measurement reads",
+      "title": "Observable"
+     },
+     "parameter": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Lattice parameter a setting drives",
+      "title": "Parameter"
+     },
+     "role": {
+      "title": "Role",
+      "type": "string"
+     },
+     "targets": {
+      "description": "Occurrences or definitions whose parameter the setting drives",
+      "items": {
+       "type": "string"
+      },
+      "title": "Targets",
+      "type": "array"
+     },
+     "unit": {
+      "title": "Unit",
+      "type": "string"
+     }
+    },
+    "required": [
+     "name",
+     "role",
+     "unit",
+     "control_limits",
+     "parameter",
+     "targets",
+     "circuit",
+     "observable"
+    ],
+    "title": "Channel",
+    "type": "object"
+   },
+   "Closure": {
+    "description": "A fork into a branch already placed elsewhere, and how far apart the two frames are.",
+    "properties": {
+     "angle_error": {
+      "description": "rad",
+      "title": "Angle Error",
+      "type": "number"
+     },
+     "fork": {
+      "title": "Fork",
+      "type": "string"
+     },
+     "position_error": {
+      "description": "m",
+      "title": "Position Error",
+      "type": "number"
+     }
+    },
+    "required": [
+     "fork",
+     "position_error",
+     "angle_error"
+    ],
+    "title": "Closure",
+    "type": "object"
+   },
+   "Column": {
+    "description": "How to label one numeric column of :class:`BranchTable`.",
+    "properties": {
+     "description": {
+      "title": "Description",
+      "type": "string"
+     },
+     "key": {
+      "title": "Key",
+      "type": "string"
+     },
+     "label": {
+      "title": "Label",
+      "type": "string"
+     },
+     "unit": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Unit"
+     }
+    },
+    "required": [
+     "key",
+     "label",
+     "unit",
+     "description"
+    ],
+    "title": "Column",
+    "type": "object"
+   },
+   "Device": {
+    "properties": {
+     "channels": {
+      "items": {
+       "$ref": "#/components/schemas/Channel"
+      },
+      "title": "Channels",
+      "type": "array"
+     },
+     "id": {
+      "title": "Id",
+      "type": "string"
+     },
+     "name": {
+      "title": "Name",
+      "type": "string"
+     },
+     "power": {
+      "description": "The power circuits of a supply",
+      "items": {
+       "$ref": "#/components/schemas/Power"
+      },
+      "title": "Power",
+      "type": "array"
+     },
+     "type": {
+      "title": "Type",
+      "type": "string"
+     }
+    },
+    "required": [
+     "id",
+     "name",
+     "type",
+     "channels",
+     "power"
+    ],
+    "title": "Device",
+    "type": "object"
+   },
+   "Diagnostic": {
+    "properties": {
+     "code": {
+      "title": "Code",
+      "type": "string"
+     },
+     "message": {
+      "title": "Message",
+      "type": "string"
+     },
+     "subject": {
+      "title": "Subject",
+      "type": "string"
+     }
+    },
+    "required": [
+     "code",
+     "message",
+     "subject"
+    ],
+    "title": "Diagnostic",
+    "type": "object"
+   },
+   "ForkLink": {
+    "properties": {
+     "to_branch": {
+      "title": "To Branch",
+      "type": "string"
+     },
+     "to_occurrence": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "To Occurrence"
+     },
+     "to_side": {
+      "title": "To Side",
+      "type": "string"
+     }
+    },
+    "required": [
+     "to_branch",
+     "to_occurrence",
+     "to_side"
+    ],
+    "title": "ForkLink",
+    "type": "object"
+   },
+   "ForkSummary": {
+    "properties": {
+     "from_branch": {
+      "title": "From Branch",
+      "type": "string"
+     },
+     "id": {
+      "title": "Id",
+      "type": "string"
+     },
+     "name": {
+      "title": "Name",
+      "type": "string"
+     },
+     "s_from": {
+      "title": "S From",
+      "type": "number"
+     },
+     "s_to": {
+      "title": "S To",
+      "type": "number"
+     },
+     "to_branch": {
+      "title": "To Branch",
+      "type": "string"
+     },
+     "to_occurrence": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "To Occurrence"
+     },
+     "to_side": {
+      "title": "To Side",
+      "type": "string"
+     }
+    },
+    "required": [
+     "id",
+     "name",
+     "from_branch",
+     "s_from",
+     "to_branch",
+     "to_occurrence",
+     "to_side",
+     "s_to"
+    ],
+    "title": "ForkSummary",
+    "type": "object"
+   },
+   "Group": {
+    "properties": {
+     "group": {
+      "title": "Group",
+      "type": "string"
+     },
+     "parameters": {
+      "items": {
+       "$ref": "#/components/schemas/Parameter"
+      },
+      "title": "Parameters",
+      "type": "array"
+     }
+    },
+    "required": [
+     "group",
+     "parameters"
+    ],
+    "title": "Group",
+    "type": "object"
+   },
+   "HTTPValidationError": {
+    "properties": {
+     "detail": {
+      "items": {
+       "$ref": "#/components/schemas/ValidationError"
+      },
+      "title": "Detail",
+      "type": "array"
+     }
+    },
+    "title": "HTTPValidationError",
+    "type": "object"
+   },
+   "LatticeEntry": {
+    "description": "One lattice the server offers.",
+    "properties": {
+     "branches": {
+      "title": "Branches",
+      "type": "integer"
+     },
+     "digest": {
+      "description": "Hex SHA-256 of the canonical lattice; the revision key in URLs",
+      "title": "Digest",
+      "type": "string"
+     },
+     "loaded_at": {
+      "description": "When the server loaded this revision, ISO 8601",
+      "title": "Loaded At",
+      "type": "string"
+     },
+     "name": {
+      "description": "Lattice name",
+      "title": "Name",
+      "type": "string"
+     },
+     "occurrences": {
+      "title": "Occurrences",
+      "type": "integer"
+     },
+     "registry": {
+      "description": "Whether devices and channels are available",
+      "title": "Registry",
+      "type": "boolean"
+     },
+     "source": {
+      "description": "Catalog name, from the file name",
+      "title": "Source",
+      "type": "string"
+     }
+    },
+    "required": [
+     "source",
+     "name",
+     "digest",
+     "branches",
+     "occurrences",
+     "registry",
+     "loaded_at"
+    ],
+    "title": "LatticeEntry",
+    "type": "object"
+   },
+   "LatticeSummary": {
+    "properties": {
+     "branches": {
+      "items": {
+       "$ref": "#/components/schemas/BranchSummary"
+      },
+      "title": "Branches",
+      "type": "array"
+     },
+     "channels": {
+      "title": "Channels",
+      "type": "integer"
+     },
+     "circuits": {
+      "description": "Power circuits in the registry",
+      "title": "Circuits",
+      "type": "integer"
+     },
+     "closures": {
+      "items": {
+       "$ref": "#/components/schemas/Closure"
+      },
+      "title": "Closures",
+      "type": "array"
+     },
+     "devices": {
+      "description": "Devices in the registry; 0 without one",
+      "title": "Devices",
+      "type": "integer"
+     },
+     "diagnostics": {
+      "items": {
+       "$ref": "#/components/schemas/Diagnostic"
+      },
+      "title": "Diagnostics",
+      "type": "array"
+     },
+     "digest": {
+      "title": "Digest",
+      "type": "string"
+     },
+     "forks": {
+      "items": {
+       "$ref": "#/components/schemas/ForkSummary"
+      },
+      "title": "Forks",
+      "type": "array"
+     },
+     "kinds": {
+      "additionalProperties": {
+       "type": "integer"
+      },
+      "description": "Occurrence count by element kind",
+      "title": "Kinds",
+      "type": "object"
+     },
+     "name": {
+      "title": "Name",
+      "type": "string"
+     },
+     "root_branch": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Root Branch"
+     },
+     "schema_version": {
+      "default": 3,
+      "title": "Schema Version",
+      "type": "integer"
+     },
+     "shared_components": {
+      "items": {
+       "$ref": "#/components/schemas/SharedComponent"
+      },
+      "title": "Shared Components",
+      "type": "array"
+     },
+     "source": {
+      "title": "Source",
+      "type": "string"
+     },
+     "strings": {
+      "description": "Circuits that drive several magnets in series",
+      "title": "Strings",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "source",
+     "name",
+     "digest",
+     "root_branch",
+     "branches",
+     "forks",
+     "closures",
+     "shared_components",
+     "diagnostics",
+     "kinds",
+     "devices",
+     "channels",
+     "circuits",
+     "strings"
+    ],
+    "title": "LatticeSummary",
+    "type": "object"
+   },
+   "OccurrenceDetail": {
+    "properties": {
+     "branch": {
+      "title": "Branch",
+      "type": "string"
+     },
+     "component": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/SharedComponent"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "devices": {
+      "items": {
+       "$ref": "#/components/schemas/Device"
+      },
+      "title": "Devices",
+      "type": "array"
+     },
+     "eic_name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "EIC name of the element, from the machine registry",
+      "title": "Eic Name"
+     },
+     "element": {
+      "title": "Element",
+      "type": "string"
+     },
+     "element_id": {
+      "title": "Element Id",
+      "type": "string"
+     },
+     "entrance": {
+      "$ref": "#/components/schemas/Pose"
+     },
+     "exit": {
+      "$ref": "#/components/schemas/Pose"
+     },
+     "fork": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/ForkLink"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "groups": {
+      "items": {
+       "$ref": "#/components/schemas/Group"
+      },
+      "title": "Groups",
+      "type": "array"
+     },
+     "id": {
+      "title": "Id",
+      "type": "string"
+     },
+     "index": {
+      "title": "Index",
+      "type": "integer"
+     },
+     "kind": {
+      "title": "Kind",
+      "type": "string"
+     },
+     "length": {
+      "title": "Length",
+      "type": "number"
+     },
+     "name": {
+      "description": "Lattice (design) name",
+      "title": "Name",
+      "type": "string"
+     },
+     "s_enter": {
+      "title": "S Enter",
+      "type": "number"
+     },
+     "s_exit": {
+      "title": "S Exit",
+      "type": "number"
+     },
+     "schema_version": {
+      "default": 3,
+      "title": "Schema Version",
+      "type": "integer"
+     },
+     "tags": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Tags",
+      "type": "array"
+     }
+    },
+    "required": [
+     "id",
+     "name",
+     "eic_name",
+     "kind",
+     "element",
+     "element_id",
+     "branch",
+     "index",
+     "s_enter",
+     "s_exit",
+     "length",
+     "tags",
+     "groups",
+     "fork",
+     "component",
+     "entrance",
+     "exit",
+     "devices"
+    ],
+    "title": "OccurrenceDetail",
+    "type": "object"
+   },
+   "Parameter": {
+    "properties": {
+     "description": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Description"
+     },
+     "name": {
+      "title": "Name",
+      "type": "string"
+     },
+     "overridden": {
+      "description": "Set on this occurrence rather than on the element definition",
+      "title": "Overridden",
+      "type": "boolean"
+     },
+     "unit": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Unit"
+     },
+     "value": {
+      "title": "Value"
+     }
+    },
+    "required": [
+     "name",
+     "value",
+     "unit",
+     "description",
+     "overridden"
+    ],
+    "title": "Parameter",
+    "type": "object"
+   },
+   "Pose": {
+    "description": "Global position (m) and orientation (rad, ``W = R_y(theta) R_x(phi) R_z(psi)``).",
+    "properties": {
+     "phi": {
+      "title": "Phi",
+      "type": "number"
+     },
+     "psi": {
+      "title": "Psi",
+      "type": "number"
+     },
+     "theta": {
+      "title": "Theta",
+      "type": "number"
+     },
+     "x": {
+      "title": "X",
+      "type": "number"
+     },
+     "y": {
+      "title": "Y",
+      "type": "number"
+     },
+     "z": {
+      "title": "Z",
+      "type": "number"
+     }
+    },
+    "required": [
+     "x",
+     "y",
+     "z",
+     "theta",
+     "phi",
+     "psi"
+    ],
+    "title": "Pose",
+    "type": "object"
+   },
+   "Power": {
+    "description": "One power circuit of a supply, seen from one occurrence.",
+    "properties": {
+     "circuit": {
+      "title": "Circuit",
+      "type": "string"
+     },
+     "design_current": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Current giving this magnet its design value",
+      "title": "Design Current"
+     },
+     "magnets": {
+      "title": "Magnets",
+      "type": "integer"
+     },
+     "name": {
+      "description": "The family a string powers, or the magnet",
+      "title": "Name",
+      "type": "string"
+     },
+     "occurrences": {
+      "description": "Every occurrence the circuit sets",
+      "items": {
+       "type": "string"
+      },
+      "title": "Occurrences",
+      "type": "array"
+     },
+     "parameter": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "The parameter it sets here; null where it sets none",
+      "title": "Parameter"
+     },
+     "polarity": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Polarity"
+     },
+     "series": {
+      "description": "Several magnets in series on the supply",
+      "title": "Series",
+      "type": "boolean"
+     },
+     "setting": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "The setting channel, in the supply's engineering unit",
+      "title": "Setting"
+     },
+     "transfer": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/Transfer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "This magnet's transfer function"
+     }
+    },
+    "required": [
+     "circuit",
+     "name",
+     "setting",
+     "series",
+     "magnets",
+     "occurrences",
+     "parameter",
+     "polarity",
+     "transfer",
+     "design_current"
+    ],
+    "title": "Power",
+    "type": "object"
+   },
+   "Reference": {
+    "properties": {
+     "E_tot": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Reference total energy, eV",
+      "title": "E Tot"
+     },
+     "pc": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Reference momentum times c, eV",
+      "title": "Pc"
+     },
+     "species": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Species"
+     }
+    },
+    "required": [
+     "species",
+     "pc",
+     "E_tot"
+    ],
+    "title": "Reference",
+    "type": "object"
+   },
+   "SharedComponent": {
+    "properties": {
+     "id": {
+      "title": "Id",
+      "type": "string"
+     },
+     "name": {
+      "title": "Name",
+      "type": "string"
+     },
+     "traversals": {
+      "items": {
+       "$ref": "#/components/schemas/Traversal"
+      },
+      "title": "Traversals",
+      "type": "array"
+     }
+    },
+    "required": [
+     "id",
+     "name",
+     "traversals"
+    ],
+    "title": "SharedComponent",
+    "type": "object"
+   },
+   "Transfer": {
+    "description": "A magnet's transfer function, from its supply's current to its field.",
+    "properties": {
+     "engineering_unit": {
+      "title": "Engineering Unit",
+      "type": "string"
+     },
+     "field_unit": {
+      "title": "Field Unit",
+      "type": "string"
+     },
+     "integrated": {
+      "description": "Field integrated over the magnet",
+      "title": "Integrated",
+      "type": "boolean"
+     },
+     "kind": {
+      "description": "polynomial, table or service",
+      "title": "Kind",
+      "type": "string"
+     },
+     "source": {
+      "description": "placeholder or measured",
+      "title": "Source",
+      "type": "string"
+     },
+     "summary": {
+      "description": "E.g. field = 0.001 T/A x I",
+      "title": "Summary",
+      "type": "string"
+     }
+    },
+    "required": [
+     "kind",
+     "summary",
+     "engineering_unit",
+     "field_unit",
+     "integrated",
+     "source"
+    ],
+    "title": "Transfer",
+    "type": "object"
+   },
+   "Traversal": {
+    "properties": {
+     "branch": {
+      "title": "Branch",
+      "type": "string"
+     },
+     "occurrence": {
+      "title": "Occurrence",
+      "type": "string"
+     },
+     "role": {
+      "title": "Role",
+      "type": "string"
+     }
+    },
+    "required": [
+     "role",
+     "occurrence",
+     "branch"
+    ],
+    "title": "Traversal",
+    "type": "object"
+   },
+   "ValidationError": {
+    "properties": {
+     "ctx": {
+      "title": "Context",
+      "type": "object"
+     },
+     "input": {
+      "title": "Input"
+     },
+     "loc": {
+      "items": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "integer"
+        }
+       ]
+      },
+      "title": "Location",
+      "type": "array"
+     },
+     "msg": {
+      "title": "Message",
+      "type": "string"
+     },
+     "type": {
+      "title": "Error Type",
+      "type": "string"
+     }
+    },
+    "required": [
+     "loc",
+     "msg",
+     "type"
+    ],
+    "title": "ValidationError",
+    "type": "object"
+   }
+  }
+ },
+ "info": {
+  "title": "EICViBE lattice viewer",
+  "version": "0.1.0"
+ },
+ "openapi": "3.1.0",
+ "paths": {
+  "/api/v1/health": {
+   "get": {
+    "operationId": "health_api_v1_health_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": {
+          "type": "string"
+         },
+         "title": "Response Health Api V1 Health Get",
+         "type": "object"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "Health"
+   }
+  },
+  "/api/v1/lattices": {
+   "get": {
+    "description": "Lattices this server offers, at their current revisions.",
+    "operationId": "lattices_api_v1_lattices_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "items": {
+          "$ref": "#/components/schemas/LatticeEntry"
+         },
+         "title": "Response Lattices Api V1 Lattices Get",
+         "type": "array"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "Lattices"
+   }
+  },
+  "/api/v1/lattices/{digest}": {
+   "get": {
+    "description": "Branches, forks, floor closures, shared components and diagnostics of a revision.",
+    "operationId": "lattice_api_v1_lattices__digest__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "digest",
+      "required": true,
+      "schema": {
+       "title": "Digest",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/LatticeSummary"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Lattice"
+   }
+  },
+  "/api/v1/lattices/{digest}/branches/{branch}": {
+   "get": {
+    "description": "Element table and floor coordinates of one branch (by id or name).",
+    "operationId": "branch_api_v1_lattices__digest__branches__branch__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "digest",
+      "required": true,
+      "schema": {
+       "title": "Digest",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "branch",
+      "required": true,
+      "schema": {
+       "title": "Branch",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/BranchData"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Branch"
+   }
+  },
+  "/api/v1/lattices/{digest}/lattice.json": {
+   "get": {
+    "description": "The revision itself, in canonical JSON, to open with ``Lattice.from_json``.",
+    "operationId": "download_api_v1_lattices__digest__lattice_json_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "digest",
+      "required": true,
+      "schema": {
+       "title": "Digest",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Download"
+   }
+  },
+  "/api/v1/lattices/{digest}/occurrences/{occurrence}": {
+   "get": {
+    "description": "Parameters, floor pose, fork, shared component and devices of one occurrence.",
+    "operationId": "occurrence_api_v1_lattices__digest__occurrences__occurrence__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "digest",
+      "required": true,
+      "schema": {
+       "title": "Digest",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "occurrence",
+      "required": true,
+      "schema": {
+       "title": "Occurrence",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/OccurrenceDetail"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Occurrence"
+   }
+  }
+ }
+}

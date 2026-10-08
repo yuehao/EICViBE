@@ -15,6 +15,7 @@ from eicvibe.domain.machine import (
     ParameterBinding,
     generate_registry,
 )
+from eicvibe.domain.machine.power import magnet_current, magnet_strength
 
 RIGIDITY = rigidity_from_P(18e9, charge=-1)
 SECTOR = (NamingArea(prefix="es6", start=0.0, end=10.0),)
@@ -64,17 +65,22 @@ def test_naming_problems_list_tokens_awaiting_approval(registry):
     assert not any(p.startswith(("es6-q1", "es6-b1", "es-btun")) for p in problems)
 
 
-def test_each_magnet_has_a_supply_reproducing_its_design_strength(lattice, registry):
+def test_each_magnet_has_a_circuit_reproducing_its_design_strength(lattice, registry):
     for name, occurrence, design in (("es6-q1-ps:sp", "QF_1", 0.5), ("es6-q2-ps:sp", "QD_1", -0.5)):
         channel = registry.channel(name)
-        binding = channel.binding
-        assert binding.targets == (lattice.placement(occurrence, branch="ring").id,)
-        assert binding.parameter == "MagneticMultipoleP.Kn1"
-        current = binding.calibration.to_engineering(design, *channel.control_limits, rigidity=RIGIDITY)
-        assert 0.0 < current < channel.control_limits[1]
-        assert binding.calibration.to_model(current, rigidity=RIGIDITY) == pytest.approx(design, rel=1e-12)
+        circuit = registry.circuit(channel.binding.circuit)
+        [magnet] = circuit.magnets  # powered on its own
+        assert magnet.occurrences == (lattice.placement(occurrence, branch="ring").id,)
+        assert magnet.parameter == "MagneticMultipoleP.Kn1" and magnet.polarity == (1 if design > 0 else -1)
+        current = magnet_current(lattice, magnet, design, channel.control_limits)
+        assert 0.0 < current < channel.control_limits[1]  # positive currents, polarity in the wiring
+        assert magnet_strength(lattice, magnet, magnet.occurrences[0], current) == pytest.approx(
+            design, rel=1e-12
+        )
+        assert current == pytest.approx(abs(design) * RIGIDITY / 0.1)  # placeholder 0.1 T/m per A
     assert registry.channel("es6-sx3-ps:sp").control_limits == (-100.0, 100.0)  # off, so either polarity
-    assert registry.channel("es6-th1-ps:sp").binding.parameter == "MagneticMultipoleP.Kn0L"
+    corrector = registry.circuit(registry.channel("es6-th1-ps:sp").binding.circuit)
+    assert corrector.magnets[0].parameter == "MagneticMultipoleP.Kn0L"
 
 
 def test_measurements_bind_to_observables(lattice, registry):
@@ -160,10 +166,9 @@ def test_check_against_reports_bindings_that_do_not_resolve(registry):
         "es-btun-rdy: a tune needs a periodic branch, not 'br_1'",
     ]
     data = registry.model_dump()
-    first = data["channels"][0]
-    data["channels"] = [{**first, "binding": {**first["binding"], "targets": [linac.element("D").id]}}]
+    data["circuits"][0]["magnets"][0]["occurrences"] = [linac.placement("D_1", branch="ring").id]
     problems = MachineRegistry.model_validate(data).check_against(linac)
-    assert problems[0] == "es6-q1-ps:sp: Drift 'D' has no MagneticMultipoleP"
+    assert "circuit ring/QF_1: Drift 'D' has no MagneticMultipoleP" in problems
 
 
 def test_generation_needs_a_reference_particle():
@@ -172,3 +177,31 @@ def test_generation_needs_a_reference_particle():
     b.add_branch("line", "linac", ["Q"])
     with pytest.raises(ValueError, match="reference particle"):
         generate_registry(b.build())
+
+
+def test_every_element_with_an_abbreviation_has_an_eic_name(lattice, registry):
+    names = {p.name: registry.slot_of(p.id) for p in lattice.layout("ring").placements}
+    assert names["BEG_1"] is None  # bookkeeping, no slot
+    assert names["QF_1"].name == "es6-q1" and names["D_1"].name.startswith(
+        "es6-dt"
+    )  # drifts too, as in the ESR table
+    assert all(s.name.split("-")[0] == "es6" for s in registry.slots)
+    assert registry.check_against(lattice) == []
+    supply = next(
+        d for d in registry.devices if d.name.endswith("-ps") and d.occurrences == names["QF_1"].occurrences
+    )
+    assert supply.name == names["QF_1"].name + "-ps"
+
+
+def test_eic_names_are_unique_and_name_one_element_each(registry):
+    from eicvibe.domain.machine import Slot
+
+    first, second = registry.slots[:2]
+    with pytest.raises(ValidationError, match="duplicate element name"):
+        MachineRegistry(
+            name="r", lattice="va-ring", slots=(first, Slot(name=first.name, occurrences=second.occurrences))
+        )
+    with pytest.raises(ValidationError, match="duplicate element occurrence"):
+        MachineRegistry(
+            name="r", lattice="va-ring", slots=(first, Slot(name=second.name, occurrences=first.occurrences))
+        )

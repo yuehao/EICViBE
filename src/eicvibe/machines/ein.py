@@ -19,7 +19,16 @@ Branches and connections, in beam order:
   operation the beam continues along ``ltr``;
 - ``itl`` to ``bar`` through the septum: ISEPTUM and the ring SEPTUM are the
   injection and circulation traversals of the shared component ``bar_septum``;
-- ``bar`` to ``etl`` through the same septum, whose extraction traversal is ESEPTUM;
+- ``bar`` to ``etl`` through the same septum, whose extraction traversal is ESEPTUM.
+  The septum is one magnet that each line models for its own beam. Its field
+  is on for the injected and extracted beams, so ISEPTUM and ESEPTUM are
+  bends; it is pulsed so that the stored beam does not see it, so the BAR's
+  SEPTUM is a kicker. It is rectangular (the bends' faces are parallel, 0.4 m
+  apart along the stored beam), and the floor geometry joins the lines at its
+  faces, which closes the LTR-ITL-BAR-ETL loop exactly. Its one pulsed supply,
+  ``bar-sptm18-ps`` with the temporary names, sets the field of ISEPTUM and
+  ESEPTUM, which therefore give it explicitly (``Kn0``, not the reference
+  field), so that a supply at 0 A means no field;
 - ``etl`` back to ``ltr``, landing just after LTR_MARK_P2;
 - ``ltr`` to ``rcs`` at the injection point, the marker right after MQA_US;
 - a fork at the extraction point, the marker right after ES.PIP03, to
@@ -29,7 +38,6 @@ The RCS file is written at its extraction energy (9 GeV, 30 MV per cavity).
 As in EIN_connection.ipynb, the RCS is pinned at injection: 0.75 GeV and the
 RF of the parameter database's ramp at t = 0. Which path the beam takes is a
 scenario choice, not part of the lattice (ADR 0001). Not modelled yet: the
-+1.75 mrad frame rotation of the septum handoffs (floor geometry) and the
 preinjector, which exists as GPT and PARMELA input only.
 
 Names are temporary: SEG has not assigned EIC area prefixes to these
@@ -40,27 +48,50 @@ and :class:`~eicvibe.domain.machine.NamingScheme` holds the signal tokens.
 import argparse
 import hashlib
 import itertools
-import json
 import math
 import re
 import tempfile
 from collections import Counter
 from collections.abc import Iterable, Mapping
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from importlib.metadata import version
 from pathlib import Path
 from types import MappingProxyType
 
-from eicvibe.domain.lattice import SPECIES, BranchKind, ElementKind, Lattice, LatticeBuilder, derived_id
+from eicvibe.domain.lattice import (
+    SPECIES,
+    BranchKind,
+    Change,
+    ElementKind,
+    Lattice,
+    LatticeBuilder,
+    adopt_ids,
+    derived_id,
+    diff,
+)
 from eicvibe.domain.machine import (
+    MachineDescription,
     MachineRegistry,
     NamingArea,
     NamingRepository,
     NamingScheme,
+    SharedMagnet,
+    assemble_registry,
     default_repository,
-    generate_machine_registry,
+    describe_machine,
 )
 from eicvibe.importers.madx import ImportNote, import_madx
+from eicvibe.store import (
+    FileError,
+    Setting,
+    check_machine,
+    is_machine,
+    load_lattice,
+    write_machine,
+    write_settings,
+)
+from eicvibe.store.lattice_files import write_lattice
+from eicvibe.store.machine import write_index
 
 _STAGED = "EICVIBE_lattice/madx"
 
@@ -98,6 +129,15 @@ TEMPORARY_AREAS: Mapping[str, str] = MappingProxyType(
 )
 
 _RINGS = {"bar", "rcs"}
+#: The septum ITL, BAR and ETL share: a bend for injected and extracted beam, a kicker for the stored beam.
+SEPTUM = "bar_septum"
+_SEPTUM_DRIVEN = ("injection", "extraction")
+#: Magnet kinds wired in series strings, by branch: in the rings, dipoles and quadrupoles of the same
+#: length and design strength most likely share a supply. An assumption until the EIN power design
+#: is known; ein_registry takes others.
+EIN_SERIES: Mapping[str, tuple[ElementKind, ...]] = MappingProxyType(
+    {"bar": (ElementKind.BEND, ElementKind.QUADRUPOLE), "rcs": (ElementKind.BEND, ElementKind.QUADRUPOLE)}
+)
 _BRANCHES = ("ltr", "itl", "bar", "etl", "rcs", "rte")
 
 
@@ -184,6 +224,17 @@ def build_ein(
         cavities = [p for p in draft.layout("rcs").placements if p.kind is ElementKind.RFCAVITY]
         for definition in {p.definition.id for p in cavities}:
             builder.update_element(definition, RFP={"voltage": rcs_rf_voltage / len(cavities)})
+    # The septum's own supply sets its field for the injected and extracted beams: state it, so
+    # that zero means no field instead of the reference field.
+    [septum] = draft.shared_components
+    for traversal in septum.traversals:
+        if traversal.role in _SEPTUM_DRIVEN:
+            placed = draft.placement(traversal.occurrence)
+            builder.update_element(
+                placed.definition.id,
+                MagneticMultipoleP={"Kn0": placed.element.BendP.angle_ref / placed.length},
+                BendP={"Kn0_from_g_ref": False},
+            )
     lattice = builder.build()
 
     bar_mode = (
@@ -219,14 +270,39 @@ def ein_registry(
     *,
     areas: Mapping[str, str | Iterable[NamingArea]] | None = None,
     scheme: NamingScheme | None = None,
+    series: Mapping[str, Iterable[ElementKind]] | None = None,
 ) -> MachineRegistry:
-    """Devices and channels of every EIN branch, named with ``areas`` and ``scheme``.
+    """Element names, devices and channels of every EIN branch: the registry of :func:`ein_description`."""
+    lattice = ein.lattice if isinstance(ein, Ein) else ein
+    return assemble_registry(lattice, ein_description(lattice, areas=areas, scheme=scheme, series=series))
 
-    Device ids do not depend on the names, so a registry regenerated with
-    official names keeps the identity of every device.
+
+def ein_description(
+    ein: Ein | Lattice,
+    *,
+    areas: Mapping[str, str | Iterable[NamingArea]] | None = None,
+    scheme: NamingScheme | None = None,
+    series: Mapping[str, Iterable[ElementKind]] | None = None,
+) -> MachineDescription:
+    """The starting naming rules and devices of the EIN, named with ``areas`` and ``scheme``.
+
+    Every magnet is on a power circuit. The kinds in ``series`` (by branch;
+    default :data:`EIN_SERIES`) are wired in strings: magnets of the same
+    length and design strength share a supply. Other magnets have their own.
+
+    The shared septum is one magnet, named once, with one pulsed supply that
+    sets the field of the injection and extraction bends and never that of
+    the BAR's kicker. Device ids do not depend on the names, so a registry
+    with official names keeps the identity of every device.
     """
     lattice = ein.lattice if isinstance(ein, Ein) else ein
-    return generate_machine_registry(lattice, ein_areas(lattice, areas), scheme=scheme)
+    return describe_machine(
+        lattice,
+        ein_areas(lattice, areas),
+        scheme=scheme,
+        series=EIN_SERIES if series is None else series,
+        shared={SEPTUM: SharedMagnet(home="circulation", driven=_SEPTUM_DRIVEN)},
+    )
 
 
 def ein_repository(areas: Mapping[str, str] | None = None) -> NamingRepository:
@@ -239,57 +315,118 @@ def ein_repository(areas: Mapping[str, str] | None = None) -> NamingRepository:
     return default_repository().extended(areas=prefixes, note="temporary EIN area prefixes")
 
 
-#: Files :func:`save_ein` writes.
-OUTPUT_FILES = {
-    "lattice": "ein_lattice.json",
-    "bar_mode": "ein_bar_mode.json",
-    "registry": "ein_registry.json",
-    "manifest": "ein_manifest.json",
-}
+#: The machine folder, inside the EIN folder.
+MACHINE_DIR = "machine"
 
 
-def save_ein(ein: Ein, folder: str | Path, *, registry: MachineRegistry | None = None) -> dict[str, Path]:
-    """Write the lattice, the BAR-mode settings, the device registry and a manifest into ``folder``.
-
-    The lattice is its canonical JSON (``Lattice.from_json`` reads it back).
-    The manifest records every source file with its SHA-256, the MAD-X and
-    EICViBE versions and the lattice digest, so a file can be traced to its inputs.
-    """
-    folder = Path(folder)
-    folder.mkdir(parents=True, exist_ok=True)
-    registry = registry or ein_registry(ein)
-    paths = {key: folder / name for key, name in OUTPUT_FILES.items()}
-    paths["lattice"].write_text(ein.lattice.to_json(indent=1) + "\n")
-    bar_mode = {"lattice_digest": ein.lattice.digest, "settings": [asdict(s) for s in ein.bar_mode]}
-    paths["bar_mode"].write_text(json.dumps(bar_mode, indent=1) + "\n")
-    paths["registry"].write_text(registry.model_dump_json(indent=1) + "\n")
-    manifest = {
-        "lattice": OUTPUT_FILES["lattice"],
-        "lattice_digest": ein.lattice.digest,
-        "eicvibe_version": version("eicvibe"),
-        "madx_version": ein.madx_version,
-        "sources": {
+def ein_source(ein: Ein) -> dict:
+    """Where the lattice came from, for machine.yaml: importer, MAD-X, each file read and its SHA-256."""
+    return {
+        "importer": "eicvibe.machines.ein",
+        "eicvibe": version("eicvibe"),
+        "madx": ein.madx_version,
+        "files": {
             role: {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
             for role, path in ein.sources.items()
         },
-        "branches": {b.name: round(ein.lattice.layout(b.name).length, 9) for b in ein.lattice.branches},
         "notes": dict(Counter(f"{n.severity.value}: {n.code}" for n in ein.notes)),
     }
-    paths["manifest"].write_text(json.dumps(manifest, indent=1) + "\n")
-    return paths
 
 
-def main(argv: list[str] | None = None) -> None:
-    """Build the EIN from an EIN folder and save it there: ``python -m eicvibe.machines.ein FOLDER``."""
-    parser = argparse.ArgumentParser(description=main.__doc__)
+def write_ein_machine(
+    ein: Ein, folder: str | Path, description: MachineDescription | None = None
+) -> list[Path]:
+    """Write a new EIN machine folder: lattice and device files, and the BAR-mode settings.
+
+    The device files start from :func:`ein_description`; from then on people
+    edit them, and :func:`update_ein_machine` never touches them.
+    """
+    folder = Path(folder)
+    written = write_machine(folder, ein.lattice, description or ein_description(ein), source=ein_source(ein))
+    written.append(_write_bar_mode(folder, ein, ein.lattice))
+    return written
+
+
+def update_ein_machine(ein: Ein, folder: str | Path, *, write: bool = False) -> tuple[Change, ...]:
+    """What a fresh import changes in ``folder``'s lattice files; with ``write``, apply it.
+
+    The import keeps the ids of every element, occurrence and branch whose
+    name it keeps, so devices stay attached. Writing replaces the lattice
+    files, the provenance in machine.yaml and the BAR-mode settings; naming,
+    device and other settings files are left as people edited them.
+    """
+    folder = Path(folder)
+    old = load_lattice(folder)
+    new = adopt_ids(ein.lattice, old)
+    changes = diff(old, new)
+    if write:
+        write_index(folder, new, ein_source(ein))
+        write_lattice(new, folder)
+        _write_bar_mode(folder, ein, new)
+    return changes
+
+
+def _write_bar_mode(folder: Path, ein: Ein, lattice: Lattice) -> Path:
+    """The BAR-mode settings, on ``lattice`` (which may carry adopted ids)."""
+    settings = []
+    for value in ein.bar_mode:
+        placed = ein.lattice.placement(value.occurrence)
+        target = lattice.placement(placed.name, branch=ein.lattice.branch(placed.branch_id).name)
+        settings.append(Setting(target.id, value.parameter, value.value))
+    description = (
+        "BAR mode: the LTR quadrupole strengths for the route through the BAR (from LTR_P1 and LTR_P2).\n"
+        "The lattice holds the direct-mode strengths. Rewritten when the lattice is imported again."
+    )
+    return write_settings(folder, "bar_mode", settings, lattice, description)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Import the EIN from its design files into its machine folder.
+
+    ``python -m eicvibe.machines.ein FOLDER`` writes FOLDER/machine the first
+    time. Later it shows how the design files differ from the lattice files,
+    and ``--write`` replaces the lattice files (devices, naming and settings
+    people edited are kept).
+    """
+    parser = argparse.ArgumentParser(
+        description=main.__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument(
         "folder", type=Path, help="the EIN folder holding EICVIBE_lattice/madx and einlattices"
     )
-    parser.add_argument("--out", type=Path, help="output folder (default: FOLDER/EICVIBE_lattice)")
+    parser.add_argument("--machine", type=Path, help=f"the machine folder (default: FOLDER/{MACHINE_DIR})")
+    parser.add_argument("--write", action="store_true", help="replace the lattice files with the import")
     args = parser.parse_args(argv)
+    machine = args.machine or args.folder / MACHINE_DIR
     ein = build_ein(args.folder)
-    for path in save_ein(ein, args.out or args.folder / "EICVIBE_lattice").values():
-        print(path)
+    if not is_machine(machine):
+        written = write_ein_machine(ein, machine)
+        print(f"wrote a new machine folder, {machine} ({len(written)} files)")
+    else:
+        changes = update_ein_machine(ein, machine, write=args.write)
+        if not changes:
+            print(f"{machine}: the lattice files match the design files")
+        else:
+            counts = Counter(f"{c.kind.value} {c.entity}" for c in changes)
+            print(f"{machine}: the design files differ from the lattice files:")
+            print("  " + ", ".join(f"{n} {what}" for what, n in sorted(counts.items())))
+            for change in changes[:40]:
+                print(f"  {change}")
+            if len(changes) > 40:
+                print(f"  ... and {len(changes) - 40} more")
+            print(
+                "replaced the lattice files"
+                if args.write
+                else "nothing written; --write replaces the lattice files"
+            )
+    try:
+        problems = check_machine(machine)
+    except FileError as error:
+        print(f"error: {error}")
+        return 1
+    for problem in problems:
+        print(f"  {problem}")
+    return 1 if problems else 0
 
 
 def _cut_after(builder: LatticeBuilder, branch: str, occurrence: str) -> None:
@@ -375,4 +512,4 @@ def _mode_settings(
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
