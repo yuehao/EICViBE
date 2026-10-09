@@ -14,8 +14,8 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 #: Bumped when a response changes shape; the web client refuses other versions.
-#: 2: element EIC names (``eic_name``) and setting targets. 3: power circuits.
-SCHEMA_VERSION = 3
+#: 2: element EIC names (``eic_name``) and setting targets. 3: power circuits. 4: optics.
+SCHEMA_VERSION = 4
 
 
 class _Model(BaseModel):
@@ -261,3 +261,59 @@ class OccurrenceDetail(_Model):
     entrance: Pose
     exit: Pose
     devices: list[Device]
+
+
+class EngineInfo(_Model):
+    """A physics engine the server can compute optics with (ADR 0006)."""
+
+    name: str
+    available: bool = Field(description="Installed here; starting it may still fail")
+    version: str | None = Field(description="Known once the engine has run, for engines started on demand")
+    fidelities: list[str]
+    method: str = Field(description="How it computes optics and chromaticity")
+
+
+class OpticsProfile(_Model):
+    """Optics inside elements too: the branch start, then the end of every piece the engine sampled."""
+
+    s: list[float] = Field(description="m")
+    index: list[int] = Field(
+        description="For each point after the start, the occurrence (its position in ``occurrences``) "
+        "whose piece ends there"
+    )
+    values: dict[str, list[float]] = Field(description="Columns by key, as in ``BranchOptics.values``")
+
+
+class BranchOptics(_Model):
+    """Optics of one branch, from the optics of the whole machine (lines start where their forks are).
+
+    Columns hold the value at the branch start and then at the exit of every
+    occurrence: one more entry than the branch has occurrences.
+    """
+
+    schema_version: int = SCHEMA_VERSION
+    branch: str
+    engine: str
+    version: str | None
+    fidelity: str
+    method: str | None = Field(description="How the maps and chromaticity were computed, e.g. TPSA")
+    periodic: bool
+    available: bool = Field(description="Whether the branch has optics; see ``origin`` when not")
+    origin: str = Field(
+        description="Periodic solution, initial conditions, or the fork the line starts from; "
+        "otherwise why it has no optics"
+    )
+    occurrences: list[str] = Field(
+        description="Occurrence ids in beam order; column entry i + 1 is at the exit of i"
+    )
+    s: list[float] = Field(description="m")
+    values: dict[str, list[float]] = Field(description="Columns by key; see ``columns``")
+    columns: list[Column]
+    tune_x: float | None = Field(description="A ring's tunes; null for a line")
+    tune_y: float | None
+    chroma_x: float | None = Field(description="dQ/d(delta)")
+    chroma_y: float | None
+    momentum_compaction: float | None
+    profile: OpticsProfile | None = Field(
+        description="Optics inside elements, where the engine samples them (TrackPad: its integrator steps)"
+    )

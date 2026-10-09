@@ -28,7 +28,7 @@ test("shows the floor plan, the linear view and the element table", async ({ pag
     });
     expect(drawn, id).toBeGreaterThan(4);
   }
-  await expect(page.getByText(/ring: s 0\.00 – 105\.60 of 105\.60 m/)).toBeVisible();
+  await expect(page.locator(".range-readout")).toHaveText("s 0.00 – 105.60 of 105.60 m");
   await expect(rows(page).filter({ hasText: "Drift" })).toHaveCount(0); // drifts are not listed
   await expect(page.locator(".chip", { hasText: "Drift" })).toHaveCount(0);
 });
@@ -83,4 +83,64 @@ test("hovering the floor plan names the element under the cursor", async ({ page
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await expect(page.locator(".floor .tooltip")).toContainText("B_5");
   await expect(page.locator(".floor .tooltip")).toContainText("angle = 0.2618 rad");
+});
+
+test("the optics panel follows the branch, with a ring's tunes and chromaticities", async ({ page }) => {
+  await open(page);
+  const summary = page.getByTestId("optics-summary");
+  await expect(summary).toHaveText(/^Q \d+\.\d+, \d+\.\d+ · ξ -?\d/, { timeout: 20_000 });
+  const colours = await page.getByTestId("optics-canvas").evaluate((canvas: HTMLCanvasElement) => {
+    const { data } = canvas.getContext("2d")!.getImageData(0, 0, canvas.width, canvas.height);
+    const found = new Set<number>();
+    for (let i = 0; i < data.length; i += 4 * 13) found.add((data[i]! << 16) | (data[i + 1]! << 8) | data[i + 2]!);
+    return found.size;
+  });
+  expect(colours).toBeGreaterThan(4);
+  await expect(page.getByLabel("Optics engine").locator("option")).toContainText(["Xsuite", "TrackPad"]);
+
+  await page.getByLabel("Optics fidelity").selectOption("precise");
+  await expect(page).toHaveURL(/fidelity=precise/);
+  await expect(summary).toHaveText(/^Q /, { timeout: 20_000 });
+
+  await branchButton(page, "extraction").click();
+  await expect(summary).toHaveText(/^from fork .* in ring · μ/, { timeout: 20_000 });
+  await branchButton(page, "injection").click();
+  await expect(summary).toHaveText(/^from initial conditions/, { timeout: 20_000 });
+});
+
+test("hovering the optics names the element and reads the optics there", async ({ page }) => {
+  await open(page);
+  await expect(page.getByTestId("optics-summary")).toHaveText(/^Q /, { timeout: 20_000 });
+  const canvas = page.getByTestId("optics-canvas");
+  const box = (await canvas.boundingBox())!;
+  await page.mouse.move(box.x + box.width * 0.5, box.y + box.height * 0.5);
+  const tip = page.locator(".optics-plot .tooltip");
+  await expect(tip).toBeVisible();
+  await expect(tip).toContainText(/βx [\d.]+ m {3}βy [\d.]+ m/);
+  await expect(tip).toContainText("μx");
+});
+
+test("dragging zooms to an s range in the lattice strip and the optics alike; right click undoes", async ({ page }) => {
+  await open(page);
+  await expect(page.getByTestId("optics-summary")).toHaveText(/^Q /, { timeout: 20_000 });
+  const readout = page.locator(".range-readout");
+  await expect(readout).toHaveText("s 0.00 – 105.60 of 105.60 m");
+  const drag = async (testId: string, from: number, to: number) => {
+    const box = (await page.getByTestId(testId).boundingBox())!;
+    const x = (f: number) => box.x + 60 + (box.width - 120) * f; // inside the shared 60 px margins
+    await page.mouse.move(x(from), box.y + box.height * 0.6);
+    await page.mouse.down();
+    await page.mouse.move(x((from + to) / 2), box.y + box.height * 0.6, { steps: 3 });
+    await page.mouse.move(x(to), box.y + box.height * 0.6, { steps: 3 });
+    await page.mouse.up();
+  };
+  await drag("optics-canvas", 0.25, 0.5);
+  await expect(readout).toHaveText(/^s 26\.\d\d – 52\.\d\d of 105\.60 m$/);
+  await drag("linear-canvas", 0.5, 1.0);
+  await expect(readout).toHaveText(/^s 39\.\d\d – 52\.\d\d of 105\.60 m$/);
+  const plot = (await page.getByTestId("optics-canvas").boundingBox())!;
+  await page.mouse.click(plot.x + plot.width / 2, plot.y + plot.height / 2, { button: "right" });
+  await expect(readout).toHaveText(/^s 26\.\d\d – 52\.\d\d of 105\.60 m$/);
+  await page.mouse.click(plot.x + plot.width / 2, plot.y + plot.height / 2, { button: "right" });
+  await expect(readout).toHaveText("s 0.00 – 105.60 of 105.60 m");
 });

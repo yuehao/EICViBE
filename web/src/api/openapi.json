@@ -40,7 +40,7 @@
       "$ref": "#/components/schemas/BranchFloor"
      },
      "schema_version": {
-      "default": 3,
+      "default": 4,
       "title": "Schema Version",
       "type": "integer"
      },
@@ -104,6 +104,189 @@
      "theta"
     ],
     "title": "BranchFloor",
+    "type": "object"
+   },
+   "BranchOptics": {
+    "description": "Optics of one branch, from the optics of the whole machine (lines start where their forks are).\n\nColumns hold the value at the branch start and then at the exit of every\noccurrence: one more entry than the branch has occurrences.",
+    "properties": {
+     "available": {
+      "description": "Whether the branch has optics; see ``origin`` when not",
+      "title": "Available",
+      "type": "boolean"
+     },
+     "branch": {
+      "title": "Branch",
+      "type": "string"
+     },
+     "chroma_x": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "dQ/d(delta)",
+      "title": "Chroma X"
+     },
+     "chroma_y": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Chroma Y"
+     },
+     "columns": {
+      "items": {
+       "$ref": "#/components/schemas/Column"
+      },
+      "title": "Columns",
+      "type": "array"
+     },
+     "engine": {
+      "title": "Engine",
+      "type": "string"
+     },
+     "fidelity": {
+      "title": "Fidelity",
+      "type": "string"
+     },
+     "method": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "How the maps and chromaticity were computed, e.g. TPSA",
+      "title": "Method"
+     },
+     "momentum_compaction": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Momentum Compaction"
+     },
+     "occurrences": {
+      "description": "Occurrence ids in beam order; column entry i + 1 is at the exit of i",
+      "items": {
+       "type": "string"
+      },
+      "title": "Occurrences",
+      "type": "array"
+     },
+     "origin": {
+      "description": "Periodic solution, initial conditions, or the fork the line starts from; otherwise why it has no optics",
+      "title": "Origin",
+      "type": "string"
+     },
+     "periodic": {
+      "title": "Periodic",
+      "type": "boolean"
+     },
+     "profile": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/OpticsProfile"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Optics inside elements, where the engine samples them (TrackPad: its integrator steps)"
+     },
+     "s": {
+      "description": "m",
+      "items": {
+       "type": "number"
+      },
+      "title": "S",
+      "type": "array"
+     },
+     "schema_version": {
+      "default": 4,
+      "title": "Schema Version",
+      "type": "integer"
+     },
+     "tune_x": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "A ring's tunes; null for a line",
+      "title": "Tune X"
+     },
+     "tune_y": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Tune Y"
+     },
+     "values": {
+      "additionalProperties": {
+       "items": {
+        "type": "number"
+       },
+       "type": "array"
+      },
+      "description": "Columns by key; see ``columns``",
+      "title": "Values",
+      "type": "object"
+     },
+     "version": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Version"
+     }
+    },
+    "required": [
+     "branch",
+     "engine",
+     "version",
+     "fidelity",
+     "method",
+     "periodic",
+     "available",
+     "origin",
+     "occurrences",
+     "s",
+     "values",
+     "columns",
+     "tune_x",
+     "tune_y",
+     "chroma_x",
+     "chroma_y",
+     "momentum_compaction",
+     "profile"
+    ],
+    "title": "BranchOptics",
     "type": "object"
    },
    "BranchSummary": {
@@ -537,6 +720,63 @@
     "title": "Diagnostic",
     "type": "object"
    },
+   "EngineInfo": {
+    "description": "A physics engine the server can compute optics with (ADR 0006).",
+    "properties": {
+     "available": {
+      "description": "Installed here; starting it may still fail",
+      "title": "Available",
+      "type": "boolean"
+     },
+     "fidelities": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Fidelities",
+      "type": "array"
+     },
+     "method": {
+      "description": "How it computes optics and chromaticity",
+      "title": "Method",
+      "type": "string"
+     },
+     "name": {
+      "title": "Name",
+      "type": "string"
+     },
+     "version": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Known once the engine has run, for engines started on demand",
+      "title": "Version"
+     }
+    },
+    "required": [
+     "name",
+     "available",
+     "version",
+     "fidelities",
+     "method"
+    ],
+    "title": "EngineInfo",
+    "type": "object"
+   },
+   "Fidelity": {
+    "enum": [
+     "linear",
+     "fast",
+     "standard",
+     "precise"
+    ],
+    "title": "Fidelity",
+    "type": "string"
+   },
    "ForkLink": {
     "properties": {
      "to_branch": {
@@ -777,7 +1017,7 @@
       "title": "Root Branch"
      },
      "schema_version": {
-      "default": 3,
+      "default": 4,
       "title": "Schema Version",
       "type": "integer"
      },
@@ -913,7 +1153,7 @@
       "type": "number"
      },
      "schema_version": {
-      "default": 3,
+      "default": 4,
       "title": "Schema Version",
       "type": "integer"
      },
@@ -946,6 +1186,45 @@
      "devices"
     ],
     "title": "OccurrenceDetail",
+    "type": "object"
+   },
+   "OpticsProfile": {
+    "description": "Optics inside elements too: the branch start, then the end of every piece the engine sampled.",
+    "properties": {
+     "index": {
+      "description": "For each point after the start, the occurrence (its position in ``occurrences``) whose piece ends there",
+      "items": {
+       "type": "integer"
+      },
+      "title": "Index",
+      "type": "array"
+     },
+     "s": {
+      "description": "m",
+      "items": {
+       "type": "number"
+      },
+      "title": "S",
+      "type": "array"
+     },
+     "values": {
+      "additionalProperties": {
+       "items": {
+        "type": "number"
+       },
+       "type": "array"
+      },
+      "description": "Columns by key, as in ``BranchOptics.values``",
+      "title": "Values",
+      "type": "object"
+     }
+    },
+    "required": [
+     "s",
+     "index",
+     "values"
+    ],
+    "title": "OpticsProfile",
     "type": "object"
    },
    "Parameter": {
@@ -1323,6 +1602,29 @@
  },
  "openapi": "3.1.0",
  "paths": {
+  "/api/v1/engines": {
+   "get": {
+    "description": "Physics engines that can compute optics here.",
+    "operationId": "engines_api_v1_engines_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "items": {
+          "$ref": "#/components/schemas/EngineInfo"
+         },
+         "title": "Response Engines Api V1 Engines Get",
+         "type": "array"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "Engines"
+   }
+  },
   "/api/v1/health": {
    "get": {
     "operationId": "health_api_v1_health_get",
@@ -1455,6 +1757,76 @@
      }
     },
     "summary": "Branch"
+   }
+  },
+  "/api/v1/lattices/{digest}/branches/{branch}/optics": {
+   "get": {
+    "description": "Design optics of one branch: beta functions, dispersion, phase advance, orbit, tunes, chromaticity.\n\nThe first request for a revision computes the whole machine (lines start from the\noptics at their forks), which can take a while: TrackPad starts Julia on first use.",
+    "operationId": "branch_optics_api_v1_lattices__digest__branches__branch__optics_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "digest",
+      "required": true,
+      "schema": {
+       "title": "Digest",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "branch",
+      "required": true,
+      "schema": {
+       "title": "Branch",
+       "type": "string"
+      }
+     },
+     {
+      "description": "Engine name; see /engines",
+      "in": "query",
+      "name": "engine",
+      "required": false,
+      "schema": {
+       "default": "xsuite",
+       "description": "Engine name; see /engines",
+       "title": "Engine",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "fidelity",
+      "required": false,
+      "schema": {
+       "$ref": "#/components/schemas/Fidelity",
+       "default": "standard"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/BranchOptics"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Branch Optics"
    }
   },
   "/api/v1/lattices/{digest}/lattice.json": {

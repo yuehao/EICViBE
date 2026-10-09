@@ -15,11 +15,13 @@ export type BranchData = Schemas["BranchData"];
 export type Column = Schemas["Column"];
 export type OccurrenceDetail = Schemas["OccurrenceDetail"];
 export type Pose = Schemas["Pose"];
+export type EngineInfo = Schemas["EngineInfo"];
+export type BranchOptics = Schemas["BranchOptics"];
 
 const BASE = "/api/v1";
 
 /** The response schema this client reads (eicvibe.api.schemas.SCHEMA_VERSION). */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 export class ApiError extends Error {
   constructor(
@@ -68,4 +70,11 @@ export const api = {
   occurrence: (digest: string, occurrence: string) =>
     once<OccurrenceDetail>(`/lattices/${enc(digest)}/occurrences/${enc(occurrence)}`),
   downloadUrl: (digest: string) => `${BASE}/lattices/${enc(digest)}/lattice.json`,
+  /** Engines that compute optics; their versions fill in once they have run. */
+  engines: () => getJson<EngineInfo[]>("/engines"),
+  /** Design optics of a branch; the first request for a revision may take a while (Julia starts). */
+  optics: (digest: string, branch: string, engine: string, fidelity: string) =>
+    once<BranchOptics>(
+      `/lattices/${enc(digest)}/branches/${enc(branch)}/optics?engine=${enc(engine)}&fidelity=${enc(fidelity)}`,
+    ),
 };

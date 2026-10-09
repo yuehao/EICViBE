@@ -80,6 +80,43 @@ export interface SRange {
   s1: number;
 }
 
+/**
+ * Space left and right of the visible s range, px: room for the optics plot's vertical axes, and
+ * the same in the lattice strip above it, so both put every s at the same x.
+ */
+export const S_MARGIN = 60;
+
+/** Pixels per metre along s for a canvas ``width`` px wide showing ``range``; views along s share it. */
+export function sScale(range: SRange, width: number): number {
+  return Math.max(width - 2 * S_MARGIN, 1) / (range.s1 - range.s0);
+}
+
+/** Earlier s ranges of the views along s, for undoing zooms (right click). */
+export interface ZoomHistory {
+  push(range: SRange): void;
+  /** The range before the last zoom, removed from the history; null when there is none. */
+  undo(): SRange | null;
+  clear(): void;
+  size(): number;
+}
+
+export function createZoomHistory(limit = 64): ZoomHistory {
+  let ranges: SRange[] = [];
+  return {
+    push(range) {
+      const last = ranges[ranges.length - 1];
+      if (last && last.s0 === range.s0 && last.s1 === range.s1) return;
+      ranges.push(range);
+      if (ranges.length > limit) ranges = ranges.slice(-limit);
+    },
+    undo: () => ranges.pop() ?? null,
+    clear() {
+      ranges = [];
+    },
+    size: () => ranges.length,
+  };
+}
+
 export function zoomRange(range: SRange, factor: number, at: number, limits: SRange, minSpan = 0.05): SRange {
   const span = Math.min(Math.max((range.s1 - range.s0) / factor, minSpan), limits.s1 - limits.s0 || minSpan);
   const fraction = (at - range.s0) / (range.s1 - range.s0 || 1);

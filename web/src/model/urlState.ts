@@ -16,6 +16,9 @@ export interface UrlState {
   range?: SRange;
   /** Element table filter text. */
   q?: string;
+  /** Optics engine and fidelity. */
+  engine?: string;
+  fidelity?: string;
 }
 
 const numbers = (text: string | null, count: number): number[] | null => {
@@ -27,7 +30,7 @@ const numbers = (text: string | null, count: number): number[] | null => {
 export function parseHash(hash: string): UrlState {
   const params = new URLSearchParams(hash.replace(/^#/, ""));
   const state: UrlState = {};
-  for (const key of ["source", "rev", "branch", "sel", "q"] as const) {
+  for (const key of ["source", "rev", "branch", "sel", "q", "engine", "fidelity"] as const) {
     const value = params.get(key);
     if (value) state[key] = value;
   }
@@ -52,6 +55,8 @@ export function formatHash(state: UrlState): string {
   }
   if (state.range) params.set("s", [round(state.range.s0, 8), round(state.range.s1, 8)].join(","));
   if (state.q) params.set("q", state.q);
+  if (state.engine) params.set("engine", state.engine);
+  if (state.fidelity) params.set("fidelity", state.fidelity);
   return "#" + params.toString().replaceAll("%2C", ",");
 }
 

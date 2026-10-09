@@ -14,7 +14,8 @@
   --row-hover: #fff4e0;
   --row-selected: #e3ecff;
   --side-width: 620px;
-  --linear-height: 200px;
+  --strip-height: 67px;
+  --optics-height: 340px;
   --inspector-height: 320px;
   color-scheme: light;
   font: 13px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -265,7 +266,7 @@ code {
 
 .views {
   display: grid;
-  grid-template-rows: minmax(0, 1fr) 6px var(--linear-height);
+  grid-template-rows: minmax(0, 1fr) 6px var(--optics-height);
   min-height: 0;
   min-width: 0;
 }
@@ -319,9 +320,13 @@ code {
   cursor: grab;
 }
 
-.floor-canvas:active,
-.linear-canvas:active {
+.floor-canvas:active {
   cursor: grabbing;
+}
+
+/* Along s, dragging selects a range to zoom to (shift-drag pans). */
+.linear-canvas {
+  cursor: crosshair;
 }
 
 .tooltip {
@@ -342,18 +347,13 @@ code {
   display: block;
 }
 
-.floor-controls,
-.linear-controls {
+.floor-controls {
   position: absolute;
   top: 8px;
   right: 8px;
   display: flex;
   gap: 6px;
   align-items: center;
-}
-
-.linear-controls {
-  top: 2px;
 }
 
 .floor-controls label {
@@ -365,8 +365,95 @@ code {
 
 .range-readout {
   color: var(--muted);
-  background: var(--panel);
-  padding: 0 4px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Optics */
+.optics {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.optics-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  padding: 3px 8px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.optics-legend {
+  display: flex;
+  gap: 4px;
+}
+
+.optics-legend button {
+  padding: 1px 7px;
+}
+
+.optics-legend button[aria-pressed="false"] {
+  opacity: 0.45;
+}
+
+.optics-legend i {
+  display: inline-block;
+  width: 12px;
+  height: 0;
+  margin-right: 5px;
+  vertical-align: middle;
+  border-top: 2px solid;
+}
+
+.optics-summary {
+  flex: 1 1 0;
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.optics-engine {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.optics-strip {
+  position: relative;
+  flex: none;
+  height: var(--strip-height);
+}
+
+.optics-plot {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+.optics-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  cursor: crosshair;
+}
+
+.optics-message {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 24px;
+  text-align: center;
+  color: var(--muted);
+  pointer-events: none;
 }
 
 .legend {
@@ -642,8 +729,8 @@ ul.plain {
     height: 60vh;
   }
 
-  .linear-pane {
-    height: 180px;
+  .optics-pane {
+    height: 380px;
     border-top: 1px solid var(--border);
   }
 

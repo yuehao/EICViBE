@@ -4,6 +4,26 @@
  */
 
 export interface paths {
+    "/api/v1/engines": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Engines
+         * @description Physics engines that can compute optics here.
+         */
+        get: operations["engines_api_v1_engines_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/health": {
         parameters: {
             query?: never;
@@ -81,6 +101,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/lattices/{digest}/branches/{branch}/optics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Branch Optics
+         * @description Design optics of one branch: beta functions, dispersion, phase advance, orbit, tunes, chromaticity.
+         *
+         *     The first request for a revision computes the whole machine (lines start from the
+         *     optics at their forks), which can take a while: TrackPad starts Julia on first use.
+         */
+        get: operations["branch_optics_api_v1_lattices__digest__branches__branch__optics_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/lattices/{digest}/lattice.json": {
         parameters: {
             query?: never;
@@ -146,7 +189,7 @@ export interface components {
             floor: components["schemas"]["BranchFloor"];
             /**
              * Schema Version
-             * @default 3
+             * @default 4
              */
             schema_version: number;
             table: components["schemas"]["BranchTable"];
@@ -169,6 +212,82 @@ export interface components {
             y: number[];
             /** Z */
             z: number[];
+        };
+        /**
+         * BranchOptics
+         * @description Optics of one branch, from the optics of the whole machine (lines start where their forks are).
+         *
+         *     Columns hold the value at the branch start and then at the exit of every
+         *     occurrence: one more entry than the branch has occurrences.
+         */
+        BranchOptics: {
+            /**
+             * Available
+             * @description Whether the branch has optics; see ``origin`` when not
+             */
+            available: boolean;
+            /** Branch */
+            branch: string;
+            /**
+             * Chroma X
+             * @description dQ/d(delta)
+             */
+            chroma_x: number | null;
+            /** Chroma Y */
+            chroma_y: number | null;
+            /** Columns */
+            columns: components["schemas"]["Column"][];
+            /** Engine */
+            engine: string;
+            /** Fidelity */
+            fidelity: string;
+            /**
+             * Method
+             * @description How the maps and chromaticity were computed, e.g. TPSA
+             */
+            method: string | null;
+            /** Momentum Compaction */
+            momentum_compaction: number | null;
+            /**
+             * Occurrences
+             * @description Occurrence ids in beam order; column entry i + 1 is at the exit of i
+             */
+            occurrences: string[];
+            /**
+             * Origin
+             * @description Periodic solution, initial conditions, or the fork the line starts from; otherwise why it has no optics
+             */
+            origin: string;
+            /** Periodic */
+            periodic: boolean;
+            /** @description Optics inside elements, where the engine samples them (TrackPad: its integrator steps) */
+            profile: components["schemas"]["OpticsProfile"] | null;
+            /**
+             * S
+             * @description m
+             */
+            s: number[];
+            /**
+             * Schema Version
+             * @default 4
+             */
+            schema_version: number;
+            /**
+             * Tune X
+             * @description A ring's tunes; null for a line
+             */
+            tune_x: number | null;
+            /** Tune Y */
+            tune_y: number | null;
+            /**
+             * Values
+             * @description Columns by key; see ``columns``
+             */
+            values: {
+                [key: string]: number[];
+            };
+            /** Version */
+            version: string | null;
         };
         /** BranchSummary */
         BranchSummary: {
@@ -343,6 +462,36 @@ export interface components {
             /** Subject */
             subject: string;
         };
+        /**
+         * EngineInfo
+         * @description A physics engine the server can compute optics with (ADR 0006).
+         */
+        EngineInfo: {
+            /**
+             * Available
+             * @description Installed here; starting it may still fail
+             */
+            available: boolean;
+            /** Fidelities */
+            fidelities: string[];
+            /**
+             * Method
+             * @description How it computes optics and chromaticity
+             */
+            method: string;
+            /** Name */
+            name: string;
+            /**
+             * Version
+             * @description Known once the engine has run, for engines started on demand
+             */
+            version: string | null;
+        };
+        /**
+         * Fidelity
+         * @enum {string}
+         */
+        Fidelity: "linear" | "fast" | "standard" | "precise";
         /** ForkLink */
         ForkLink: {
             /** To Branch */
@@ -455,7 +604,7 @@ export interface components {
             root_branch: string | null;
             /**
              * Schema Version
-             * @default 3
+             * @default 4
              */
             schema_version: number;
             /** Shared Components */
@@ -508,11 +657,34 @@ export interface components {
             s_exit: number;
             /**
              * Schema Version
-             * @default 3
+             * @default 4
              */
             schema_version: number;
             /** Tags */
             tags: string[];
+        };
+        /**
+         * OpticsProfile
+         * @description Optics inside elements too: the branch start, then the end of every piece the engine sampled.
+         */
+        OpticsProfile: {
+            /**
+             * Index
+             * @description For each point after the start, the occurrence (its position in ``occurrences``) whose piece ends there
+             */
+            index: number[];
+            /**
+             * S
+             * @description m
+             */
+            s: number[];
+            /**
+             * Values
+             * @description Columns by key, as in ``BranchOptics.values``
+             */
+            values: {
+                [key: string]: number[];
+            };
         };
         /** Parameter */
         Parameter: {
@@ -677,6 +849,26 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    engines_api_v1_engines_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EngineInfo"][];
+                };
+            };
+        };
+    };
     health_api_v1_health_get: {
         parameters: {
             query?: never;
@@ -769,6 +961,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BranchData"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    branch_optics_api_v1_lattices__digest__branches__branch__optics_get: {
+        parameters: {
+            query?: {
+                /** @description Engine name; see /engines */
+                engine?: string;
+                fidelity?: components["schemas"]["Fidelity"];
+            };
+            header?: never;
+            path: {
+                digest: string;
+                branch: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BranchOptics"];
                 };
             };
             /** @description Validation Error */

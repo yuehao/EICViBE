@@ -6,19 +6,26 @@ server worker processes can use it at once without affecting each other.
 Responses are built once per revision, kept as bytes (and gzip bytes), and
 revalidated with ETags, so repeated and concurrent requests cost almost
 nothing. What a user looks at (branch, zoom, selection) lives in the client.
+Optics are computed by engine worker processes (:mod:`.optics`), also once
+per revision, engine and fidelity.
 """
 
 import os
+from concurrent.futures.process import BrokenProcessPool
+from contextlib import asynccontextmanager
 from importlib.metadata import version
 from pathlib import Path
 
-from fastapi import APIRouter, FastAPI, HTTPException, Request, Response
+from fastapi import APIRouter, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import RootModel
 
+from eicvibe.engines.contracts import EngineUnavailable, Fidelity, UnsupportedRequest
+
 from . import schemas
 from .catalog import Catalog, Payload, Revision
+from .optics import OpticsService, UnknownEngine
 
 #: Where ``npm run build`` in ``web/`` puts the client.
 STATIC_DIR = Path(__file__).parent / "static"
@@ -49,13 +56,23 @@ def _not_modified(request: Request, etag: str) -> Response | None:
     return None
 
 
-def create_app(catalog: Catalog, *, static_dir: Path | None = STATIC_DIR) -> FastAPI:
+def create_app(
+    catalog: Catalog, *, static_dir: Path | None = STATIC_DIR, optics: OpticsService | None = None
+) -> FastAPI:
+    optics = optics or OpticsService()
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        yield
+        optics.close()  # stops the engine workers
+
     app = FastAPI(
         title="EICViBE lattice viewer",
         version=version("eicvibe"),
         docs_url="/api/docs",
         redoc_url=None,
         openapi_url="/api/openapi.json",
+        lifespan=lifespan,
     )
     api = APIRouter(prefix="/api/v1")
 
@@ -104,6 +121,41 @@ def create_app(catalog: Catalog, *, static_dir: Path | None = STATIC_DIR) -> Fas
         except KeyError:
             raise HTTPException(404, f"no occurrence {occurrence}") from None
         return _send(request, payload)
+
+    @api.get("/lattices/{digest}/branches/{branch}/optics", response_model=schemas.BranchOptics)
+    async def branch_optics(
+        digest: str,
+        branch: str,
+        request: Request,
+        engine: str = Query("xsuite", description="Engine name; see /engines"),
+        fidelity: Fidelity = Fidelity.STANDARD,
+    ) -> Response:
+        """Design optics of one branch: beta functions, dispersion, phase advance, orbit, tunes, chromaticity.
+
+        The first request for a revision computes the whole machine (lines start from the
+        optics at their forks), which can take a while: TrackPad starts Julia on first use.
+        """
+        found = revision(digest)
+        try:
+            found.lattice.layout(branch)
+        except KeyError:
+            raise HTTPException(404, f"no branch {branch}") from None
+        try:
+            payload = await optics.branch(found, engine, fidelity, branch)
+        except UnknownEngine:
+            raise HTTPException(404, f"no engine {engine}") from None
+        except UnsupportedRequest as error:
+            raise HTTPException(422, str(error)) from None
+        except EngineUnavailable as error:
+            raise HTTPException(503, str(error)) from None
+        except BrokenProcessPool:
+            raise HTTPException(503, f"the {engine} worker stopped; try again") from None
+        return _send(request, payload)
+
+    @api.get("/engines", response_model=list[schemas.EngineInfo])
+    def engines() -> list[schemas.EngineInfo]:
+        """Physics engines that can compute optics here."""
+        return optics.engines()
 
     @api.get("/lattices/{digest}/lattice.json")
     def download(digest: str, request: Request) -> Response:

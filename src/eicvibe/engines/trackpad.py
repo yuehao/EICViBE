@@ -1,0 +1,681 @@
+"""The TrackPad engine: a branch of the lattice as a TrackPad.jl ``Lattice`` (ADR 0006).
+
+TrackPad runs in Julia, reached through juliacall; the conversion stays here
+and ``trackpad.jl`` only calls TrackPad's constructors and computations.
+Each occurrence becomes one or more TrackPad elements, so results map back
+to occurrences at their exits, as for Xsuite.
+
+TrackPad's elements follow Accelerator Toolbox conventions:
+``polynom_b[n+1] = Kn_n / n!`` per length in thick magnets and integrated in
+thin ones, ``polynom_a`` likewise for the skew strengths; a positive
+``polynom_b[1]`` deflects toward -x, as a positive ``Kn0L`` does, and a
+corrector's ``xkick`` is the deflection, ``-Kn0L``. A bend's ``polynom_b[1]``
+is its field beyond the reference curvature. Displacement and roll are AT's
+entrance and exit maps (T1, T2, R1, R2). TrackPad's coordinates are
+``(x, px, y, py, z, dE)`` with ``z = zeta / beta0`` and ``dE = (E - E0)/(P0 c)``;
+results are converted back to ``zeta`` and ``delta``.
+
+Fidelity sets the steps of TrackPad's fourth-order integrator in thick
+magnets: 2 (``fast``), 10 (``standard``, as TrackPad's MAD-X reader) or 40
+(``precise``). Drifts are always exact. Optics are TrackPad's uncoupled 4D
+Twiss from truncated power series (TPSA) maps: the closed orbit, transfer
+matrices and chromaticity are exact derivatives of the maps, with no
+finite-difference steps. Tracking and the 6D closed orbit follow the RF.
+"""
+
+import math
+import os
+import shutil
+import subprocess
+from collections import defaultdict
+from importlib.util import find_spec
+from pathlib import Path
+from typing import Any
+
+from eicvibe.domain.lattice import ElementKind, Lattice, PlacedElement
+
+from .contracts import (
+    Capabilities,
+    Computation,
+    Effect,
+    EngineUnavailable,
+    Fidelity,
+    OpticsProfile,
+    OpticsRequest,
+    OpticsResult,
+    Options,
+    OrbitRequest,
+    OrbitResult,
+    ParticleLost,
+    Support,
+    TimeScale,
+    TrackRequest,
+    TrackResult,
+    TwissInit,
+    UnsupportedRequest,
+)
+from .convert import (
+    C_LIGHT,
+    bend_edges,
+    bend_field,
+    common_tilt,
+    displacement,
+    highest_order,
+    integrated,
+    patch_frame,
+    reference,
+    rf_frequency,
+    rf_phase,
+)
+from .model import SETTINGS, Values, effective, require
+
+try:
+    import numpy as np
+except ImportError:  # the engine reports itself unavailable
+    np = None
+
+NAME = "trackpad"
+
+#: Element kinds of trackpad.jl, by their code (the position).
+KINDS = (
+    "drift",
+    "marker",
+    "quadrupole",
+    "sextupole",
+    "octupole",
+    "bend",
+    "multipole",
+    "corrector",
+    "solenoid",
+    "rfcavity",
+    "patch",
+    "translation",
+    "exactbend",
+)
+
+#: The parameters of every TrackPad element, as trackpad.jl reads them by name.
+COLUMNS = (
+    "L",
+    "angle",
+    "e1",
+    "e2",
+    "fint1",
+    "fint2",
+    "gap",
+    "gk",
+    "b0",
+    "b1",
+    "b2",
+    "b3",
+    "a0",
+    "a1",
+    "a2",
+    "a3",
+    "order",
+    "steps",
+    "xkick",
+    "ykick",
+    "ks",
+    "volt",
+    "freq",
+    "harmon",
+    "philag",
+    "dx",
+    "dy",
+    "roll",
+    "x_pitch",
+    "y_pitch",
+    "tilt",
+    "t_offset",
+    "shift_x",
+    "shift_y",
+    "shift_s",
+)
+
+STEPS = {Fidelity.FAST: 2, Fidelity.STANDARD: 10, Fidelity.PRECISE: 40}
+TOP_ORDER = 3  # polynom_a and polynom_b hold dipole to octupole
+
+LATTICE_KINDS = frozenset(
+    {
+        ElementKind.DRIFT,
+        ElementKind.BEND,
+        ElementKind.MULTIPOLE,
+        ElementKind.QUADRUPOLE,
+        ElementKind.SEXTUPOLE,
+        ElementKind.OCTUPOLE,
+        ElementKind.SOLENOID,
+        ElementKind.KICKER,
+        ElementKind.RFCAVITY,
+        ElementKind.INSTRUMENT,
+        ElementKind.MARKER,
+        ElementKind.BEGINNING_ELE,
+        ElementKind.FORK,
+        ElementKind.PATCH,
+    }
+)
+
+NOTES = {
+    "optics.longitudinal": "TrackPad's Twiss is 4D; its 6D closed orbit and tracking follow the RF",
+    Effect.RADIATION_DAMPING.value: "TrackPad gives radiation integrals; it does not track radiation",
+    Effect.QUANTUM_EXCITATION.value: "TrackPad does not track radiation",
+    Effect.SPACE_CHARGE.value: "in TrackPad (space-charge elements); not yet in this adapter",
+    Effect.WAKEFIELDS.value: "in TrackPad (longitudinal wakes); not yet in this adapter",
+    Effect.BEAM_BEAM.value: "in TrackPad (strong Gaussian beam); not yet in this adapter",
+    Effect.APERTURES.value: "lattice apertures are not converted yet",
+    TimeScale.CYCLE.value: "quasi-static snapshots; TrackPad's time-dependent elements not used yet",
+}
+
+_julia_module = None
+
+
+def _point_juliacall_at_julia() -> None:
+    """Give juliacall a real Julia binary: juliaup's launcher cannot be loaded as a library."""
+    if os.environ.get("PYTHON_JULIAPKG_EXE"):
+        return
+    launcher = shutil.which("julia")
+    if launcher is None:
+        return  # juliapkg installs a Julia of its own
+    try:
+        binary = subprocess.run(
+            [launcher, "--startup-file=no", "-e", 'print(joinpath(Sys.BINDIR, "julia"))'],
+            capture_output=True,
+            text=True,
+            timeout=300,
+            check=True,
+        ).stdout.strip()
+    except OSError, subprocess.SubprocessError:
+        return
+    if binary:
+        os.environ["PYTHON_JULIAPKG_EXE"] = binary
+
+
+def _julia():
+    """The trackpad.jl module, loading Julia and TrackPad on first use."""
+    global _julia_module
+    if _julia_module is None:
+        if np is None or find_spec("juliacall") is None:
+            raise EngineUnavailable("juliacall is not installed: pip install 'eicvibe[trackpad]'")
+        _point_juliacall_at_julia()
+        try:
+            from juliacall import Main as jl
+
+            jl.seval("using TrackPad")
+            current = bool(jl.seval("isdefined(TrackPad, :CURVED_MULTIPOLES)"))
+            module = jl.include(str(Path(__file__).with_name("trackpad.jl")))
+        except Exception as error:  # juliacall raises its own errors, and on any install failure
+            raise EngineUnavailable(f"TrackPad cannot start: {error}") from None
+        if not current:  # its bends kicked with a straight-frame field: wrong in combined-function bends
+            raise EngineUnavailable(
+                "this TrackPad predates curved-frame multipoles in bends; update it: "
+                "python -c 'import juliapkg; juliapkg.update()'"
+            )
+        _julia_module = module
+    return _julia_module
+
+
+def _version() -> str | None:
+    if _julia_module is None:
+        return None
+    from juliacall import Main as jl
+
+    return str(jl.seval("string(pkgversion(TrackPad))"))
+
+
+class TrackPadEngine:
+    name = NAME
+
+    def available(self) -> bool:
+        return np is not None and find_spec("juliacall") is not None
+
+    def capabilities(self) -> Capabilities:
+        return Capabilities(
+            engine=NAME,
+            version=_version(),
+            computations=frozenset(Computation),
+            fidelities=frozenset(STEPS),
+            effects={Effect.LONGITUDINAL: Support.NATIVE},
+            computation_gaps={Computation.OPTICS: frozenset({Effect.LONGITUDINAL})},
+            time_scales={
+                TimeScale.EQUILIBRIUM: Support.NATIVE,
+                TimeScale.SINGLE_PASS: Support.NATIVE,
+                TimeScale.TURNS: Support.NATIVE,
+                TimeScale.CYCLE: Support.APPROXIMATE,
+            },
+            kinds=LATTICE_KINDS,
+            updatable=SETTINGS,
+            notes=NOTES,
+        )
+
+    def open(
+        self, lattice: Lattice, branch: str, options: Options | None = None, values: Values | None = None
+    ) -> TrackPadSession:
+        options = options or Options()
+        require(self.capabilities(), lattice, branch, options)
+        return TrackPadSession(_julia(), lattice, branch, options, values or {})
+
+
+class TrackPadSession:
+    """One branch as a TrackPad lattice; settings replace its elements in place."""
+
+    engine = NAME
+
+    def __init__(self, jl, lattice: Lattice, branch: str, options: Options, values: Values) -> None:
+        self.jl = jl
+        self.lattice = lattice
+        self.layout = lattice.layout(branch)
+        self.branch = self.layout.id
+        self.options = options
+        self.values: dict[tuple[str, str], float] = dict(values)
+        particle = reference(NAME, lattice, self.branch)
+        self._beta0 = particle["beta0"]
+        self._revolution = self._beta0 * C_LIGHT / self.layout.length if self.layout.length else 0.0
+        self._fidelity = options.fidelity
+        pieces: list[tuple[str, str, dict[str, float]]] = []
+        self._first: dict[str, int] = {}
+        self._kinds: dict[str, list[str]] = {}
+        for placed in self.layout.placements:
+            mine = self._pieces(placed)
+            self._first[placed.id] = len(pieces)
+            self._kinds[placed.id] = [kind for _, kind, _ in mine]
+            pieces += mine
+        self._occurrence_ids = [p.id for p in self.layout.placements]
+        # Index of every occurrence's exit in TrackPad's arrays, which start at the entrance.
+        self._exits = [self._first[o] + len(self._kinds[o]) for o in self._occurrence_ids]
+        # The occurrence (by position) of every TrackPad element.
+        self._occurrence_of = np.repeat(
+            np.arange(len(self._occurrence_ids)), [len(self._kinds[o]) for o in self._occurrence_ids]
+        )
+        self.beam = jl.beam(particle["pc"], particle["mass"], particle["charge"])
+        self.model = jl.lattice(*_arrays(pieces), self.beam, self.layout.periodic)
+
+    def _pieces(self, placed: PlacedElement) -> list[tuple[str, str, dict[str, float]]]:
+        return _pieces(placed, effective(placed, self.values), self._beta0, self._revolution, self._fidelity)
+
+    # -- settings ----------------------------------------------------------------
+
+    def update(self, values: Values) -> None:
+        """Change parameter values in place; a change of the elements' structure is refused."""
+        changed = defaultdict(dict)
+        for (occurrence, path), value in values.items():
+            if path not in SETTINGS:
+                raise UnsupportedRequest(NAME, [f"{path} cannot change in place; open a new session"])
+            changed[occurrence][path] = value
+        for occurrence, paths in changed.items():
+            placed = self.lattice.placement(occurrence)
+            if placed.branch_id != self.branch:
+                raise UnsupportedRequest(NAME, [f"occurrence {occurrence} is not in this branch"])
+            self.values.update({(occurrence, p): v for p, v in paths.items()})
+            pieces = self._pieces(placed)
+            if [kind for _, kind, _ in pieces] != self._kinds[occurrence]:
+                raise UnsupportedRequest(
+                    NAME, [f"{placed.name}: the change alters its structure; open a new session"]
+                )
+            self.jl.setelements_b(self.model, self._first[occurrence] + 1, *_arrays(pieces), self.beam)
+
+    # -- coordinates ---------------------------------------------------------------
+
+    def _to_trackpad(self, x, px, y, py, zeta, delta):
+        return np.array([x, px, y, py, zeta / self._beta0, float(self.jl.deltae(delta, self.beam))])
+
+    def _delta(self, energy: float) -> float:
+        """delta from TrackPad's dE: (1 + delta)^2 = 1 + 2 dE / beta0 + dE^2."""
+        return math.sqrt(1.0 + 2.0 * energy / self._beta0 + energy * energy) - 1.0
+
+    def _check(self, orbit) -> None:
+        """Raise :class:`ParticleLost` if the orbit (6 x elements+1) was lost on the way."""
+        bad = np.flatnonzero(~np.isfinite(orbit).all(axis=0))
+        if bad.size:
+            raise ParticleLost(
+                NAME, next(o for o, e in zip(self._occurrence_ids, self._exits, strict=True) if e >= bad[0])
+            )
+
+    def _model(self, options: Options):
+        """The lattice, with RF cavities as drifts unless the longitudinal motion is wanted."""
+        return self.model if Effect.LONGITUDINAL in options.effects else self.jl.transverse(self.model)
+
+    # -- computations --------------------------------------------------------------
+
+    def optics(self, request: OpticsRequest) -> OpticsResult:
+        options = request.options
+        require(TrackPadEngine().capabilities(), self.lattice, self.branch, options, Computation.OPTICS)
+        model = self._model(options)
+        periodic = self.layout.periodic
+        if periodic:
+            start = self.jl.closed_orbit(model, self.beam, 0.0, False)
+            entrance = None
+        else:
+            if request.initial is None:
+                raise UnsupportedRequest(NAME, ["a line's optics need initial conditions"])
+            i = request.initial
+            start = self._to_trackpad(i.x, i.px, i.y, i.py, i.zeta, i.delta)
+            entrance = self.jl.entrance(
+                i.beta_x,
+                i.alpha_x,
+                2 * math.pi * i.mu_x,
+                i.eta_x,
+                i.etap_x,
+                i.beta_y,
+                i.alpha_y,
+                2 * math.pi * i.mu_y,
+                i.eta_y,
+                i.etap_y,
+            )
+        result = self.jl.optics(model, self.beam, entrance, start, request.inside)
+        table = np.asarray(result.columns)
+        # The occurrence each piece belongs to, and the point where each occurrence's last piece ends.
+        pieces = self._occurrence_of[np.asarray(result.owner) - 1]
+        exits = np.searchsorted(pieces, np.arange(len(self._occurrence_ids)), side="right")
+        orbit = np.asarray(self.jl.along(model, self.beam, start))
+        self._check(orbit)
+        s, betx, alfx, bety, alfy, mux, muy, dx, dpx, dy, dpy = (list(row) for row in table)
+
+        def column(values, scale=1.0):
+            return tuple(float(values[i]) * scale for i in exits)
+
+        def orbit_column(values):
+            return tuple(float(values[i]) for i in self._exits)
+
+        turn = 1 / (2 * math.pi)
+        profile = None
+        if request.inside:
+            profile = OpticsProfile(
+                index=tuple(int(i) for i in pieces),
+                s=tuple(s),
+                beta_x=tuple(betx),
+                alpha_x=tuple(alfx),
+                beta_y=tuple(bety),
+                alpha_y=tuple(alfy),
+                mu_x=tuple(v * turn for v in mux),
+                mu_y=tuple(v * turn for v in muy),
+                eta_x=tuple(dx),
+                etap_x=tuple(dpx),
+                eta_y=tuple(dy),
+                etap_y=tuple(dpy),
+            )
+        return OpticsResult(
+            engine=NAME,
+            fidelity=options.fidelity,
+            effects=options.effects,
+            branch=self.branch,
+            periodic=periodic,
+            occurrences=tuple(self._occurrence_ids),
+            s=column(s),
+            beta_x=column(betx),
+            alpha_x=column(alfx),
+            beta_y=column(bety),
+            alpha_y=column(alfy),
+            mu_x=column(mux, turn),
+            mu_y=column(muy, turn),
+            eta_x=column(dx),
+            etap_x=column(dpx),
+            eta_y=column(dy),
+            etap_y=column(dpy),
+            x=orbit_column(orbit[0]),
+            px=orbit_column(orbit[1]),
+            y=orbit_column(orbit[2]),
+            py=orbit_column(orbit[3]),
+            start=TwissInit(
+                beta_x=betx[0],
+                alpha_x=alfx[0],
+                beta_y=bety[0],
+                alpha_y=alfy[0],
+                eta_x=dx[0],
+                etap_x=dpx[0],
+                eta_y=dy[0],
+                etap_y=dpy[0],
+                mu_x=mux[0] * turn,
+                mu_y=muy[0] * turn,
+                x=float(orbit[0][0]),
+                px=float(orbit[1][0]),
+                y=float(orbit[2][0]),
+                py=float(orbit[3][0]),
+            ),
+            tune_x=_tune(result.tunex, (mux[-1] - mux[0]) * turn) if periodic else None,
+            tune_y=_tune(result.tuney, (muy[-1] - muy[0]) * turn) if periodic else None,
+            chroma_x=_number(result.chromx),
+            chroma_y=_number(result.chromy),
+            momentum_compaction=_number(result.alphac),
+            method="TPSA",
+            profile=profile,
+        )
+
+    def orbit(self, request: OrbitRequest) -> OrbitResult:
+        options = request.options
+        require(TrackPadEngine().capabilities(), self.lattice, self.branch, options, Computation.ORBIT)
+        model = self._model(options)
+        if self.layout.periodic:
+            six = Effect.LONGITUDINAL in options.effects
+            start = self.jl.closed_orbit(model, self.beam, request.delta, six)
+        else:
+            x, px, y, py, zeta, delta = request.initial or (0.0, 0.0, 0.0, 0.0, 0.0, request.delta)
+            start = self._to_trackpad(x, px, y, py, zeta, delta)
+        orbit = np.asarray(self.jl.along(model, self.beam, start))
+        self._check(orbit)
+        return OrbitResult(
+            engine=NAME,
+            fidelity=options.fidelity,
+            effects=options.effects,
+            branch=self.branch,
+            closed=self.layout.periodic,
+            occurrences=tuple(self._occurrence_ids),
+            x=tuple(float(orbit[0][i]) for i in self._exits),
+            px=tuple(float(orbit[1][i]) for i in self._exits),
+            y=tuple(float(orbit[2][i]) for i in self._exits),
+            py=tuple(float(orbit[3][i]) for i in self._exits),
+            zeta=tuple(float(orbit[4][i]) * self._beta0 for i in self._exits),
+            delta=tuple(self._delta(float(orbit[5][i])) for i in self._exits),
+        )
+
+    def track(self, request: TrackRequest) -> TrackResult:
+        options = request.options
+        if request.turns > 1 and not self.layout.periodic:
+            raise UnsupportedRequest(NAME, ["a line is passed once; turns > 1 needs a ring"])
+        time_scale = (
+            TimeScale.TURNS
+            if request.turns > 1
+            else (TimeScale.EQUILIBRIUM if self.layout.periodic else TimeScale.SINGLE_PASS)
+        )
+        require(
+            TrackPadEngine().capabilities(),
+            self.lattice,
+            self.branch,
+            options,
+            Computation.TRACKING,
+            time_scale,
+        )
+        index = dict(zip(self._occurrence_ids, self._exits, strict=True))
+        cuts = sorted({index[o] for o in request.observe})
+        coords = np.array([self._to_trackpad(*p) for p in request.particles], dtype=float)
+        model = self._model(options)
+        record, lost = self.jl.observe(
+            model, self.beam, coords, request.turns, np.array(cuts, dtype=np.int64)
+        )
+        record = np.asarray(record)  # (cut, turn, particle, coordinate)
+        n = len(request.particles)
+
+        def series(k):
+            return tuple(
+                tuple(
+                    tuple(float(record[cuts.index(index[o]), t, p, k]) for p in range(n))
+                    for t in range(request.turns)
+                )
+                for o in request.observe
+            )
+
+        return TrackResult(
+            engine=NAME,
+            fidelity=options.fidelity,
+            effects=options.effects,
+            branch=self.branch,
+            observe=request.observe,
+            turns=request.turns,
+            x=series(0),
+            px=series(1),
+            y=series(2),
+            py=series(3),
+            lost=tuple(bool(flag) for flag in np.asarray(lost)),
+        )
+
+    def close(self) -> None:
+        self.model = None
+
+
+# -- conversion ------------------------------------------------------------------
+
+
+def _tune(fraction, advance: float) -> float:
+    """A ring's tune: the one-turn map's fractional tune, with the integer of the summed phase advance.
+
+    With coupling, uncoupled phase advances summed element by element depend on how
+    the ring is cut into pieces (sampling inside magnets cuts it finer); the one-turn
+    map does not.
+    """
+    fraction = float(fraction)
+    return fraction + round(advance - fraction)
+
+
+def _number(value) -> float | None:
+    return None if value is None else float(value)
+
+
+def _arrays(pieces: list[tuple[str, str, dict[str, float]]]):
+    """The kind codes, newline-separated names, column header and parameter rows trackpad.jl takes."""
+    kinds = np.array([KINDS.index(kind) for _, kind, _ in pieces], dtype=np.int64)
+    rows = np.zeros((len(pieces), len(COLUMNS)))
+    for i, (_, _, parameters) in enumerate(pieces):
+        for name, value in parameters.items():
+            rows[i, COLUMNS.index(name)] = value
+    return kinds, "\n".join(name for name, _, _ in pieces), ",".join(COLUMNS), rows
+
+
+def _strengths(multipoles: dict[str, Any], length: float, *, thin: bool = False) -> dict[str, float]:
+    """AT's polynom_b and polynom_a, ``Kn/n!``: per length, or integrated in a thin element."""
+    top = highest_order(multipoles, length)
+    if top > TOP_ORDER:
+        raise UnsupportedRequest(NAME, [f"multipoles of order {top}; TrackPad's elements stop at octupoles"])
+    out = {}
+    for n in range(TOP_ORDER + 1):
+        normal = integrated(multipoles, "Kn", n, length)
+        skew = integrated(multipoles, "Ks", n, length)
+        scale = math.factorial(n) * (1.0 if thin else length)
+        out[f"b{n}"], out[f"a{n}"] = normal / scale, skew / scale
+    out["order"] = top
+    return out
+
+
+def _placement(groups: dict[str, Any], roll: float) -> dict[str, float]:
+    x, y, z_rot = displacement(NAME, groups)
+    return {"dx": x, "dy": y, "roll": roll + z_rot}
+
+
+def _pieces(
+    placed: PlacedElement, groups: dict[str, Any], beta0: float, revolution: float, fidelity: Fidelity
+) -> list[tuple[str, str, dict[str, float]]]:
+    """The TrackPad elements of one occurrence as (name, kind, parameters); the last is named with its id."""
+    oid, kind, length = placed.id, placed.kind, placed.length
+    mm = groups.get("MagneticMultipoleP", {})
+    steps = STEPS[fidelity]
+    if kind in (
+        ElementKind.DRIFT,
+        ElementKind.MARKER,
+        ElementKind.INSTRUMENT,
+        ElementKind.BEGINNING_ELE,
+        ElementKind.FORK,
+    ):
+        return [(oid, "drift", {"L": length})] if length else [(oid, "marker", {})]
+    if kind is ElementKind.BEND:
+        return [(oid, *_bend(placed, groups, mm, steps, exact=fidelity is not Fidelity.FAST))]
+    if kind in (ElementKind.QUADRUPOLE, ElementKind.SEXTUPOLE, ElementKind.OCTUPOLE):
+        order = {ElementKind.QUADRUPOLE: 1, ElementKind.SEXTUPOLE: 2, ElementKind.OCTUPOLE: 3}[kind]
+        roll = _placement(groups, common_tilt(NAME, mm, order))
+        if length == 0.0:
+            return [(oid, "multipole", _strengths(mm, 0.0, thin=True) | roll)]
+        strengths = _strengths(mm, length)
+        strengths["order"] = max(strengths["order"], order)
+        name = {1: "quadrupole", 2: "sextupole", 3: "octupole"}[order]
+        return [(oid, name, {"L": length, "steps": steps} | strengths | roll)]
+    if kind in (ElementKind.MULTIPOLE, ElementKind.KICKER):
+        roll = _placement(groups, common_tilt(NAME, mm, 0))
+        strengths = _strengths(mm, 0.0, thin=True)
+        if strengths["order"] == 0:  # a corrector: its kick is the deflection
+            kick = ("corrector", {"xkick": -strengths["b0"], "ykick": strengths["a0"]} | roll)
+        else:
+            kick = ("multipole", strengths | roll)
+        return _centred(oid, length, kick)
+    if kind is ElementKind.SOLENOID:
+        if length == 0.0:
+            raise UnsupportedRequest(NAME, [f"{placed.name}: a thin solenoid"])
+        ks = groups.get("SolenoidP", {}).get("Ksol", 0.0)
+        return [(oid, "solenoid", {"L": length, "ks": ks} | _placement(groups, 0.0))]
+    if kind is ElementKind.RFCAVITY:
+        rf = groups.get("RFP", {})
+        cavity = {
+            "L": length,
+            "volt": rf.get("voltage", 0.0),
+            "freq": rf_frequency(NAME, placed.name, rf, revolution),
+            "harmon": rf.get("harmon") or 1.0,
+            # TrackPad's energy gain is sin(philag + 2 pi f z / c), MAD-X's sin(phase - 2 pi f z / c).
+            "philag": math.pi - rf_phase(NAME, placed.name, rf),
+        }
+        return [(oid, "rfcavity", cavity)]
+    if kind is ElementKind.PATCH:
+        return _patch(oid, groups.get("PatchP", {}), beta0)
+    raise UnsupportedRequest(NAME, [f"{placed.name}: element kind {kind.value}"])
+
+
+def _centred(
+    oid: str, length: float, thin: tuple[str, dict[str, float]]
+) -> list[tuple[str, str, dict[str, float]]]:
+    """A thin element in the middle of a length (as MAD-X places a thick kicker's kick)."""
+    if length == 0.0:
+        return [(oid, *thin)]
+    return [
+        (f"{oid}.in", "drift", {"L": length / 2}),
+        (f"{oid}.kick", *thin),
+        (oid, "drift", {"L": length / 2}),
+    ]
+
+
+def _bend(
+    placed: PlacedElement, groups: dict[str, Any], mm: dict[str, Any], steps: int, *, exact: bool
+) -> tuple[str, dict]:
+    """TrackPad's exact sector bend (Forest's maps), or its AT-style bend (expanded body, linear edges).
+
+    The AT-style body lacks the curvature terms of the kinetic energy, which carry much of
+    the chromaticity of strongly bent rings (half of it at rho ~ 5 m).
+    """
+    bp = groups.get("BendP", {})
+    length, angle = placed.length, bp.get("angle_ref", 0.0)
+    if length == 0.0:
+        raise UnsupportedRequest(NAME, [f"{placed.name}: a thin bend (no curvature in a thin multipole)"])
+    e1, e2 = bend_edges(NAME, bp)
+    strengths = _strengths(mm, length)
+    strengths["b0"] = bend_field(bp, mm, length) - angle / length  # the field beyond the curvature
+    strengths["order"] = highest_order({**mm, "Kn0": strengths["b0"], "Kn0L": 0.0}, length)
+    shape = {"L": length, "angle": angle, "e1": e1, "e2": e2, "steps": steps}
+    shape |= strengths | _placement(groups, bp.get("tilt_ref", 0.0))
+    # The fringe is full gap x FINT = 2 HGAP x FINT in MAD-X's terms; the lattice stores HGAP x FINT.
+    entry, exit_ = bp.get("edge1_int", 0.0), bp.get("edge2_int", 0.0)
+    if not exact:
+        return "bend", shape | {"gap": 2.0, "fint1": entry, "fint2": exit_}
+    if entry != exit_:
+        raise UnsupportedRequest(NAME, [f"{placed.name}: an exact bend with different fringe integrals"])
+    return "exactbend", shape | {"gk": 2.0 * entry}
+
+
+def _patch(oid: str, patch: dict[str, Any], beta0: float) -> list[tuple[str, str, dict[str, float]]]:
+    """A patch as TrackPad's Translation, then one Patch per rotation (TrackPad's own order is R_x, R_y).
+
+    A patch has no length, so a z offset delays the reference particle by z / (beta0 c), as in
+    Xsuite; TrackPad's Translation moves the reference time with it, so the delay is added back.
+    """
+    (x, y, z), rotations = patch_frame(NAME, patch)
+    pieces = [("translation", {"shift_x": x, "shift_y": y, "shift_s": z})] if x or y or z else []
+    if z:
+        pieces.append(("patch", {"t_offset": -z / (beta0 * C_LIGHT)}))
+    fields = {"y_rot": "y_pitch", "x_rot": "x_pitch", "z_rot": "tilt"}
+    pieces += [("patch", {fields[key]: angle}) for key, angle in rotations]
+    if not pieces:
+        pieces.append(("marker", {}))
+    names = [f"{oid}.{n}" for n in range(1, len(pieces))] + [oid]
+    return [(name, kind, parameters) for name, (kind, parameters) in zip(names, pieces, strict=True)]

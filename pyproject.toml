@@ -24,6 +24,15 @@ web = [
     "fastapi>=0.115",
     "uvicorn>=0.30",
 ]
+trackpad = [
+    "juliacall>=0.9.20",
+    "numpy>=2",
+]
+xsuite = [
+    "setuptools>=70",
+    "xsuite>=0.63",
+    "xtrack>=0.115",
+]
 
 [build-system]
 requires = ["uv_build>=0.12.10,<0.13.0"]
@@ -32,7 +41,7 @@ build-backend = "uv_build"
 [dependency-groups]
 dev = [
     "cpymad>=1.19",
-    "eicvibe[web]",
+    "eicvibe[web,xsuite,trackpad]",
     "httpx2>=2.13.1",
     "pytest>=9.1.1",
 ]

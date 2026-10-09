@@ -1,0 +1,47 @@
+# ADR 0006: Physics engines behind one contract
+
+Status: proposed (2026-10-08). Scope: `eicvibe.engines`. Depends on ADR 0001 (lattice, conventions) and ADR 0003 (settings as `(occurrence, parameter)` values, the engine worker of the virtual accelerator).
+
+## Decisions
+
+1. **One contract for every engine.** Requests and results (`eicvibe.engines.contracts`) are plain data in the lattice's conventions: MAD-X/PALS coordinates `x, px, y, py, zeta, delta`, phase advances in turns, values at the exit of every occurrence, keyed by occurrence id. No engine object crosses the contract, so a session can later run in a worker process (ADR 0003) without changing callers.
+2. **Four axes say what an engine can do.** *Fidelity* (`linear`, `fast`, `standard`, `precise`): how exactly elements are integrated. *Effects* (longitudinal motion, radiation damping and excitation, space charge, wakes, beam-beam, IBS, spin, apertures): physics beyond the transverse reference dynamics. *Time scale* (equilibrium, single pass, turns, cycle). *Computation* (optics, orbit, tracking). Each engine declares `Capabilities`: native, approximate or no support, with a note on every gap, and effects a computation lacks although the engine has them (TrackPad's optics are 4D). A request an engine cannot meet is refused with the reasons (`UnsupportedRequest`); an engine never drops an effect silently, and accepts an approximation only when the request allows it.
+3. **The longitudinal effect means the same in every engine.** With it, the RF acts: 6D optics, a ring's closed orbit at the momentum the RF sets, 6D tracking. Without it, every computation is transverse: cavities are drifts and the momentum stays as given. (MAD-X's TWISS instead searches a 6D closed orbit whenever cavities are on; on the test ring a corrector's orbit is a fifth smaller that way.)
+4. **A session compiles once and takes settings in place.** `Engine.open(lattice, branch, options, values)` builds the engine's model; `Session.update(values)` changes the parameters settings and errors change (`model.SETTINGS`: multipole strengths and rolls, RF voltage and phase, solenoid strength, displacement and roll), keyed as the power circuits produce them. A change that would alter the model's structure is refused; it needs a new session.
+5. **One reading of the lattice.** `eicvibe.engines.convert` reads what parameters mean (integrated strengths, a bend's field and edges, displacement, reference particle, RF frequency from a harmonic, a patch's frame) for every engine. Adapters differ only in how they build elements.
+6. **What spans branches or time sits above the engines.** `machine_optics` computes every branch: rings from their periodic solution, lines from their own initial conditions or from the optics at the fork leading to their start (also a fork landing on a septum's entrance). `quasi_static` follows a `Program` of settings through a cycle by snapshots, which engines declare as an approximate `cycle` time scale.
+7. **Engines load lazily and are chosen by capability.** `engine(name)` imports an adapter on first use; `select` returns the first installed engine, in a preferred order, that can do a request.
+8. **A server runs each engine in a worker process** (`eicvibe.engines.worker.EngineWorker`). The worker loads the engine once and keeps it loaded (Xsuite's kernels; Julia and TrackPad's compiled code, about 20 s to start); Julia gets the main thread of its own process, and a crash ends the worker, not the server. Requests and results cross as JSON. `machine_optics(..., notes=...)` reports for every branch how its optics started (periodic solution, initial conditions, the fork it starts from) or why it has none, and a branch that fails no longer stops the others. The viewer's optics (ADR 0004) use it; the virtual accelerator will.
+9. **Optics inside elements, where an engine can sample them without changing its results.** `OpticsRequest(inside=True)` adds an `OpticsProfile` to the result: points inside elements, each segment tagged with its occurrence. TrackPad samples magnets at its integrator steps (`twiss(...; sample_integrator_steps=true)`: one piece per step, each integrated in one step), so the values at element exits are unchanged (to 1e-10). Its `max_step` would split magnets finer than their steps, which refines the integration and moves results (the BAR's vertical tune by 6e-5 at the standard fidelity), so it is not used. With coupling, uncoupled phase advances summed piece by piece depend on the cut, so a ring's tunes take the fractional part from the one-turn map and only the integer from the summed phase.
+10. **Every RF phase reference converts.** `RFP.zero_phase` gives phi0 in an energy gain of sin(phase + phi0): 0 below transition (MAD-X's 2 pi LAG), pi/2 for `ACCELERATING` (the PALS default: phase 0 is the crest) and pi above transition.
+
+## The first two engines
+
+| | Xsuite (`xsuite.py`) | TrackPad (`trackpad.py`, `trackpad.jl`) |
+|---|---|---|
+| Runs | in process (xtrack, prebuilt kernels) | Julia in process through juliacall; `src/eicvibe/juliapkg.json` declares TrackPad and PolySeries |
+| Fidelity | fast: linear bend edges, expanded drifts; standard: full edges (as MAD-X's thick bends); precise: exact bend body and drifts | fast: AT-style bend, 2 integrator steps; standard: Forest's exact bend, 10 steps; precise: 40 steps. Drifts always exact |
+| Effects | longitudinal, radiation damping and excitation | longitudinal (orbit and tracking; optics are 4D) |
+| Elements | multipoles to order 10 | multipoles to octupole; no thin bends or solenoids |
+
+TrackPad's elements follow the Accelerator Toolbox: `polynom_b[n+1] = Kn_n/n!`, a bend's `polynom_b[1]` is its field beyond the curvature, displacement and roll are the entrance and exit maps. Coordinates convert as `z = zeta/beta0`, `dE = (E - E0)/(P0 c)`. Julia starts from the real binary behind the juliaup launcher, which juliacall cannot load.
+
+## Validation (2026-10-08)
+
+- Xsuite against Xsuite's own MAD-X import: equal to 1e-15 element by element, tunes to 1e-10 on the test ring. Against MAD-X: the EIN BAR and RCS tunes to 1e-6, betas to 1e-5.
+- TrackPad against Xsuite, both precise: thin kicks, patches, translations and RF equal to round-off; thick magnets within 1e-3 of their effect; ring tunes to 1e-7 and betas to 2e-7 (BAR, RCS); every EIN branch's betas to 1e-6 (the RTE, 4 cm off axis after its extraction patch, to 2e-3). TrackPad's 6D closed orbit with a corrector equals MAD-X's to 1e-8, and the BAR's chromaticity MAD-X's to 5e-4.
+
+## Findings
+
+- **A gradient in a strong bend.** TrackPad first kicked with a bend's gradient as in a straight frame. In the BAR's 45° bends (rho = 1.9 m, with Kn1) that missed 1e-3 of the deflection and moved the BAR's chromaticity by about a unit; more integrator steps did not help (the term was missing, not under-resolved). TrackPad now uses the curved-frame (Maxwellian) field in bends (`CURVED_MULTIPOLES`, 2026-10-08), and the adapter refuses an older TrackPad. Chromaticity of the BAR: MAD-X (-0.0612, -0.0843), TrackPad (-0.0613, -0.0848), Xsuite (-0.0557, +0.0794). TrackPad and Xsuite now agree on the bend body to 1e-6 of its deflection, so Xsuite's vertical value comes from its edge model (it moves by 0.12 with the fringe integrals).
+- **The RCS's chromaticity.** MAD-X (0.79, 1.09), Xsuite (0.99, 1.00), TrackPad (0.99, 1.00): the engines agree with each other but not with MAD-X. Not yet understood; the RCS's bends have no gradient.
+- **RF voltage and charge.** MAD-X and Xsuite give an energy gain `|q| V sin(phase)`, which accelerates the reference particle whatever its charge. TrackPad's cavity multiplies by the signed charge, so its MAD-X and PALS readers decelerate electrons where MAD-X accelerates them. The adapter passes `|q|`.
+- **Patch length.** The lattice's patches have zero length, so a `z_offset` delays the reference particle (as in Xsuite). TrackPad's `Translation` moves the reference time along; the adapter adds the delay back.
+- **Expanded bend bodies.** Xsuite's expanded bend body and TrackPad's AT-style bend miss the curvature terms that carry half the chromaticity of a ring with rho ~ 5 m. Neither is used above the fast fidelity.
+
+## Not yet
+
+- Effects the engines have but the adapters do not convert yet: space charge, wakes, beam-beam (both), IBS and spin (Xsuite), radiation in TrackPad (it computes radiation integrals but does not track radiation). Apertures in both.
+- The linear fidelity (response matrices from Xsuite's R-matrices or TrackPad's TPSA maps), 6D optics in TrackPad, and native time-dependent cycles (TrackPad's time-dependent parameters, Xsuite's time-dependent knobs) instead of snapshots.
+- Settings, tracking and the closed orbit through the worker, for the virtual accelerator (ADR 0003); pinning TrackPad to a release instead of `main`.
+- Element kinds no adapter converts yet: crab cavities, beam-beam, reference changes; bend pole-face curvature; body shifts along or about the transverse axes.

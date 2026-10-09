@@ -12,13 +12,14 @@ import { ElementTable } from "./components/ElementTable";
 import { FloorPlan, type FloorPlanHandle } from "./components/FloorPlan";
 import { Inspector } from "./components/Inspector";
 import { LinearView, type LinearViewHandle } from "./components/LinearView";
+import { OpticsView } from "./components/OpticsView";
 import { Splitter } from "./components/Splitter";
 import { TopBar } from "./components/TopBar";
 import { useColorScheme } from "./components/useCanvas";
 import { branchModel, branchOrder, type BranchModel } from "./model/branch";
 import { createStore, sameTarget, type Target } from "./model/store";
 import { parseHash, updateHash } from "./model/urlState";
-import { clampRange, type SRange, type View2D } from "./model/viewport";
+import { clampRange, createZoomHistory, type SRange, type View2D } from "./model/viewport";
 
 type Origin = "floor" | "linear" | "table" | "search" | "link";
 
@@ -42,6 +43,8 @@ export function App() {
 
   const hover = useMemo(() => createStore<Target | null>(null, sameTarget), []);
   const range = useMemo(() => createStore<SRange | null>(null, sameRange), []);
+  const band = useMemo(() => createStore<SRange | null>(null, sameRange), []);
+  const history = useMemo(() => createZoomHistory(), []);
   const rangeBranch = useRef<string | null>(null);
   const ranges = useRef(new Map<string, SRange>());
   const pending = useRef({ selection: initial.sel ?? null, branch: initial.branch ?? null, range: initial.range ?? null });
@@ -145,8 +148,9 @@ export function App() {
     const fromUrl = pending.current.range;
     pending.current.range = null;
     rangeBranch.current = currentModel.id;
+    history.clear(); // zooms are undone within a branch
     range.set(fromUrl ? clampRange(fromUrl, whole) : (ranges.current.get(currentModel.id) ?? whole));
-  }, [currentModel, range]);
+  }, [currentModel, range, history]);
 
   useEffect(
     () =>
@@ -195,12 +199,13 @@ export function App() {
           const span = next.s1 - next.s0;
           next = clampRange({ s0: model.s[around]! - span / 2, s1: model.s[around]! + span / 2 }, whole);
         }
+        if (id !== rangeBranch.current) history.clear();
         rangeBranch.current = id;
         range.set(next);
       }
       setCurrent(id);
     },
-    [range],
+    [range, history],
   );
 
   const select = useCallback(
@@ -305,18 +310,35 @@ export function App() {
                 handle={floor}
               />
             </div>
-            <Splitter variable="--linear-height" orientation="horizontal" sign={-1} min={110} max={600} initial={200} />
-            <div className="pane linear-pane">
-              <LinearView
-                summary={summary}
+            <Splitter variable="--optics-height" orientation="horizontal" sign={-1} min={200} max={900} initial={340} />
+            <div className="pane optics-pane">
+              <OpticsView
+                digest={digest}
                 branch={currentModel}
                 selection={selection}
                 hover={hover}
                 range={range}
+                band={band}
+                history={history}
                 scheme={scheme}
+                initialEngine={initial.engine}
+                initialFidelity={initial.fidelity}
                 onSelect={onLinearSelect}
-                onFollowFork={onFollowFork}
-                handle={linear}
+                strip={
+                  <LinearView
+                    summary={summary}
+                    branch={currentModel}
+                    selection={selection}
+                    hover={hover}
+                    range={range}
+                    band={band}
+                    history={history}
+                    scheme={scheme}
+                    onSelect={onLinearSelect}
+                    onFollowFork={onFollowFork}
+                    handle={linear}
+                  />
+                }
               />
             </div>
           </section>

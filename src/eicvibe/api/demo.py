@@ -3,7 +3,8 @@
 An injection line feeds a ring through a shared septum; an extraction line
 leaves the ring. The ring has FODO cells with dipoles, sextupoles, BPMs,
 correctors and an RF cavity, and a generated machine registry, so every
-part of the viewer has something to show.
+part of the viewer has something to show. The ring is stable (tunes 2.21,
+1.69) with its chromaticity corrected to about +1.
 """
 
 import math
@@ -19,11 +20,11 @@ def demo_lattice() -> Lattice:
     b = LatticeBuilder("demo", ids=SequentialIds())
     reference = {"species_ref": "electron", "pc_ref": 2e9}
     b.define("RING_START", "BeginningEle", ReferenceP=reference)
-    b.define("QF", "Quadrupole", length=0.5, MagneticMultipoleP={"Kn1": 0.8})
-    b.define("QD", "Quadrupole", length=0.5, MagneticMultipoleP={"Kn1": -0.8})
+    b.define("QF", "Quadrupole", length=0.5, MagneticMultipoleP={"Kn1": 0.4})
+    b.define("QD", "Quadrupole", length=0.5, MagneticMultipoleP={"Kn1": -0.4})
     b.define("B", "Bend", length=2.0, BendP={"angle_ref": math.pi / CELLS})
-    b.define("SF", "Sextupole", length=0.2, MagneticMultipoleP={"Kn2": 4.0})
-    b.define("SD", "Sextupole", length=0.2, MagneticMultipoleP={"Kn2": -6.0})
+    b.define("SF", "Sextupole", length=0.2, MagneticMultipoleP={"Kn2": 0.6})
+    b.define("SD", "Sextupole", length=0.2, MagneticMultipoleP={"Kn2": -0.8})
     b.define("BPM", "Instrument")
     b.define("COR", "Kicker", length=0.1)
     b.define("D", "Drift", length=0.6)
@@ -34,7 +35,7 @@ def demo_lattice() -> Lattice:
     ring = ["RING_START", "SEPTUM", "DL"] + cell * (CELLS // 2 - 1) + ["CAV", "DL"] + cell * (CELLS // 2)
     b.add_branch("ring", "periodic", ring)
 
-    b.define("LINE_START", "BeginningEle", ReferenceP=reference)
+    b.define("LINE_START", "BeginningEle", ReferenceP=reference, TwissP={"beta_a": 8.0, "beta_b": 4.0})
     b.define("Q1", "Quadrupole", length=0.4, MagneticMultipoleP={"Kn1": 0.6})
     b.define("Q2", "Quadrupole", length=0.4, MagneticMultipoleP={"Kn1": -0.6})
     b.define("BI", "Bend", length=1.5, BendP={"angle_ref": -0.12})
