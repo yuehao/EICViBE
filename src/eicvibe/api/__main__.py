@@ -23,7 +23,7 @@ import urllib.request
 import webbrowser
 from pathlib import Path
 
-from .app import LATTICES_VARIABLE, create_app
+from .app import LATTICES_VARIABLE, RUNS_VARIABLE, VA_SOURCE_VARIABLE, VA_VARIABLE, create_app
 from .catalog import Catalog, discover
 
 
@@ -34,7 +34,22 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--workers", type=int, default=1, help="server processes; each holds its own cache")
     parser.add_argument("--open", action="store_true", help="open the viewer in a browser")
-    parser.add_argument("--demo", action="store_true", help="also serve a small made-up machine")
+    parser.add_argument(
+        "--demo", action="store_true", help="also serve a small made-up machine, its ring and a route running"
+    )
+    parser.add_argument(
+        "--runs",
+        action="append",
+        default=[],
+        help="a folder of virtual runs (eicvibe-virtual ring or route), or one run",
+    )
+    parser.add_argument(
+        "--va",
+        metavar="STATE",
+        default=None,
+        help="also run the virtual accelerator (ADR 0008) on the first machine folder given, keeping its "
+        "users, machines, settings and log in the folder STATE; the admin page is /admin.html",
+    )
     parser.add_argument("--openapi", action="store_true", help="print the OpenAPI document and exit")
     args = parser.parse_args(argv)
 
@@ -42,10 +57,15 @@ def main(argv: list[str] | None = None) -> None:
         json.dump(create_app(Catalog([]), static_dir=None).openapi(), sys.stdout, indent=1, sort_keys=True)
         sys.stdout.write("\n")
         return
+    demo_runs = []
     if args.demo:
-        from .demo import write_demo
+        from .demo import start_demo_runs, write_demo
 
-        args.paths.append(str(write_demo(Path(tempfile.mkdtemp(prefix="eicvibe-demo-")))))
+        folder = Path(tempfile.mkdtemp(prefix="eicvibe-demo-"))
+        args.paths.append(str(write_demo(folder)))
+        demo_runs = start_demo_runs(folder / "runs")
+        if demo_runs:
+            args.runs.append(str(folder / "runs"))
     if not args.paths:
         parser.error("give at least one lattice file or folder, or --demo")
     sources = discover(args.paths)  # fail early on a wrong path
@@ -59,20 +79,30 @@ def main(argv: list[str] | None = None) -> None:
             f"port {args.port} is in use; is eicvibe-web already running there? "
             f"Stop it, or choose another port with --port"
         )
+    if args.va:
+        if args.workers != 1:
+            parser.error("the virtual accelerator runs its machines in one server process: --workers 1")
+        os.environ[VA_VARIABLE] = str(Path(args.va).resolve())
+        os.environ[VA_SOURCE_VARIABLE] = str(sources[0].lattice)
     os.environ[LATTICES_VARIABLE] = os.pathsep.join(str(s.lattice) for s in sources)
+    os.environ[RUNS_VARIABLE] = os.pathsep.join(str(Path(p).resolve()) for p in args.runs)
     local = "localhost" if args.host in ("127.0.0.1", "0.0.0.0", "") else args.host
     url = f"http://{local}:{args.port}/"
     print(f"Serving {', '.join(s.name for s in sources)} at {url}", flush=True)
     if args.open:
         open_when_ready(url)
-    uvicorn.run(
-        "eicvibe.api.app:app_from_environment",
-        factory=True,
-        host=args.host,
-        port=args.port,
-        workers=args.workers,
-        log_level="info",
-    )
+    try:
+        uvicorn.run(
+            "eicvibe.api.app:app_from_environment",
+            factory=True,
+            host=args.host,
+            port=args.port,
+            workers=args.workers,
+            log_level="info",
+        )
+    finally:
+        for run in demo_runs:
+            run.stop(timeout=10)
 
 
 def port_is_free(host: str, port: int) -> bool:

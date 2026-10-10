@@ -7,6 +7,9 @@ import { useEffect, useState } from "react";
 import { api, type OccurrenceDetail, type Pose } from "../api/client";
 import { formatNumber } from "../model/format";
 import { swatch } from "../model/kinds";
+import type { MachineEntry } from "../api/va";
+import type { Auth } from "./Auth";
+import { Setpoints } from "./Setpoints";
 
 interface Props {
   digest: string;
@@ -16,9 +19,12 @@ interface Props {
   describe(id: string): { name: string; kind: string; branch: string } | null;
   onGo(occurrence: string): void;
   onGoBranch(branch: string): void;
+  /** The virtual accelerator's machine the viewer works with, if any, and who is logged in. */
+  machine?: MachineEntry | null;
+  auth?: Auth;
 }
 
-export function Inspector({ digest, occurrence, branchName, describe, onGo, onGoBranch }: Props) {
+export function Inspector({ digest, occurrence, branchName, describe, onGo, onGoBranch, machine, auth }: Props) {
   const [detail, setDetail] = useState<OccurrenceDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -165,6 +171,8 @@ export function Inspector({ digest, occurrence, branchName, describe, onGo, onGo
           )}
         </section>
       ))}
+
+      {machine && auth ? <Setpoints occurrence={detail.id} machine={machine} auth={auth} /> : null}
 
       {detail.devices.length ? (
         <section>

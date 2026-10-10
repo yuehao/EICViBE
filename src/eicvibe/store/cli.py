@@ -4,7 +4,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from .machine import build_machine, check_machine, load_machine
+from .machine import build_machine, check_machine, load_machine, update_names
 from .yamlio import FileError
 
 
@@ -32,8 +32,18 @@ def main(argv: list[str] | None = None) -> int:
     for problem in problems:
         print(f"  {problem}")
     if args.command == "build":
+        changes = update_names(args.folder)
+        names = [c for c in changes if c.startswith("eic ")]
+        for change in names[:20]:
+            print(f"  {change}")
+        if len(names) > 20:
+            print(f"  … and {len(names) - 20} more EIC names")
+        for change in changes:
+            if change.startswith("ids "):
+                print(f"  {change}")
         for path in build_machine(args.folder).values():
             print(f"wrote {path}")
+        return 1 if [p for p in problems if not p.startswith("names: ")] else 0
     return 1 if problems else 0
 
 

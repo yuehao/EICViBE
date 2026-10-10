@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 pytest.importorskip("cpymad.madx")
@@ -19,7 +20,7 @@ from eicvibe.machines.ein import (  # noqa: E402
     update_ein_machine,
     write_ein_machine,
 )
-from eicvibe.store import build_machine, check_machine, load_machine, read_settings  # noqa: E402
+from eicvibe.store import build_machine, check_machine, load_machine, name_ids, read_settings  # noqa: E402
 
 FOLDER = Path(os.environ.get("EICVIBE_EIN_FOLDER", "/Users/haoyue/Research/EIC/virtual_accelerator/EIN"))
 pytestmark = pytest.mark.skipif(not (FOLDER / "EICVIBE_lattice/madx").exists(), reason="EIN folder not found")
@@ -100,11 +101,31 @@ def test_ltr_starts_with_the_preinjector_beam(ein):
     assert start.ReferenceP.species_ref == "electron"
 
 
+def test_the_ltr_keeps_its_names_its_bpms_and_its_injection_angle(ein):
+    # Converted from Bmad with its writer's losses corrected (eicvibe.importers.bmad).
+    ltr = ein.lattice.layout("ltr").placements
+    kinds = {p.name: p.kind.value for p in ltr}
+    assert kinds["ltr_qua01"] == "Quadrupole" and kinds["ltr_cor12"] == "Kicker"
+    assert [p.name for p in ltr if p.kind.value == "Instrument"] == [f"ltr_bpm{i:02d}" for i in range(1, 16)]
+    assert not [p.name for p in ltr if "_l10" in p.name]  # no names of Bmad's superposition slaves
+    # A particle launched on the LTR's axis meets the RCS where Bmad's design has it: 30.9 mm inside,
+    # heading out at 4.39 mrad, for the injection kicker to put on the axis.
+    xsuite = pytest.importorskip("eicvibe.engines.xsuite")
+    from eicvibe.engines.contracts import Options
+
+    final = (
+        xsuite.XsuiteEngine().open(ein.lattice, "ltr").track_beam(np.zeros((1, 6)), 1, (), Options()).final
+    )
+    assert final[0, :2] == pytest.approx(
+        [-3.090030e-2, 4.391291e-3], abs=1e-8
+    )  # Tao: -3.090030e-2, 4.391291e-3
+
+
 def test_bar_mode_retunes_fifteen_ltr_quadrupoles(ein):
     lattice = ein.lattice
     targets = {lattice.placement(s.occurrence).name for s in ein.bar_mode}
     assert len(ein.bar_mode) == 15 and all(s.parameter == "MagneticMultipoleP.Kn1" for s in ein.bar_mode)
-    assert {"ltr_pip01_l1001", "ltr_pip03_l1016"} <= targets
+    assert {"ltr_qua01", "ltr_qua10"} <= targets
     assert all(lattice.placement(s.occurrence).branch_id == lattice.layout("ltr").id for s in ein.bar_mode)
 
 
@@ -142,10 +163,9 @@ def test_every_ein_element_has_an_eic_name(ein):
         for p in lattice.layout("ltr").placements
         if registry.slot_of(p.id)
     }
-    assert (
-        names["ltr_pip01_l1001"] == "ltr-q1:1" and names["ltr_pip01_l1002"] == "ltr-q1:2"
-    )  # one metre, two quads
-    assert names["ltr_pip03_l1012"] == "ltr-q6"
+    assert names["ltr_qua01"] == "ltr-q1:1" and names["ltr_qua02"] == "ltr-q1:2"  # one metre, two quads
+    assert names["ltr_qua08"] == "ltr-q6"
+    assert names["ltr_bpm01"] == "ltr-b1" and names["ltr_bpm05"] == "ltr-b18"
     assert registry.slot_of(lattice.placement("iseptum", branch="itl").id).name == "bar-sptm18"  # one magnet
     assert not [p for p in registry.naming_problems(ein_repository()) if "signal" not in p]
 
@@ -163,7 +183,14 @@ def test_a_new_machine_folder_holds_the_lattice_devices_and_bar_mode(ein, tmp_pa
     folder = tmp_path / "machine"
     write_ein_machine(ein, folder)
     machine = load_machine(folder)
-    assert machine.lattice == ein.lattice and machine.registry == ein_registry(ein)
+    assert machine.lattice == name_ids(ein.lattice)  # definitions and branches go by name in the files
+    registry = ein_registry(ein)
+    supplies = [(d.id, d.name) for d in registry.devices if d.type.value == "power_supply"]
+    assert [(d.id, d.name) for d in machine.registry.devices if d.type.value == "power_supply"] == supplies
+    assert [d.name for d in machine.registry.devices] == [d.name for d in registry.devices]
+    assert [c.name for c in machine.registry.channels] == [c.name for c in registry.channels]
+    ltr = (folder / "lattice" / "ltr.yaml").read_text()
+    assert "{name: ltr_qua01, eic: ltr-q1:1, element: ltr.ltr_qua01, id: occ_" in ltr
     assert machine.source["madx"].startswith("MAD-X") and len(machine.source["files"]) == 9
     bar_mode = read_settings(folder, "bar_mode", machine.lattice)
     assert {(b.occurrence, b.parameter, b.value) for b in bar_mode} == {
@@ -171,8 +198,8 @@ def test_a_new_machine_folder_holds_the_lattice_devices_and_bar_mode(ein, tmp_pa
     }
     assert check_machine(folder) == []
     paths = build_machine(folder)
-    assert Lattice.from_json(paths["lattice"].read_text()) == ein.lattice
-    assert json.loads(paths["manifest"].read_text())["lattice_digest"] == ein.lattice.digest
+    assert Lattice.from_json(paths["lattice"].read_text()) == name_ids(ein.lattice)
+    assert json.loads(paths["manifest"].read_text())["lattice_digest"] == name_ids(ein.lattice).digest
 
 
 def test_importing_again_keeps_identities_and_shows_what_changed(ein, tmp_path):
@@ -181,14 +208,15 @@ def test_importing_again_keeps_identities_and_shows_what_changed(ein, tmp_path):
     assert update_ein_machine(ein, folder) == ()  # the design files have not changed
     ltr = folder / "lattice" / "ltr.yaml"
     text = ltr.read_text()
-    old = "ltr.ltr_pip01_l1001: {kind: Quadrupole, length: 0.3, MagneticMultipoleP: {Kn1: "
+    old = "ltr.ltr_qua01: {kind: Quadrupole, length: 0.3, MagneticMultipoleP: {Kn1: "
     assert old in text
     ltr.write_text(text.replace(old, old + "1"))  # someone edited a strength in the lattice files
     changes = update_ein_machine(ein, folder)
     assert [(c.entity, c.field) for c in changes] == [("element", "MagneticMultipoleP.Kn1")]
     power = (folder / "devices" / "power.yaml").read_text()
     update_ein_machine(ein, folder, write=True)  # the design files win
-    assert load_machine(folder).lattice == ein.lattice
+    assert load_machine(folder).lattice == name_ids(ein.lattice)
+    assert "eic: ltr-q1:1" in ltr.read_text()  # the import writes the EIC names too
     assert (folder / "devices" / "power.yaml").read_text() == power  # devices are not touched
 
 

@@ -20,6 +20,7 @@ from .contracts import (
     OrbitRequest,
     OrbitResult,
     ParticleLost,
+    Ramp,
     Support,
     TimeScale,
     TrackRequest,
@@ -27,7 +28,16 @@ from .contracts import (
     TwissInit,
     UnsupportedRequest,
 )
-from .model import Engine, Program, Session, machine_optics, quasi_static, require
+from .model import (
+    Engine,
+    Program,
+    Session,
+    machine_optics,
+    quasi_static,
+    require,
+    route_optics,
+    route_start,
+)
 
 #: Engine name -> "module:class", loaded on first use.
 ENGINES = {
@@ -79,6 +89,7 @@ __all__ = [
     "OrbitRequest",
     "OrbitResult",
     "ParticleLost",
+    "Ramp",
     "Program",
     "Session",
     "Support",
@@ -89,6 +100,8 @@ __all__ = [
     "UnsupportedRequest",
     "engine",
     "machine_optics",
+    "route_optics",
+    "route_start",
     "quasi_static",
     "require",
     "select",

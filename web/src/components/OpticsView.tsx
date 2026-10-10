@@ -28,6 +28,7 @@ import {
   type Axis,
   type OpticsModel,
 } from "../model/optics";
+import { isRoute } from "../model/route";
 import { sameTarget, useStoreSelect, type Store, type Target } from "../model/store";
 import { updateHash } from "../model/urlState";
 import { niceStep, S_MARGIN, sScale, type SRange, type ZoomHistory } from "../model/viewport";
@@ -40,7 +41,7 @@ const ENGINE_NAMES: Record<string, string> = { xsuite: "Xsuite", trackpad: "Trac
 const TOP = 8;
 const BOTTOM = 34;
 const TICK = 4;
-const HINT = "Drag to zoom to a range · right click: undo · shift-drag: pan · double-click: whole branch";
+const HINT = "Drag to zoom to a range · right click: undo · shift-drag: pan · double-click: all of it";
 
 export interface OpticsViewHandle {
   /** The model drawn now, for tests and notebooks driving the page. */
@@ -61,6 +62,8 @@ interface Props {
   initialFidelity?: string;
   /** The lattice strip, drawn between the controls and the plot. */
   strip?: ReactNode;
+  /** The panel's tabs, first in the controls. */
+  tabs?: ReactNode;
   onSelect(target: Target | null): void;
   handle?: Ref<OpticsViewHandle>;
 }
@@ -435,6 +438,7 @@ export function OpticsView(props: Props) {
   return (
     <div className="optics">
       <div className="optics-bar">
+        {props.tabs}
         <span className="optics-legend" role="group" aria-label="Optics curves">
           {CURVES.map((c) => (
             <button
@@ -464,7 +468,7 @@ export function OpticsView(props: Props) {
         <RangeReadout range={range} branch={branch} />
         <button
           type="button"
-          title={`Whole branch (double-click). ${HINT}`}
+          title={`Whole ${isRoute(branch) ? "route" : "branch"} (double-click). ${HINT}`}
           onClick={() => {
             const shownRange = range.get();
             if (!branch) return;
@@ -472,7 +476,7 @@ export function OpticsView(props: Props) {
             range.set(wholeRange(branch));
           }}
         >
-          Whole branch
+          Whole {isRoute(branch) ? "route" : "branch"}
         </button>
         <span className="optics-engine">
           <select aria-label="Optics engine" value={engine} onChange={(e) => setEngine(e.target.value)}>

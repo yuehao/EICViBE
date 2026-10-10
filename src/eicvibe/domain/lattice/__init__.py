@@ -71,9 +71,16 @@ from .parameters import (
     parameter_info,
     parameters_of,
 )
+from .routes import Route, Segment, route_length, route_placements, route_problems, route_through
 from .topology import BranchLayout, ForkEdge, PlacedElement, Topology
 
 __all__ = [
+    "Route",
+    "Segment",
+    "route_length",
+    "route_placements",
+    "route_problems",
+    "route_through",
     "tunable_parameters",
     "placeholder_limits",
     "ParameterLimits",

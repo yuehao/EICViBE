@@ -1,4 +1,6 @@
-from eicvibe.domain.lattice import ChangeKind, LatticeBuilder, diff
+import itertools
+
+from eicvibe.domain.lattice import ChangeKind, LatticeBuilder, adopt_ids, diff
 
 
 def test_identical_revisions_have_no_changes(machine):
@@ -71,3 +73,22 @@ def test_fork_and_component_changes(machine):
     changes = diff(machine, b.build())
     assert {(c.entity, c.kind.value) for c in changes} == {("occurrence", "added"), ("occurrence", "removed")}
     assert str(changes[0]).startswith("occurrence")
+
+
+def test_a_reimport_keeps_the_identity_of_what_it_only_renamed(fodo):
+    """A magnet that a design file now names properly keeps its id, so its devices stay attached."""
+    n = itertools.count()
+    b = LatticeBuilder("fodo", ids=lambda prefix: f"{prefix}_new{next(n)}")  # fresh ids, as an import gives
+    b.define("QF_MAIN", "Quadrupole", length=0.5, MagneticMultipoleP={"Kn1": 1.2}, tags=["QUAD"])
+    b.define("QD", "Quadrupole", length=0.5, MagneticMultipoleP={"Kn1": -1.2}, tags=["QUAD"])
+    b.define("D", "Drift", length=2.0)
+    b.add_branch("cell", "periodic", ["QF_MAIN", "D", "QD", "D"])
+    fresh = b.build()
+    qf = fodo.placement("QF_1", branch="cell")
+    assert adopt_ids(fresh, fodo).placement("QF_MAIN_1", branch="cell").id != qf.id
+    renamed = adopt_ids(fresh, fodo, {("cell", "QF_MAIN_1"): "QF_1"})
+    assert renamed.placement("QF_MAIN_1", branch="cell").id == qf.id
+    assert sorted((c.entity, c.field, c.old, c.new) for c in diff(fodo, renamed)) == [
+        ("element", "name", "QF", "QF_MAIN"),
+        ("occurrence", "name", "QF_1", "QF_MAIN_1"),
+    ]

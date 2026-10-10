@@ -89,6 +89,19 @@ interface Props {
   handle?: Ref<FloorPlanHandle>;
 }
 
+/** The box around a model's floor path: a route's, which the summary does not know. */
+function pathBox(model: BranchModel | undefined): Box | null {
+  if (!model || !model.z.length) return null;
+  let uMin = Infinity, uMax = -Infinity, vMin = Infinity, vMax = -Infinity;
+  for (let j = 0; j < model.z.length; j++) {
+    uMin = Math.min(uMin, model.z[j]!);
+    uMax = Math.max(uMax, model.z[j]!);
+    vMin = Math.min(vMin, model.x[j]!);
+    vMax = Math.max(vMax, model.x[j]!);
+  }
+  return { uMin, uMax, vMin, vMax };
+}
+
 export function FloorPlan(props: Props) {
   const { summary, branches, current, selection, hover, scheme, onSelect, onViewChange } = props;
   const view = useRef<View2D | null>(props.initialView ?? null);
@@ -104,11 +117,13 @@ export function FloorPlan(props: Props) {
 
   const summaryBox = useCallback(
     (only?: string): Box | null =>
-      union(
-        summary.branches
-          .filter((b) => !only || b.id === only)
-          .map((b) => ({ uMin: b.bounds.z_min, uMax: b.bounds.z_max, vMin: b.bounds.x_min, vMax: b.bounds.x_max })),
-      ),
+      only?.startsWith("route:")
+        ? pathBox(state.current.branches.get(only))
+        : union(
+            summary.branches
+              .filter((b) => !only || b.id === only)
+              .map((b) => ({ uMin: b.bounds.z_min, uMax: b.bounds.z_max, vMin: b.bounds.x_min, vMax: b.bounds.x_max })),
+          ),
     [summary],
   );
 
@@ -392,7 +407,7 @@ export function FloorPlan(props: Props) {
         <button type="button" disabled={!current} onClick={() => {
           const box = current && summaryBox(current);
           if (box) setView(fit(box, sizeRef.current.width, sizeRef.current.height));
-        }} title="Show the current branch">Fit branch</button>
+        }} title="Show the current branch or route">Fit branch</button>
         <label title="Element names when zoomed in">
           <input type="checkbox" checked={labels} onChange={(e) => setLabels(e.target.checked)} /> Labels
         </label>

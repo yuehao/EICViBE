@@ -174,16 +174,20 @@ def _plain(value: Any) -> Any:
     return value
 
 
-def adopt_ids(new, old):
+def adopt_ids(new, old, renamed: Mapping[tuple[str, str], str] | None = None):
     """``new`` with the ids of ``old`` wherever an entity kept its name.
 
     A lattice imported again from changed design files gets fresh ids; with
     the ids of the revision it replaces, the elements, occurrences (by branch
     and name), branches and shared components that are still there keep their
     identity, so devices stay attached and :func:`diff` shows what changed.
+    ``renamed`` maps occurrences that only changed name, ``(branch, new name)``
+    to the old name: they keep their ids, and so do their elements, and the
+    diff shows the new names.
     """
     from .model import Lattice
 
+    renamed = renamed or {}
     ids: dict[str, str] = {}
     old_branches = {b.name: b for b in old.branches}
     ids |= {e.id: old.element(e.name).id for e in new.elements if e.name in {x.name for x in old.elements}}
@@ -192,8 +196,14 @@ def adopt_ids(new, old):
         if previous is None:
             continue
         ids[branch.id] = previous.id
-        names = {o.name: o.id for o in previous.occurrences}
-        ids |= {o.id: names[o.name] for o in branch.occurrences if o.name in names}
+        names = {o.name: o for o in previous.occurrences}
+        for o in branch.occurrences:
+            match = names.get(renamed.get((branch.name, o.name), o.name))
+            if match is None:
+                continue
+            ids[o.id] = match.id
+            if (branch.name, o.name) in renamed and o.element not in ids:
+                ids[o.element] = match.element  # its element, renamed with it
     old_components = {c.name: c.id for c in old.shared_components}
     ids |= {c.id: old_components[c.name] for c in new.shared_components if c.name in old_components}
     return Lattice.from_dict(_replace_ids(new.to_dict(), ids))

@@ -33,6 +33,7 @@ from eicvibe.engines.contracts import (  # noqa: E402
 from eicvibe.engines.trackpad import TrackPadEngine, _julia  # noqa: E402
 from eicvibe.engines.xsuite import XsuiteEngine  # noqa: E402
 from eicvibe.importers import import_cpymad  # noqa: E402
+from tests.engines.test_xsuite import ramped_and_turn_by_turn  # noqa: E402
 from tests.importers.test_madx import RING  # noqa: E402
 
 TRACKPAD, XSUITE = TrackPadEngine(), XsuiteEngine()
@@ -203,8 +204,9 @@ def test_every_ein_branch_agrees_with_xsuite(ein):
     theirs = machine_optics(XSUITE, ein, options=PRECISE)
     assert set(ours) == set(theirs) == {b.id for b in ein.branches}
     for branch in ours:
-        # The RTE runs 4 cm off axis after its extraction patch, where the bend models part by 1e-3.
-        rel = 3e-3 if ein.branch(branch).name == "rte" else 1e-4
+        # The RTE runs up to 12 cm off axis: the RCS's extraction kickers are off, so the beam meets the
+        # extraction patch on the RCS's axis, not the RTE's; that far out the bend models part by 7e-3.
+        rel = 1e-2 if ein.branch(branch).name == "rte" else 1e-4
         assert ours[branch].beta_x == pytest.approx(theirs[branch].beta_x, rel=rel)
         assert ours[branch].beta_y == pytest.approx(theirs[branch].beta_y, rel=rel)
 
@@ -251,6 +253,16 @@ def test_an_update_equals_a_new_session(ring):
         session.update({(quad.id, "BendP.angle_ref"): 0.1})
 
 
+def test_settings_ramp_turn_by_turn_within_one_call(ring):
+    ramped, x, final, session, stepped = ramped_and_turn_by_turn(TRACKPAD, ring, PRECISE)
+    assert np.ptp(x, axis=1).max() > 1e-5
+    # Julia sets each turn's elements from the ramp's rows, which are linear in the settings.
+    assert ramped.x == pytest.approx(x, rel=1e-12, abs=1e-15)
+    assert ramped.final == pytest.approx(final, abs=1e-11)
+    orbit = OrbitRequest(options=PRECISE)
+    assert session.orbit(orbit).x == pytest.approx(stepped.orbit(orbit).x, abs=1e-15)
+
+
 def test_turn_by_turn_tracking_oscillates_at_the_tune_and_loses_what_it_should(ring):
     session = TRACKPAD.open(ring, "ring")
     tune = session.optics(OpticsRequest()).tune_x % 1
@@ -284,3 +296,25 @@ def test_the_longitudinal_motion_is_in_orbits_and_tracking_not_in_optics(ring):
         TRACKPAD.open(ring, "ring", Options(effects=frozenset({Effect.RADIATION_DAMPING})))
     with pytest.raises(UnsupportedRequest, match="no linear fidelity"):
         TRACKPAD.open(ring, "ring", Options(fidelity=Fidelity.LINEAR))
+
+
+def test_bunches_have_the_same_centroids_in_both_engines(ring):
+    bpms = tuple(p.id for p in ring.layout("ring").placements if p.kind.value == "Instrument")
+    rng = np.random.default_rng(2)
+    bunch = np.column_stack(
+        [
+            rng.normal(1e-3, 1e-4, 30),
+            rng.normal(0, 1e-5, 30),
+            rng.normal(5e-4, 1e-4, 30),
+            rng.normal(0, 1e-5, 30),
+            np.zeros(30),
+            rng.normal(0, 1e-4, 30),
+        ]
+    )
+    ours = TRACKPAD.open(ring, "ring", PRECISE).track_beam(bunch, 128, bpms, PRECISE)
+    theirs = XSUITE.open(ring, "ring", PRECISE).track_beam(bunch, 128, bpms, PRECISE)
+    assert (ours.count == theirs.count).all()
+    assert ours.x == pytest.approx(theirs.x, abs=1e-8) and ours.y == pytest.approx(theirs.y, abs=1e-8)
+    assert ours.final[:, :4] == pytest.approx(theirs.final[:, :4], abs=1e-7)
+    # With the RF off zeta runs away (0.2 m in 128 turns); the engines' path lengths differ by 2e-8 m a turn.
+    assert ours.final[:, 4] == pytest.approx(theirs.final[:, 4], abs=1e-5)

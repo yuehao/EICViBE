@@ -17,20 +17,31 @@ On top of sessions, and the same for every engine:
   change slowly compared with the beam's dynamics.
 """
 
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import Any, Protocol
 
-from eicvibe.domain.lattice import GROUP_TYPES, ElementKind, Lattice, PlacedElement
+from eicvibe.domain.lattice import (
+    GROUP_TYPES,
+    ElementKind,
+    Lattice,
+    PlacedElement,
+    Route,
+    Segment,
+    route_problems,
+)
 
 from .contracts import (
+    BeamTrack,
     Capabilities,
     Computation,
     EngineUnavailable,
+    OpticsProfile,
     OpticsRequest,
     OpticsResult,
     Options,
     OrbitRequest,
     OrbitResult,
+    Ramp,
     TimeScale,
     TrackRequest,
     TrackResult,
@@ -69,6 +80,24 @@ class Session(Protocol):
 
     def track(self, request: TrackRequest) -> TrackResult: ...
 
+    def track_beam(
+        self,
+        coordinates,
+        turns: int,
+        observe: Sequence[str],
+        options: Options,
+        start: str | None = None,
+        end: str | None = None,
+        ramps: Sequence[Ramp] = (),
+    ) -> BeamTrack:
+        """Track particles (rows of x, px, y, py, zeta, delta) for ``turns`` turns, recording centroids.
+
+        With ``start`` or ``end`` (occurrences), once through that part of the branch, as a line.
+        With ``ramps`` (a ring's turns only), settings move turn by turn while it tracks; the session
+        is left at their values after the last turn.
+        """
+        ...
+
     def close(self) -> None: ...
 
 
@@ -84,6 +113,20 @@ class Engine(Protocol):
     def open(
         self, lattice: Lattice, branch: str, options: Options | None = None, values: Values | None = None
     ) -> Session: ...
+
+
+def span(occurrences: Sequence[str], start: str | None, end: str | None, engine: str) -> list[str]:
+    """The occurrences from ``start`` to ``end`` (included; by default the first and last), in beam order."""
+    try:
+        a = occurrences.index(start) if start else 0
+        b = occurrences.index(end) if end else len(occurrences) - 1
+    except ValueError:
+        raise UnsupportedRequest(
+            engine, [f"{start if start not in occurrences else end} is not in this branch"]
+        ) from None
+    if b < a:
+        raise UnsupportedRequest(engine, [f"{end} comes before {start}: a part of a branch runs forward"])
+    return list(occurrences[a : b + 1])
 
 
 def kinds_of(lattice: Lattice, branch: str) -> frozenset[ElementKind]:
@@ -130,7 +173,10 @@ def initial_conditions(lattice: Lattice, branch: str) -> TwissInit | None:
     twiss = conditions.twiss if conditions else None
     if twiss is None or not twiss.beta_a or not twiss.beta_b:
         return None
+    p = conditions.particle
+    orbit = {} if p is None else {"x": p.x, "px": p.px, "y": p.y, "py": p.py, "zeta": p.z, "delta": p.pz}
     return TwissInit(
+        **orbit,
         beta_x=twiss.beta_a,
         alpha_x=twiss.alpha_a,
         beta_y=twiss.beta_b,
@@ -232,6 +278,132 @@ def _from_fork(
                 edge.id
             ), f"fork {name} in {lattice.branch(edge.from_branch).name}"
     return None, ""
+
+
+def route_start(
+    engine: Engine,
+    lattice: Lattice,
+    route: Route,
+    *,
+    values: Values | None = None,
+    options: Options | None = None,
+) -> tuple[TwissInit, str]:
+    """The optics (and orbit) where a route starts, and where they come from.
+
+    Its first branch's own initial conditions where the route starts with that branch, else the
+    optics of the whole machine there: a ring's periodic solution, a line's from its own start
+    or the fork it starts from.
+    """
+    first = route.segments[0]
+    ids = [p.id for p in lattice.layout(first.branch).placements]
+    at = ids.index(first.start)
+    start = initial_conditions(lattice, first.branch) if at == 0 else None
+    if start is not None:
+        return start, f"{lattice.branch(first.branch).name}'s initial conditions"
+    whole = machine_optics(engine, lattice, values=values or {}, options=options or Options())
+    if first.branch not in whole:
+        raise UnsupportedRequest(engine.name, [f"no optics where route {route.name} starts"])
+    start = whole[first.branch].start if at == 0 else whole[first.branch].at(ids[at - 1])
+    return (
+        start,
+        f"the optics of {lattice.branch(first.branch).name} at {lattice.placement(first.start).name}",
+    )
+
+
+def route_optics(
+    engine: Engine,
+    lattice: Lattice,
+    route: Route,
+    *,
+    values: Values | None = None,
+    options: Options | None = None,
+    inside: bool = False,
+    notes: dict[str, str] | None = None,
+) -> OpticsResult:
+    """The optics along a route: transported from its start through its segments, one pass.
+
+    A route starts from its first branch's own initial conditions when it starts where that
+    branch does, else from the optics of the whole machine there (a ring's periodic solution,
+    a line's from its fork). In a ring the route carries the beam's own optics, not the ring's
+    periodic ones: what an injected beam sees. Each segment starts on its branch's design orbit:
+    an offset where a fork lands (an injection's) is the beam's trajectory, which tracking shows,
+    not part of the optics. A route whose reference momentum changes at a join (an acceleration)
+    is refused. Positions ``s`` are along the route; ``branch`` is ``route:<name>``.
+    """
+    values = values or {}
+    options = options or Options()
+    if problems := route_problems(lattice, route):
+        raise UnsupportedRequest(engine.name, problems)
+    start, origin = route_start(engine, lattice, route, values=values, options=options)
+    sessions: dict[str, Session] = {}
+    parts: list[tuple[Segment, OpticsResult]] = []
+    try:
+        current = start
+        for segment in route.segments:
+            if segment.branch not in sessions:
+                sessions[segment.branch] = engine.open(lattice, segment.branch, options, values)
+            request = OpticsRequest(
+                options=options, initial=current, start=segment.start, end=segment.end, inside=inside
+            )
+            result = sessions[segment.branch].optics(request)
+            parts.append((segment, result))
+            exit_optics = result.at(result.occurrences[-1])
+            current = TwissInit(**(exit_optics.model_dump() | {"x": 0.0, "px": 0.0, "y": 0.0, "py": 0.0}))
+    finally:
+        for session in sessions.values():
+            session.close()
+    if notes is not None:
+        notes[f"route:{route.name}"] = origin  # read as "from <origin>", as a branch's notes are
+    return _joined(lattice, route, parts)
+
+
+_COLUMNS = (
+    "beta_x", "alpha_x", "beta_y", "alpha_y", "mu_x", "mu_y", "eta_x", "etap_x", "eta_y", "etap_y",
+    "x", "px", "y", "py",
+)  # fmt: skip
+_PROFILE = ("beta_x", "alpha_x", "beta_y", "alpha_y", "mu_x", "mu_y", "eta_x", "etap_x", "eta_y", "etap_y")
+
+
+def _joined(lattice: Lattice, route: Route, parts: list[tuple[Segment, OpticsResult]]) -> OpticsResult:
+    """The segments' optics as one result along the route."""
+    occurrences: list[str] = []
+    s: list[float] = []
+    columns: dict[str, list[float]] = {name: [] for name in _COLUMNS}
+    profile: dict[str, list[float]] = {name: [] for name in ("s", *_PROFILE)}
+    index: list[int] = []
+    offset = 0.0
+    for segment, result in parts:
+        placed = {p.id: p for p in lattice.layout(segment.branch).placements}
+        origin = placed[segment.start].s_enter
+        first = len(occurrences)
+        occurrences += result.occurrences
+        s += [offset + v - origin for v in result.s]
+        for name in _COLUMNS:
+            columns[name] += getattr(result, name)
+        if result.profile is not None:
+            points = result.profile
+            skip = 0 if not profile["s"] else 1  # a segment's first point is the previous one's last
+            profile["s"] += [offset + v - origin for v in points.s[skip:]]
+            for name in _PROFILE:
+                profile[name] += getattr(points, name)[skip:]
+            index += [first + k for k in points.index]
+        offset += placed[segment.end].s_exit - origin
+    head = parts[0][1]
+    return OpticsResult(
+        engine=head.engine,
+        fidelity=head.fidelity,
+        effects=head.effects,
+        branch=f"route:{route.name}",
+        periodic=False,
+        occurrences=tuple(occurrences),
+        s=tuple(s),
+        **{name: tuple(values) for name, values in columns.items()},
+        start=head.start,
+        method=head.method,
+        profile=OpticsProfile(index=tuple(index), **{k: tuple(v) for k, v in profile.items()})
+        if all(r.profile is not None for _, r in parts)
+        else None,
+    )
 
 
 class Program:

@@ -70,15 +70,19 @@ def _round(value: float) -> float:
 def branch_optics(revision: Revision, machine: MachineOptics, branch: str) -> schemas.BranchOptics:
     """One branch of a machine's optics as the viewer reads it."""
     lattice = revision.lattice
-    layout = lattice.layout(branch)
-    result = machine.results.get(layout.id)
+    if branch.startswith("route:"):
+        branch_id, periodic = branch, False
+    else:
+        layout = lattice.layout(branch)
+        branch_id, periodic = layout.id, layout.periodic
+    result = machine.results.get(branch_id)
     common = {
-        "branch": layout.id,
+        "branch": branch_id,
         "engine": machine.engine,
         "version": machine.version,
         "fidelity": machine.fidelity.value,
-        "periodic": layout.periodic,
-        "origin": machine.notes.get(layout.id, "not computed"),
+        "periodic": periodic,
+        "origin": machine.notes.get(branch_id, "not computed"),
         "columns": list(COLUMNS),
     }
     if result is None:
@@ -151,26 +155,37 @@ class OpticsService:
             )
         return out
 
-    def _worker(self, name: str) -> EngineWorker:
+    def worker(self, name: str) -> EngineWorker:
+        """The worker process of engine ``name``, started on first use and shared."""
         if name not in ENGINES:
             raise UnknownEngine(name)
         with self._lock:
             return self._workers.setdefault(name, EngineWorker(name))
 
     def machine(
-        self, revision: Revision, name: str, fidelity: Fidelity
+        self, revision: Revision, name: str, fidelity: Fidelity, route: str | None = None
     ) -> tuple[Future[MachineOptics], dict]:
-        """The machine optics of a revision, computed once; a failed computation is tried again next time."""
-        worker = self._worker(name)
+        """The machine's or a route's optics of a revision, computed once; a failure is tried again."""
+        worker = self.worker(name)
         if fidelity not in engine(name).capabilities().fidelities:
             raise UnsupportedRequest(name, [f"no {fidelity.value} fidelity"])
-        key = (revision.digest, name, fidelity.value)
+        key = (revision.digest, name, fidelity.value, route or "")
         with self._lock:
             found = self._machines.get(key)
             if found is None or (found[0].done() and found[0].exception() is not None):
                 if not engine(name).available():
                     raise EngineUnavailable(f"engine {name} is not installed on the server")
-                computing = worker.machine_optics(revision.lattice, Options(fidelity=fidelity), inside=True)
+                if route is None:
+                    computing = worker.machine_optics(
+                        revision.lattice, Options(fidelity=fidelity), inside=True
+                    )
+                else:
+                    computing = worker.route_optics(
+                        revision.lattice,
+                        revision.views.routes[route],
+                        Options(fidelity=fidelity),
+                        inside=True,
+                    )
                 found = (computing, {})
                 self._machines[key] = found
             self._machines.move_to_end(key)
@@ -180,9 +195,10 @@ class OpticsService:
 
     async def branch(self, revision: Revision, name: str, fidelity: Fidelity, branch: str) -> Payload:
         """One branch's optics as a response, waiting for the machine computation without blocking others."""
-        future, payloads = self.machine(revision, name, fidelity)
+        route = branch.removeprefix("route:") if branch.startswith("route:") else None
+        future, payloads = self.machine(revision, name, fidelity, route)
         machine = await asyncio.wrap_future(future)
-        branch_id = revision.lattice.layout(branch).id
+        branch_id = branch if route is not None else revision.lattice.layout(branch).id
         payload = payloads.get(branch_id)
         if payload is None:
             payload = payloads[branch_id] = Payload.of(branch_optics(revision, machine, branch_id))

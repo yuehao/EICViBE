@@ -240,7 +240,7 @@ def test_the_web_client_reads_the_schema_version_the_server_sends():
 
 def test_a_machine_folder_is_served_and_edits_show(tmp_path):
     from eicvibe.domain.machine import describe_machine
-    from eicvibe.store import write_machine
+    from eicvibe.store import name_ids, write_machine
 
     lattice = build()
     folder = tmp_path / "demo"
@@ -250,7 +250,7 @@ def test_a_machine_folder_is_served_and_edits_show(tmp_path):
     assert (
         entry["source"] == "demo"
         and entry["registry"]
-        and entry["digest"] == lattice.digest.removeprefix("sha256:")
+        and entry["digest"] == name_ids(lattice).digest.removeprefix("sha256:")  # definitions go by name
     )
     naming = folder / "naming.yaml"
     naming.write_text(naming.read_text().replace("  ring: ring\n", "  ring: xr\n"))  # an edit to the naming

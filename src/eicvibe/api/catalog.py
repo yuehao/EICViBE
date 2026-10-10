@@ -32,7 +32,7 @@ from pydantic import BaseModel
 from eicvibe.domain.lattice import Lattice
 from eicvibe.domain.machine import MachineRegistry
 from eicvibe.store import FileError, is_machine, load_machine, source_files
-from eicvibe.store.machine import read_index
+from eicvibe.store.machine import read_index, read_routes_file
 
 from .schemas import SCHEMA_VERSION, LatticeEntry
 from .views import RevisionViews
@@ -41,6 +41,7 @@ log = logging.getLogger(__name__)
 
 LATTICE_SUFFIX = "_lattice.json"
 REGISTRY_SUFFIX = "_registry.json"
+ROUTES_SUFFIX = "_routes.yaml"
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,12 +148,15 @@ class _Source:
     """The lattice file, or the machine folder."""
     registry: Path | None
     machine: bool = False
+    routes: Path | None = None
+    """A lattice file's routes file, beside it."""
 
 
-def _registry_for(path: Path) -> Path | None:
+def _beside(path: Path, suffix: str) -> Path | None:
+    """The file beside a ``<stem>_lattice.json`` with ``suffix`` in place of ``_lattice.json``, if any."""
     if not path.name.endswith(LATTICE_SUFFIX):
         return None
-    candidate = path.with_name(path.name.removesuffix(LATTICE_SUFFIX) + REGISTRY_SUFFIX)
+    candidate = path.with_name(path.name.removesuffix(LATTICE_SUFFIX) + suffix)
     return candidate if candidate.is_file() else None
 
 
@@ -179,8 +183,9 @@ def discover(paths: Iterable[Path | str]) -> list[_Source]:
         while name in names:
             name, n = f"{base}-{n}", n + 1
         names.add(name)
-        registry = None if machine else _registry_for(path)
-        sources.append(_Source(name, path.resolve(), registry, machine))
+        registry = None if machine else _beside(path, REGISTRY_SUFFIX)
+        routes = None if machine else _beside(path, ROUTES_SUFFIX)
+        sources.append(_Source(name, path.resolve(), registry, machine, routes))
     return sources
 
 
@@ -194,8 +199,11 @@ def _machine_name(folder: Path) -> str:
 def load_revision(source: _Source) -> Revision:
     if source.machine:
         machine = load_machine(source.lattice)
-        registry_tag = hashlib.sha256(machine.registry.model_dump_json().encode()).hexdigest()[:12]
-        views = RevisionViews(machine.lattice, machine.registry, source=source.name)
+        tagged = machine.registry.model_dump_json() + "".join(r.model_dump_json() for r in machine.routes)
+        registry_tag = hashlib.sha256(tagged.encode()).hexdigest()[
+            :12
+        ]  # what besides the lattice is in responses
+        views = RevisionViews(machine.lattice, machine.registry, source=source.name, routes=machine.routes)
         return Revision(source.name, source.lattice, views, datetime.now(UTC), registry_tag)
     lattice = Lattice.from_json(source.lattice.read_text())
     registry, registry_tag = None, "none"
@@ -211,7 +219,11 @@ def load_revision(source: _Source) -> Revision:
             )
         else:
             registry, registry_tag = candidate, hashlib.sha256(text).hexdigest()[:12]
-    views = RevisionViews(lattice, registry, source=source.name)
+    routes = read_routes_file(source.routes, lattice) if source.routes is not None else ()
+    if routes:
+        tagged = registry_tag + "".join(r.model_dump_json() for r in routes)
+        registry_tag = hashlib.sha256(tagged.encode()).hexdigest()[:12]
+    views = RevisionViews(lattice, registry, source=source.name, routes=routes)
     return Revision(source.name, source.lattice, views, datetime.now(UTC), registry_tag)
 
 
@@ -236,8 +248,8 @@ class Catalog:
             return tuple(
                 (str(f), f.stat().st_mtime_ns, f.stat().st_size) for f in source_files(source.lattice)
             )
-        files = (source.lattice, source.registry) if source.registry else (source.lattice,)
-        return tuple((s.st_mtime_ns, s.st_size) for s in (f.stat() for f in files))
+        files = [f for f in (source.lattice, source.registry, source.routes) if f is not None]
+        return tuple((s.st_mtime_ns, s.st_size) for s in (f.stat() for f in files if f.exists()))
 
     def refresh(self, *, force: bool = False) -> None:
         """Load files that changed on disk, at most once per refresh interval unless forced.

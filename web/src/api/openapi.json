@@ -1,6 +1,90 @@
 {
  "components": {
   "schemas": {
+   "ActionEntry": {
+    "properties": {
+     "action": {
+      "title": "Action",
+      "type": "string"
+     },
+     "detail": {
+      "additionalProperties": true,
+      "title": "Detail",
+      "type": "object"
+     },
+     "id": {
+      "title": "Id",
+      "type": "integer"
+     },
+     "machine": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Machine"
+     },
+     "reason": {
+      "title": "Reason",
+      "type": "string"
+     },
+     "time": {
+      "title": "Time",
+      "type": "string"
+     },
+     "user": {
+      "title": "User",
+      "type": "string"
+     }
+    },
+    "required": [
+     "id",
+     "time",
+     "user",
+     "machine",
+     "action",
+     "detail",
+     "reason"
+    ],
+    "title": "ActionEntry",
+    "type": "object"
+   },
+   "BeamRequest": {
+    "properties": {
+     "action": {
+      "enum": [
+       "kick",
+       "inject"
+      ],
+      "title": "Action",
+      "type": "string"
+     },
+     "reason": {
+      "default": "",
+      "title": "Reason",
+      "type": "string"
+     },
+     "x": {
+      "default": 0.0,
+      "description": "Kick angle, rad",
+      "title": "X",
+      "type": "number"
+     },
+     "y": {
+      "default": 0.0,
+      "title": "Y",
+      "type": "number"
+     }
+    },
+    "required": [
+     "action"
+    ],
+    "title": "BeamRequest",
+    "type": "object"
+   },
    "Bounds": {
     "description": "Extent of a branch on the floor, m.",
     "properties": {
@@ -40,7 +124,7 @@
       "$ref": "#/components/schemas/BranchFloor"
      },
      "schema_version": {
-      "default": 4,
+      "default": 5,
       "title": "Schema Version",
       "type": "integer"
      },
@@ -216,7 +300,7 @@
       "type": "array"
      },
      "schema_version": {
-      "default": 4,
+      "default": 5,
       "title": "Schema Version",
       "type": "integer"
      },
@@ -502,6 +586,79 @@
     "title": "BranchTable",
     "type": "object"
    },
+   "CaptureEntry": {
+    "description": "The BPM buffer frozen around a trigger and saved, as a real BPM system's acquisitions are.",
+    "properties": {
+     "detail": {
+      "additionalProperties": true,
+      "title": "Detail",
+      "type": "object"
+     },
+     "first": {
+      "description": "Its first turn",
+      "title": "First",
+      "type": "integer"
+     },
+     "id": {
+      "title": "Id",
+      "type": "string"
+     },
+     "kind": {
+      "description": "kick, inject, post-mortem (the beam was lost) or request",
+      "title": "Kind",
+      "type": "string"
+     },
+     "partial": {
+      "description": "The run ended before all its turns were tracked",
+      "title": "Partial",
+      "type": "boolean"
+     },
+     "trigger": {
+      "description": "The turn of the trigger",
+      "title": "Trigger",
+      "type": "integer"
+     },
+     "turns": {
+      "title": "Turns",
+      "type": "integer"
+     },
+     "wall": {
+      "description": "When it was saved, ISO 8601",
+      "title": "Wall",
+      "type": "string"
+     }
+    },
+    "required": [
+     "id",
+     "kind",
+     "trigger",
+     "first",
+     "turns",
+     "wall",
+     "partial",
+     "detail"
+    ],
+    "title": "CaptureEntry",
+    "type": "object"
+   },
+   "Change": {
+    "properties": {
+     "channel": {
+      "title": "Channel",
+      "type": "string"
+     },
+     "value": {
+      "title": "Value",
+      "type": "number"
+     }
+    },
+    "required": [
+     "channel",
+     "value"
+    ],
+    "title": "Change",
+    "type": "object"
+   },
    "Channel": {
     "properties": {
      "circuit": {
@@ -657,6 +814,51 @@
     "title": "Column",
     "type": "object"
    },
+   "Detuning": {
+    "description": "Tune against amplitude in the model: single particles kicked in one plane, tracked by the engine.",
+    "properties": {
+     "amplitude": {
+      "description": "Largest oscillation amplitude over the BPMs, mm",
+      "items": {
+       "type": "number"
+      },
+      "title": "Amplitude",
+      "type": "array"
+     },
+     "plane": {
+      "description": "The plane kicked: the one the beam oscillates in most",
+      "title": "Plane",
+      "type": "string"
+     },
+     "tune_x": {
+      "items": {
+       "type": "number"
+      },
+      "title": "Tune X",
+      "type": "array"
+     },
+     "tune_y": {
+      "items": {
+       "type": "number"
+      },
+      "title": "Tune Y",
+      "type": "array"
+     },
+     "turns": {
+      "title": "Turns",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "plane",
+     "amplitude",
+     "tune_x",
+     "tune_y",
+     "turns"
+    ],
+    "title": "Detuning",
+    "type": "object"
+   },
    "Device": {
     "properties": {
      "channels": {
@@ -720,6 +922,24 @@
     "title": "Diagnostic",
     "type": "object"
    },
+   "EngineChoice": {
+    "properties": {
+     "available": {
+      "title": "Available",
+      "type": "boolean"
+     },
+     "name": {
+      "title": "Name",
+      "type": "string"
+     }
+    },
+    "required": [
+     "name",
+     "available"
+    ],
+    "title": "EngineChoice",
+    "type": "object"
+   },
    "EngineInfo": {
     "description": "A physics engine the server can compute optics with (ADR 0006).",
     "properties": {
@@ -776,6 +996,28 @@
     ],
     "title": "Fidelity",
     "type": "string"
+   },
+   "Fork": {
+    "properties": {
+     "name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Name"
+     },
+     "reason": {
+      "default": "",
+      "title": "Reason",
+      "type": "string"
+     }
+    },
+    "title": "Fork",
+    "type": "object"
    },
    "ForkLink": {
     "properties": {
@@ -1016,8 +1258,16 @@
       ],
       "title": "Root Branch"
      },
+     "routes": {
+      "description": "The machine's routes",
+      "items": {
+       "$ref": "#/components/schemas/RouteSummary"
+      },
+      "title": "Routes",
+      "type": "array"
+     },
      "schema_version": {
-      "default": 4,
+      "default": 5,
       "title": "Schema Version",
       "type": "integer"
      },
@@ -1055,6 +1305,453 @@
      "strings"
     ],
     "title": "LatticeSummary",
+    "type": "object"
+   },
+   "LogEntry": {
+    "properties": {
+     "applied": {
+      "title": "Applied",
+      "type": "boolean"
+     },
+     "channel": {
+      "title": "Channel",
+      "type": "string"
+     },
+     "correlation": {
+      "title": "Correlation",
+      "type": "string"
+     },
+     "id": {
+      "title": "Id",
+      "type": "integer"
+     },
+     "machine": {
+      "title": "Machine",
+      "type": "string"
+     },
+     "new": {
+      "title": "New",
+      "type": "number"
+     },
+     "old": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Old"
+     },
+     "reason": {
+      "title": "Reason",
+      "type": "string"
+     },
+     "refusal": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Refusal"
+     },
+     "run": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Run"
+     },
+     "time": {
+      "title": "Time",
+      "type": "string"
+     },
+     "turn": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "The run's turn or shot when it was written",
+      "title": "Turn"
+     },
+     "unit": {
+      "title": "Unit",
+      "type": "string"
+     },
+     "user": {
+      "title": "User",
+      "type": "string"
+     }
+    },
+    "required": [
+     "id",
+     "time",
+     "user",
+     "machine",
+     "channel",
+     "unit",
+     "old",
+     "new",
+     "applied",
+     "refusal",
+     "correlation",
+     "reason",
+     "run",
+     "turn"
+    ],
+    "title": "LogEntry",
+    "type": "object"
+   },
+   "Login": {
+    "properties": {
+     "name": {
+      "title": "Name",
+      "type": "string"
+     },
+     "password": {
+      "title": "Password",
+      "type": "string"
+     }
+    },
+    "required": [
+     "name",
+     "password"
+    ],
+    "title": "Login",
+    "type": "object"
+   },
+   "MachineEntry": {
+    "properties": {
+     "autostart": {
+      "title": "Autostart",
+      "type": "boolean"
+     },
+     "changes": {
+      "description": "Setting channels away from their original values",
+      "title": "Changes",
+      "type": "integer"
+     },
+     "engine": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Engine"
+     },
+     "error": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Error"
+     },
+     "fidelity": {
+      "title": "Fidelity",
+      "type": "string"
+     },
+     "id": {
+      "title": "Id",
+      "type": "string"
+     },
+     "kind": {
+      "description": "ring or route",
+      "title": "Kind",
+      "type": "string"
+     },
+     "mode": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Mode"
+     },
+     "name": {
+      "title": "Name",
+      "type": "string"
+     },
+     "owner": {
+      "title": "Owner",
+      "type": "string"
+     },
+     "parent": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Parent"
+     },
+     "particles": {
+      "title": "Particles",
+      "type": "integer"
+     },
+     "position": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Its run's turn (ring) or shot (route) now",
+      "title": "Position"
+     },
+     "ramp_turns": {
+      "description": "Turns a ring's setting change ramps over; 0 steps",
+      "title": "Ramp Turns",
+      "type": "integer"
+     },
+     "rate": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Rate"
+     },
+     "run": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "The run it writes now (its BPM history, /runs/{run})",
+      "title": "Run"
+     },
+     "shared": {
+      "title": "Shared",
+      "type": "boolean"
+     },
+     "started": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Started"
+     },
+     "state": {
+      "description": "stopped, starting, running, stopping or failed",
+      "title": "State",
+      "type": "string"
+     },
+     "target": {
+      "description": "The ring's branch name, or the route's name",
+      "title": "Target",
+      "type": "string"
+     },
+     "warnings": {
+      "description": "What the run found wrong, e.g. an RF phase that holds no bunch",
+      "items": {
+       "type": "string"
+      },
+      "title": "Warnings",
+      "type": "array"
+     }
+    },
+    "required": [
+     "id",
+     "name",
+     "kind",
+     "target",
+     "engine",
+     "fidelity",
+     "mode",
+     "shared",
+     "owner",
+     "parent",
+     "particles",
+     "rate",
+     "ramp_turns",
+     "autostart",
+     "state",
+     "error",
+     "run",
+     "position",
+     "started",
+     "changes",
+     "warnings"
+    ],
+    "title": "MachineEntry",
+    "type": "object"
+   },
+   "Me": {
+    "properties": {
+     "logged_in": {
+      "title": "Logged In",
+      "type": "boolean"
+     },
+     "name": {
+      "title": "Name",
+      "type": "string"
+     },
+     "role": {
+      "description": "viewer, physicist, operator or admin",
+      "title": "Role",
+      "type": "string"
+     }
+    },
+    "required": [
+     "name",
+     "role",
+     "logged_in"
+    ],
+    "title": "Me",
+    "type": "object"
+   },
+   "NewMachine": {
+    "properties": {
+     "autostart": {
+      "default": false,
+      "title": "Autostart",
+      "type": "boolean"
+     },
+     "engine": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Engine"
+     },
+     "fidelity": {
+      "default": "standard",
+      "title": "Fidelity",
+      "type": "string"
+     },
+     "kind": {
+      "enum": [
+       "ring",
+       "route"
+      ],
+      "title": "Kind",
+      "type": "string"
+     },
+     "mode": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Mode"
+     },
+     "name": {
+      "maxLength": 80,
+      "minLength": 1,
+      "title": "Name",
+      "type": "string"
+     },
+     "particles": {
+      "default": 50,
+      "maximum": 100000.0,
+      "minimum": 1.0,
+      "title": "Particles",
+      "type": "integer"
+     },
+     "ramp_turns": {
+      "default": 1024,
+      "description": "Turns a ring's setting change ramps over",
+      "maximum": 1000000.0,
+      "minimum": 0.0,
+      "title": "Ramp Turns",
+      "type": "integer"
+     },
+     "rate": {
+      "anyOf": [
+       {
+        "exclusiveMinimum": 0.0,
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Rate"
+     },
+     "reason": {
+      "default": "",
+      "title": "Reason",
+      "type": "string"
+     },
+     "shared": {
+      "default": true,
+      "title": "Shared",
+      "type": "boolean"
+     },
+     "target": {
+      "title": "Target",
+      "type": "string"
+     }
+    },
+    "required": [
+     "name",
+     "kind",
+     "target"
+    ],
+    "title": "NewMachine",
+    "type": "object"
+   },
+   "NewUser": {
+    "properties": {
+     "name": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Name",
+      "type": "string"
+     },
+     "role": {
+      "title": "Role",
+      "type": "string"
+     }
+    },
+    "required": [
+     "name",
+     "role"
+    ],
+    "title": "NewUser",
     "type": "object"
    },
    "OccurrenceDetail": {
@@ -1153,7 +1850,7 @@
       "type": "number"
      },
      "schema_version": {
-      "default": 4,
+      "default": 5,
       "title": "Schema Version",
       "type": "integer"
      },
@@ -1227,6 +1924,180 @@
     "title": "OpticsProfile",
     "type": "object"
    },
+   "OrbitFrames": {
+    "description": "BPM readings ``every`` turns (shots, samples) apart, oldest first: one orbit, or trajectory, each.\n\nFrom the BPMs' buffer (the latest turns), from a capture, or from the slow orbit, whose\nframes are samples, each the mean over ``sample_period`` seconds of the run.",
+    "properties": {
+     "bpms": {
+      "description": "BPM names in beam order",
+      "items": {
+       "type": "string"
+      },
+      "title": "Bpms",
+      "type": "array"
+     },
+     "end_turn": {
+      "description": "Turns recorded so far",
+      "title": "End Turn",
+      "type": "integer"
+     },
+     "events": {
+      "description": "What happened before the orbits shown, from the oldest on",
+      "items": {
+       "$ref": "#/components/schemas/RunEvent"
+      },
+      "title": "Events",
+      "type": "array"
+     },
+     "every": {
+      "title": "Every",
+      "type": "integer"
+     },
+     "first_turn": {
+      "description": "Earliest turn kept",
+      "title": "First Turn",
+      "type": "integer"
+     },
+     "intensity": {
+      "description": "[orbit][bpm], nC",
+      "items": {
+       "items": {
+        "anyOf": [
+         {
+          "type": "number"
+         },
+         {
+          "type": "null"
+         }
+        ]
+       },
+       "type": "array"
+      },
+      "title": "Intensity",
+      "type": "array"
+     },
+     "run": {
+      "title": "Run",
+      "type": "string"
+     },
+     "s": {
+      "description": "s of every BPM, m",
+      "items": {
+       "type": "number"
+      },
+      "title": "S",
+      "type": "array"
+     },
+     "sample_period": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "s between the slow orbit's samples",
+      "title": "Sample Period"
+     },
+     "schema_version": {
+      "default": 5,
+      "title": "Schema Version",
+      "type": "integer"
+     },
+     "source": {
+      "description": "buffer, slow, or capture:<id>",
+      "title": "Source",
+      "type": "string"
+     },
+     "state": {
+      "title": "State",
+      "type": "string"
+     },
+     "times": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "number"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "The slow orbit's samples: their wall-clock time, s (Unix)",
+      "title": "Times"
+     },
+     "turns": {
+      "description": "The turn of every orbit, oldest first",
+      "items": {
+       "type": "integer"
+      },
+      "title": "Turns",
+      "type": "array"
+     },
+     "unit": {
+      "description": "What turn numbers count: turn, shot, or sample (the slow orbit)",
+      "title": "Unit",
+      "type": "string"
+     },
+     "x": {
+      "description": "[orbit][bpm], mm; null where the BPM read nothing",
+      "items": {
+       "items": {
+        "anyOf": [
+         {
+          "type": "number"
+         },
+         {
+          "type": "null"
+         }
+        ]
+       },
+       "type": "array"
+      },
+      "title": "X",
+      "type": "array"
+     },
+     "y": {
+      "items": {
+       "items": {
+        "anyOf": [
+         {
+          "type": "number"
+         },
+         {
+          "type": "null"
+         }
+        ]
+       },
+       "type": "array"
+      },
+      "title": "Y",
+      "type": "array"
+     }
+    },
+    "required": [
+     "run",
+     "source",
+     "unit",
+     "sample_period",
+     "times",
+     "bpms",
+     "s",
+     "every",
+     "turns",
+     "x",
+     "y",
+     "intensity",
+     "first_turn",
+     "end_turn",
+     "state",
+     "events"
+    ],
+    "title": "OrbitFrames",
+    "type": "object"
+   },
    "Parameter": {
     "properties": {
      "description": {
@@ -1272,6 +2143,242 @@
      "overridden"
     ],
     "title": "Parameter",
+    "type": "object"
+   },
+   "PasswordChange": {
+    "properties": {
+     "new": {
+      "minLength": 8,
+      "title": "New",
+      "type": "string"
+     },
+     "old": {
+      "title": "Old",
+      "type": "string"
+     }
+    },
+    "required": [
+     "old",
+     "new"
+    ],
+    "title": "PasswordChange",
+    "type": "object"
+   },
+   "PlaneCheck": {
+    "description": "One plane of a run's check: what its BPMs measured against what the model gives.",
+    "properties": {
+     "amplitude": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Oscillation amplitude, median over the BPMs, mm",
+      "title": "Amplitude"
+     },
+     "beta_beating": {
+      "description": "Relative beta error from the oscillation amplitudes (BPM gain errors included)",
+      "items": {
+       "anyOf": [
+        {
+         "type": "number"
+        },
+        {
+         "type": "null"
+        }
+       ]
+      },
+      "title": "Beta Beating",
+      "type": "array"
+     },
+     "beta_beating_rms": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Beta Beating Rms"
+     },
+     "drift_amplitude": {
+      "description": "Amplitude of each stretch, mm",
+      "items": {
+       "anyOf": [
+        {
+         "type": "number"
+        },
+        {
+         "type": "null"
+        }
+       ]
+      },
+      "title": "Drift Amplitude",
+      "type": "array"
+     },
+     "drift_tune": {
+      "description": "Tune of each stretch of RunCheck.drift_turns",
+      "items": {
+       "anyOf": [
+        {
+         "type": "number"
+        },
+        {
+         "type": "null"
+        }
+       ]
+      },
+      "title": "Drift Tune",
+      "type": "array"
+     },
+     "initial_amplitude": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "The same over the first 32 turns: before the bunch decoheres, its particles' amplitude",
+      "title": "Initial Amplitude"
+     },
+     "map_tune": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "The run's own one-turn map's fractional tune, when it started",
+      "title": "Map Tune"
+     },
+     "measured_full": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "With the model's integer part",
+      "title": "Measured Full"
+     },
+     "measured_tune": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Fractional tune of the readings, 0 to 1: the line seen, or 1 minus it where the phase advance along the ring says so",
+      "title": "Measured Tune"
+     },
+     "model_orbit": {
+      "description": "The model's closed orbit at every BPM, mm",
+      "items": {
+       "anyOf": [
+        {
+         "type": "number"
+        },
+        {
+         "type": "null"
+        }
+       ]
+      },
+      "title": "Model Orbit",
+      "type": "array"
+     },
+     "model_tune": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "The model's tune (optics), integer part included",
+      "title": "Model Tune"
+     },
+     "orbit": {
+      "description": "Mean reading of every BPM over the stretch, mm",
+      "items": {
+       "anyOf": [
+        {
+         "type": "number"
+        },
+        {
+         "type": "null"
+        }
+       ]
+      },
+      "title": "Orbit",
+      "type": "array"
+     },
+     "phase_error": {
+      "description": "Measured phase advance from the first BPM minus the model's, degrees",
+      "items": {
+       "anyOf": [
+        {
+         "type": "number"
+        },
+        {
+         "type": "null"
+        }
+       ]
+      },
+      "title": "Phase Error",
+      "type": "array"
+     },
+     "phase_rms": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "rms of phase_error, degrees",
+      "title": "Phase Rms"
+     },
+     "spectrum": {
+      "description": "Line amplitudes at RunCheck.frequencies, mean over the BPMs, mm",
+      "items": {
+       "type": "number"
+      },
+      "title": "Spectrum",
+      "type": "array"
+     }
+    },
+    "required": [
+     "measured_tune",
+     "measured_full",
+     "model_tune",
+     "map_tune",
+     "amplitude",
+     "initial_amplitude",
+     "spectrum",
+     "phase_error",
+     "phase_rms",
+     "beta_beating",
+     "beta_beating_rms",
+     "orbit",
+     "model_orbit",
+     "drift_tune",
+     "drift_amplitude"
+    ],
+    "title": "PlaneCheck",
     "type": "object"
    },
    "Pose": {
@@ -1416,6 +2523,17 @@
     "title": "Power",
     "type": "object"
    },
+   "Reason": {
+    "properties": {
+     "reason": {
+      "default": "",
+      "title": "Reason",
+      "type": "string"
+     }
+    },
+    "title": "Reason",
+    "type": "object"
+   },
    "Reference": {
     "properties": {
      "E_tot": {
@@ -1462,6 +2580,515 @@
     "title": "Reference",
     "type": "object"
    },
+   "ResetRequest": {
+    "properties": {
+     "channels": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "None: every changed channel",
+      "title": "Channels"
+     },
+     "reason": {
+      "default": "",
+      "title": "Reason",
+      "type": "string"
+     }
+    },
+    "title": "ResetRequest",
+    "type": "object"
+   },
+   "RouteSegment": {
+    "properties": {
+     "branch": {
+      "description": "Branch id",
+      "title": "Branch",
+      "type": "string"
+     },
+     "end": {
+      "description": "Last occurrence (to its exit)",
+      "title": "End",
+      "type": "string"
+     },
+     "length": {
+      "title": "Length",
+      "type": "number"
+     },
+     "s_start": {
+      "description": "s along the route where the segment starts, m",
+      "title": "S Start",
+      "type": "number"
+     },
+     "start": {
+      "description": "First occurrence (from its entrance)",
+      "title": "Start",
+      "type": "string"
+     }
+    },
+    "required": [
+     "branch",
+     "start",
+     "end",
+     "s_start",
+     "length"
+    ],
+    "title": "RouteSegment",
+    "type": "object"
+   },
+   "RouteSummary": {
+    "description": "A route: the beam's path through several branches, joined at forks (routes.yaml).",
+    "properties": {
+     "branches": {
+      "description": "The branch names it was given",
+      "items": {
+       "type": "string"
+      },
+      "title": "Branches",
+      "type": "array"
+     },
+     "id": {
+      "description": "route:<name>, as views address it where they take a branch id",
+      "title": "Id",
+      "type": "string"
+     },
+     "length": {
+      "title": "Length",
+      "type": "number"
+     },
+     "name": {
+      "title": "Name",
+      "type": "string"
+     },
+     "problems": {
+      "description": "What keeps it from being one pass, e.g. an energy change",
+      "items": {
+       "type": "string"
+      },
+      "title": "Problems",
+      "type": "array"
+     },
+     "segments": {
+      "items": {
+       "$ref": "#/components/schemas/RouteSegment"
+      },
+      "title": "Segments",
+      "type": "array"
+     }
+    },
+    "required": [
+     "id",
+     "name",
+     "branches",
+     "segments",
+     "length",
+     "problems"
+    ],
+    "title": "RouteSummary",
+    "type": "object"
+   },
+   "RunCheck": {
+    "description": "A ring run's tracking checked against the model of its lattice and settings, over some turns.",
+    "properties": {
+     "bpms": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Bpms",
+      "type": "array"
+     },
+     "detuning": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/Detuning"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "drift_turns": {
+      "description": "First turn of each stretch of the tune drift",
+      "items": {
+       "type": "integer"
+      },
+      "title": "Drift Turns",
+      "type": "array"
+     },
+     "drift_window": {
+      "title": "Drift Window",
+      "type": "integer"
+     },
+     "engine": {
+      "description": "The engine of the model",
+      "title": "Engine",
+      "type": "string"
+     },
+     "fidelity": {
+      "title": "Fidelity",
+      "type": "string"
+     },
+     "first_turn": {
+      "title": "First Turn",
+      "type": "integer"
+     },
+     "frequencies": {
+      "description": "Of the spectra, fractions of the revolution",
+      "items": {
+       "type": "number"
+      },
+      "title": "Frequencies",
+      "type": "array"
+     },
+     "notes": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Notes",
+      "type": "array"
+     },
+     "run": {
+      "title": "Run",
+      "type": "string"
+     },
+     "s": {
+      "items": {
+       "type": "number"
+      },
+      "title": "S",
+      "type": "array"
+     },
+     "settings": {
+      "description": "Which settings the model has",
+      "title": "Settings",
+      "type": "string"
+     },
+     "source": {
+      "description": "buffer or capture:<id>",
+      "title": "Source",
+      "type": "string"
+     },
+     "synchrotron_tune": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "The run's own one-turn map's, when it started",
+      "title": "Synchrotron Tune"
+     },
+     "trigger": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "A capture's trigger turn (a kick)",
+      "title": "Trigger"
+     },
+     "turns": {
+      "title": "Turns",
+      "type": "integer"
+     },
+     "x": {
+      "$ref": "#/components/schemas/PlaneCheck"
+     },
+     "y": {
+      "$ref": "#/components/schemas/PlaneCheck"
+     }
+    },
+    "required": [
+     "run",
+     "engine",
+     "fidelity",
+     "source",
+     "first_turn",
+     "turns",
+     "trigger",
+     "settings",
+     "bpms",
+     "s",
+     "frequencies",
+     "drift_turns",
+     "drift_window",
+     "synchrotron_tune",
+     "x",
+     "y",
+     "detuning",
+     "notes"
+    ],
+    "title": "RunCheck",
+    "type": "object"
+   },
+   "RunEntry": {
+    "description": "A virtual machine's run (ADR 0007): what ran, and how far it has come.\n\nA ring's run records turns; a route's records shots, single passes along\nthe route, and its turn numbers count shots.",
+    "properties": {
+     "bpms": {
+      "title": "Bpms",
+      "type": "integer"
+     },
+     "branch": {
+      "description": "Branch name, or the route's name",
+      "title": "Branch",
+      "type": "string"
+     },
+     "branch_id": {
+      "description": "Branch id, or route:<name>",
+      "title": "Branch Id",
+      "type": "string"
+     },
+     "buffer_turns": {
+      "description": "Turns its BPMs' buffer keeps (a ring); 0: every turn or shot",
+      "title": "Buffer Turns",
+      "type": "integer"
+     },
+     "captures": {
+      "description": "Captures saved: the buffer frozen by a kick, injection, loss or request",
+      "title": "Captures",
+      "type": "integer"
+     },
+     "end_turn": {
+      "description": "Turns recorded so far",
+      "title": "End Turn",
+      "type": "integer"
+     },
+     "engine": {
+      "title": "Engine",
+      "type": "string"
+     },
+     "fidelity": {
+      "title": "Fidelity",
+      "type": "string"
+     },
+     "first_turn": {
+      "description": "Earliest turn still kept turn by turn",
+      "title": "First Turn",
+      "type": "integer"
+     },
+     "id": {
+      "title": "Id",
+      "type": "string"
+     },
+     "kind": {
+      "description": "ring or route",
+      "title": "Kind",
+      "type": "string"
+     },
+     "lattice": {
+      "description": "Lattice name",
+      "title": "Lattice",
+      "type": "string"
+     },
+     "lattice_digest": {
+      "title": "Lattice Digest",
+      "type": "string"
+     },
+     "machine": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "The virtual accelerator's machine that runs it (ADR 0008)",
+      "title": "Machine"
+     },
+     "revolution_period": {
+      "description": "s per turn, or per shot",
+      "title": "Revolution Period",
+      "type": "number"
+     },
+     "slow_period": {
+      "description": "Its slow orbit's sample, s; 0: one per chunk",
+      "title": "Slow Period",
+      "type": "number"
+     },
+     "start": {
+      "description": "Turn 0 on the run's own clock, ISO 8601",
+      "title": "Start",
+      "type": "string"
+     },
+     "state": {
+      "description": "running, stopped, done, failed or unknown",
+      "title": "State",
+      "type": "string"
+     },
+     "unit": {
+      "description": "What its turn numbers count: turn or shot",
+      "title": "Unit",
+      "type": "string"
+     },
+     "updated": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "When the run last wrote, ISO 8601",
+      "title": "Updated"
+     }
+    },
+    "required": [
+     "id",
+     "kind",
+     "unit",
+     "lattice",
+     "lattice_digest",
+     "branch",
+     "branch_id",
+     "engine",
+     "fidelity",
+     "start",
+     "revolution_period",
+     "bpms",
+     "first_turn",
+     "end_turn",
+     "state",
+     "updated",
+     "buffer_turns",
+     "slow_period",
+     "captures"
+    ],
+    "title": "RunEntry",
+    "type": "object"
+   },
+   "RunEvent": {
+    "properties": {
+     "detail": {
+      "additionalProperties": true,
+      "title": "Detail",
+      "type": "object"
+     },
+     "kind": {
+      "description": "start, inject, kick, settings, loss, warning, error",
+      "title": "Kind",
+      "type": "string"
+     },
+     "turn": {
+      "title": "Turn",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "turn",
+     "kind",
+     "detail"
+    ],
+    "title": "RunEvent",
+    "type": "object"
+   },
+   "SettingRow": {
+    "properties": {
+     "at": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "At"
+     },
+     "by": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "By"
+     },
+     "changed": {
+      "title": "Changed",
+      "type": "boolean"
+     },
+     "channel": {
+      "title": "Channel",
+      "type": "string"
+     },
+     "device": {
+      "title": "Device",
+      "type": "string"
+     },
+     "kind": {
+      "description": "circuit (a supply's current) or parameter (e.g. an RF voltage)",
+      "title": "Kind",
+      "type": "string"
+     },
+     "limits": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "number"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Limits"
+     },
+     "occurrences": {
+      "description": "Lattice occurrences it sets",
+      "items": {
+       "type": "string"
+      },
+      "title": "Occurrences",
+      "type": "array"
+     },
+     "original": {
+      "description": "From the machine files: design, and the mode",
+      "title": "Original",
+      "type": "number"
+     },
+     "unit": {
+      "title": "Unit",
+      "type": "string"
+     },
+     "value": {
+      "description": "Now: the live value, or the original",
+      "title": "Value",
+      "type": "number"
+     }
+    },
+    "required": [
+     "channel",
+     "device",
+     "unit",
+     "kind",
+     "limits",
+     "original",
+     "value",
+     "changed",
+     "by",
+     "at",
+     "occurrences"
+    ],
+    "title": "SettingRow",
+    "type": "object"
+   },
    "SharedComponent": {
     "properties": {
      "id": {
@@ -1486,6 +3113,118 @@
      "traversals"
     ],
     "title": "SharedComponent",
+    "type": "object"
+   },
+   "SnapshotEntry": {
+    "properties": {
+     "changes": {
+      "title": "Changes",
+      "type": "integer"
+     },
+     "id": {
+      "title": "Id",
+      "type": "integer"
+     },
+     "name": {
+      "title": "Name",
+      "type": "string"
+     },
+     "time": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Time"
+     },
+     "user": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "User"
+     }
+    },
+    "required": [
+     "id",
+     "name",
+     "changes"
+    ],
+    "title": "SnapshotEntry",
+    "type": "object"
+   },
+   "SnapshotRequest": {
+    "properties": {
+     "name": {
+      "maxLength": 120,
+      "minLength": 1,
+      "title": "Name",
+      "type": "string"
+     }
+    },
+    "required": [
+     "name"
+    ],
+    "title": "SnapshotRequest",
+    "type": "object"
+   },
+   "TokenEntry": {
+    "properties": {
+     "created": {
+      "title": "Created",
+      "type": "string"
+     },
+     "label": {
+      "title": "Label",
+      "type": "string"
+     }
+    },
+    "required": [
+     "label",
+     "created"
+    ],
+    "title": "TokenEntry",
+    "type": "object"
+   },
+   "TokenIssued": {
+    "properties": {
+     "label": {
+      "title": "Label",
+      "type": "string"
+     },
+     "token": {
+      "description": "Shown once: send it as Authorization: Bearer <token>",
+      "title": "Token",
+      "type": "string"
+     }
+    },
+    "required": [
+     "token",
+     "label"
+    ],
+    "title": "TokenIssued",
+    "type": "object"
+   },
+   "TokenRequest": {
+    "properties": {
+     "label": {
+      "maxLength": 80,
+      "minLength": 1,
+      "title": "Label",
+      "type": "string"
+     }
+    },
+    "required": [
+     "label"
+    ],
+    "title": "TokenRequest",
     "type": "object"
    },
    "Transfer": {
@@ -1554,6 +3293,170 @@
     "title": "Traversal",
     "type": "object"
    },
+   "UserChange": {
+    "properties": {
+     "disabled": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Disabled"
+     },
+     "role": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Role"
+     }
+    },
+    "title": "UserChange",
+    "type": "object"
+   },
+   "UserCreated": {
+    "properties": {
+     "name": {
+      "title": "Name",
+      "type": "string"
+     },
+     "password": {
+      "description": "Shown once",
+      "title": "Password",
+      "type": "string"
+     },
+     "role": {
+      "title": "Role",
+      "type": "string"
+     }
+    },
+    "required": [
+     "name",
+     "role",
+     "password"
+    ],
+    "title": "UserCreated",
+    "type": "object"
+   },
+   "UserEntry": {
+    "properties": {
+     "created": {
+      "title": "Created",
+      "type": "string"
+     },
+     "disabled": {
+      "title": "Disabled",
+      "type": "boolean"
+     },
+     "name": {
+      "title": "Name",
+      "type": "string"
+     },
+     "role": {
+      "title": "Role",
+      "type": "string"
+     }
+    },
+    "required": [
+     "name",
+     "role",
+     "created",
+     "disabled"
+    ],
+    "title": "UserEntry",
+    "type": "object"
+   },
+   "VaOptions": {
+    "description": "What machines can be made of.",
+    "properties": {
+     "engines": {
+      "items": {
+       "$ref": "#/components/schemas/EngineChoice"
+      },
+      "title": "Engines",
+      "type": "array"
+     },
+     "fidelities": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Fidelities",
+      "type": "array"
+     },
+     "modes": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Modes",
+      "type": "array"
+     },
+     "rings": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Rings",
+      "type": "array"
+     },
+     "routes": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Routes",
+      "type": "array"
+     },
+     "sandbox_quota": {
+      "title": "Sandbox Quota",
+      "type": "integer"
+     },
+     "source": {
+      "title": "Source",
+      "type": "string"
+     }
+    },
+    "required": [
+     "source",
+     "rings",
+     "routes",
+     "modes",
+     "engines",
+     "fidelities",
+     "sandbox_quota"
+    ],
+    "title": "VaOptions",
+    "type": "object"
+   },
+   "VaStatus": {
+    "properties": {
+     "enabled": {
+      "title": "Enabled",
+      "type": "boolean"
+     },
+     "source": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "The machine files it runs",
+      "title": "Source"
+     }
+    },
+    "required": [
+     "enabled"
+    ],
+    "title": "VaStatus",
+    "type": "object"
+   },
    "ValidationError": {
     "properties": {
      "ctx": {
@@ -1592,6 +3495,120 @@
      "type"
     ],
     "title": "ValidationError",
+    "type": "object"
+   },
+   "WriteEntry": {
+    "properties": {
+     "applied": {
+      "title": "Applied",
+      "type": "boolean"
+     },
+     "channel": {
+      "title": "Channel",
+      "type": "string"
+     },
+     "new": {
+      "title": "New",
+      "type": "number"
+     },
+     "old": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Old"
+     },
+     "refusal": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Refusal"
+     },
+     "unit": {
+      "title": "Unit",
+      "type": "string"
+     }
+    },
+    "required": [
+     "channel",
+     "unit",
+     "old",
+     "new",
+     "applied",
+     "refusal"
+    ],
+    "title": "WriteEntry",
+    "type": "object"
+   },
+   "WriteRequest": {
+    "properties": {
+     "atomic": {
+      "default": true,
+      "description": "One refused write refuses them all",
+      "title": "Atomic",
+      "type": "boolean"
+     },
+     "changes": {
+      "items": {
+       "$ref": "#/components/schemas/Change"
+      },
+      "minItems": 1,
+      "title": "Changes",
+      "type": "array"
+     },
+     "reason": {
+      "default": "",
+      "title": "Reason",
+      "type": "string"
+     }
+    },
+    "required": [
+     "changes"
+    ],
+    "title": "WriteRequest",
+    "type": "object"
+   },
+   "WriteResult": {
+    "properties": {
+     "applied": {
+      "title": "Applied",
+      "type": "boolean"
+     },
+     "correlation": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Groups the writes of one change in the log",
+      "title": "Correlation"
+     },
+     "writes": {
+      "items": {
+       "$ref": "#/components/schemas/WriteEntry"
+      },
+      "title": "Writes",
+      "type": "array"
+     }
+    },
+    "required": [
+     "correlation",
+     "applied",
+     "writes"
+    ],
+    "title": "WriteResult",
     "type": "object"
    }
   }
@@ -1914,6 +3931,1637 @@
      }
     },
     "summary": "Occurrence"
+   }
+  },
+  "/api/v1/runs": {
+   "get": {
+    "description": "Virtual rings' runs in the folders the server was given, newest first.",
+    "operationId": "run_list_api_v1_runs_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "items": {
+          "$ref": "#/components/schemas/RunEntry"
+         },
+         "title": "Response Run List Api V1 Runs Get",
+         "type": "array"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "Run List"
+   }
+  },
+  "/api/v1/runs/{run}/captures": {
+   "get": {
+    "description": "A run's captures, oldest first: its BPM buffer frozen by a kick, injection, loss or request.",
+    "operationId": "captures_api_v1_runs__run__captures_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "run",
+      "required": true,
+      "schema": {
+       "title": "Run",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "items": {
+          "$ref": "#/components/schemas/CaptureEntry"
+         },
+         "title": "Response Captures Api V1 Runs  Run  Captures Get",
+         "type": "array"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Captures"
+   }
+  },
+  "/api/v1/runs/{run}/check": {
+   "get": {
+    "description": "A ring run's tracking against the model: tunes, phase advance, beta and orbit at its BPMs.",
+    "operationId": "check_api_v1_runs__run__check_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "run",
+      "required": true,
+      "schema": {
+       "title": "Run",
+       "type": "string"
+      }
+     },
+     {
+      "description": "kick (the latest kick's capture, from the kick on), buffer (the latest turns) or capture:<id>",
+      "in": "query",
+      "name": "source",
+      "required": false,
+      "schema": {
+       "default": "kick",
+       "description": "kick (the latest kick's capture, from the kick on), buffer (the latest turns) or capture:<id>",
+       "pattern": "^(kick|buffer|capture:[\\w.-]+)$",
+       "title": "Source",
+       "type": "string"
+      }
+     },
+     {
+      "description": "First turn; default: the kick, or the latest turns",
+      "in": "query",
+      "name": "first",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "minimum": 0,
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "First turn; default: the kick, or the latest turns",
+       "title": "First"
+      }
+     },
+     {
+      "description": "Turns to analyse",
+      "in": "query",
+      "name": "turns",
+      "required": false,
+      "schema": {
+       "default": 1024,
+       "description": "Turns to analyse",
+       "maximum": 8192,
+       "minimum": 64,
+       "title": "Turns",
+       "type": "integer"
+      }
+     },
+     {
+      "description": "The model's engine; default: the run's",
+      "in": "query",
+      "name": "engine",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "The model's engine; default: the run's",
+       "title": "Engine"
+      }
+     },
+     {
+      "description": "Also track single particles for tune against amplitude",
+      "in": "query",
+      "name": "detuning",
+      "required": false,
+      "schema": {
+       "default": false,
+       "description": "Also track single particles for tune against amplitude",
+       "title": "Detuning",
+       "type": "boolean"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/RunCheck"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Check"
+   }
+  },
+  "/api/v1/runs/{run}/orbits": {
+   "get": {
+    "description": "BPM readings along the ring ``every`` turns (or samples) apart, from the BPMs' buffer, a\ncapture, or the slow orbit.",
+    "operationId": "orbits_api_v1_runs__run__orbits_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "run",
+      "required": true,
+      "schema": {
+       "title": "Run",
+       "type": "string"
+      }
+     },
+     {
+      "description": "Turns between orbits",
+      "in": "query",
+      "name": "every",
+      "required": false,
+      "schema": {
+       "default": 5,
+       "description": "Turns between orbits",
+       "maximum": 1000000,
+       "minimum": 1,
+       "title": "Every",
+       "type": "integer"
+      }
+     },
+     {
+      "description": "Orbits",
+      "in": "query",
+      "name": "count",
+      "required": false,
+      "schema": {
+       "default": 5,
+       "description": "Orbits",
+       "maximum": 50,
+       "minimum": 1,
+       "title": "Count",
+       "type": "integer"
+      }
+     },
+     {
+      "description": "The newest orbit is at turn end - 1; default: the latest",
+      "in": "query",
+      "name": "end",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "minimum": 1,
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "The newest orbit is at turn end - 1; default: the latest",
+       "title": "End"
+      }
+     },
+     {
+      "description": "buffer (the latest turns), slow (the slow orbit's samples) or capture:<id>",
+      "in": "query",
+      "name": "source",
+      "required": false,
+      "schema": {
+       "default": "buffer",
+       "description": "buffer (the latest turns), slow (the slow orbit's samples) or capture:<id>",
+       "pattern": "^(buffer|slow|capture:[\\w.-]+)$",
+       "title": "Source",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/OrbitFrames"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Orbits"
+   }
+  },
+  "/api/v1/va/actions": {
+   "get": {
+    "description": "Starts, stops, forks, snapshots, kicks, logins and user changes, newest first; for operators.",
+    "operationId": "actions_api_v1_va_actions_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "machine",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Machine"
+      }
+     },
+     {
+      "in": "query",
+      "name": "user",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "User"
+      }
+     },
+     {
+      "in": "query",
+      "name": "before",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Before"
+      }
+     },
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 200,
+       "maximum": 2000,
+       "minimum": 1,
+       "title": "Limit",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "items": {
+          "$ref": "#/components/schemas/ActionEntry"
+         },
+         "title": "Response Actions Api V1 Va Actions Get",
+         "type": "array"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Actions",
+    "tags": [
+     "virtual accelerator"
+    ]
+   }
+  },
+  "/api/v1/va/log": {
+   "get": {
+    "description": "Every write, newest first; ``before`` an id pages back. For users who are logged in.",
+    "operationId": "log_api_v1_va_log_get",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "machine",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Machine"
+      }
+     },
+     {
+      "in": "query",
+      "name": "user",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "User"
+      }
+     },
+     {
+      "in": "query",
+      "name": "channel",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Channel"
+      }
+     },
+     {
+      "in": "query",
+      "name": "correlation",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Correlation"
+      }
+     },
+     {
+      "in": "query",
+      "name": "before",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Before"
+      }
+     },
+     {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+       "default": 200,
+       "maximum": 2000,
+       "minimum": 1,
+       "title": "Limit",
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "items": {
+          "$ref": "#/components/schemas/LogEntry"
+         },
+         "title": "Response Log Api V1 Va Log Get",
+         "type": "array"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Log",
+    "tags": [
+     "virtual accelerator"
+    ]
+   }
+  },
+  "/api/v1/va/login": {
+   "post": {
+    "operationId": "login_api_v1_va_login_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/Login"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Me"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Login",
+    "tags": [
+     "virtual accelerator"
+    ]
+   }
+  },
+  "/api/v1/va/logout": {
+   "post": {
+    "operationId": "logout_api_v1_va_logout_post",
+    "responses": {
+     "204": {
+      "description": "Successful Response"
+     }
+    },
+    "summary": "Logout",
+    "tags": [
+     "virtual accelerator"
+    ]
+   }
+  },
+  "/api/v1/va/machines": {
+   "get": {
+    "operationId": "machines_api_v1_va_machines_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "items": {
+          "$ref": "#/components/schemas/MachineEntry"
+         },
+         "title": "Response Machines Api V1 Va Machines Get",
+         "type": "array"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "Machines",
+    "tags": [
+     "virtual accelerator"
+    ]
+   },
+   "post": {
+    "operationId": "create_api_v1_va_machines_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/NewMachine"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "201": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/MachineEntry"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Create",
+    "tags": [
+     "virtual accelerator"
+    ]
+   }
+  },
+  "/api/v1/va/machines/{machine}": {
+   "delete": {
+    "operationId": "remove_api_v1_va_machines__machine__delete",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "machine",
+      "required": true,
+      "schema": {
+       "title": "Machine",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "reason",
+      "required": false,
+      "schema": {
+       "default": "",
+       "title": "Reason",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "204": {
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Remove",
+    "tags": [
+     "virtual accelerator"
+    ]
+   },
+   "get": {
+    "operationId": "machine_api_v1_va_machines__machine__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "machine",
+      "required": true,
+      "schema": {
+       "title": "Machine",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/MachineEntry"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Machine",
+    "tags": [
+     "virtual accelerator"
+    ]
+   }
+  },
+  "/api/v1/va/machines/{machine}/acquire": {
+   "post": {
+    "description": "Capture a ring's BPM buffer now; it appears among the run's captures.",
+    "operationId": "acquire_api_v1_va_machines__machine__acquire_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "machine",
+      "required": true,
+      "schema": {
+       "title": "Machine",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "anyOf": [
+         {
+          "$ref": "#/components/schemas/Reason"
+         },
+         {
+          "type": "null"
+         }
+        ],
+        "title": "Body"
+       }
+      }
+     }
+    },
+    "responses": {
+     "204": {
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Acquire",
+    "tags": [
+     "virtual accelerator"
+    ]
+   }
+  },
+  "/api/v1/va/machines/{machine}/beam": {
+   "post": {
+    "operationId": "beam_api_v1_va_machines__machine__beam_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "machine",
+      "required": true,
+      "schema": {
+       "title": "Machine",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/BeamRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "204": {
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Beam",
+    "tags": [
+     "virtual accelerator"
+    ]
+   }
+  },
+  "/api/v1/va/machines/{machine}/fork": {
+   "post": {
+    "operationId": "fork_api_v1_va_machines__machine__fork_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "machine",
+      "required": true,
+      "schema": {
+       "title": "Machine",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "anyOf": [
+         {
+          "$ref": "#/components/schemas/Fork"
+         },
+         {
+          "type": "null"
+         }
+        ],
+        "title": "Body"
+       }
+      }
+     }
+    },
+    "responses": {
+     "201": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/MachineEntry"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Fork",
+    "tags": [
+     "virtual accelerator"
+    ]
+   }
+  },
+  "/api/v1/va/machines/{machine}/reset": {
+   "post": {
+    "operationId": "reset_api_v1_va_machines__machine__reset_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "machine",
+      "required": true,
+      "schema": {
+       "title": "Machine",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ResetRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/WriteResult"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Reset",
+    "tags": [
+     "virtual accelerator"
+    ]
+   }
+  },
+  "/api/v1/va/machines/{machine}/settings": {
+   "get": {
+    "operationId": "settings_api_v1_va_machines__machine__settings_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "machine",
+      "required": true,
+      "schema": {
+       "title": "Machine",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "changed",
+      "required": false,
+      "schema": {
+       "default": false,
+       "title": "Changed",
+       "type": "boolean"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "items": {
+          "$ref": "#/components/schemas/SettingRow"
+         },
+         "title": "Response Settings Api V1 Va Machines  Machine  Settings Get",
+         "type": "array"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Settings",
+    "tags": [
+     "virtual accelerator"
+    ]
+   },
+   "post": {
+    "operationId": "write_api_v1_va_machines__machine__settings_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "machine",
+      "required": true,
+      "schema": {
+       "title": "Machine",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/WriteRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/WriteResult"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Write",
+    "tags": [
+     "virtual accelerator"
+    ]
+   }
+  },
+  "/api/v1/va/machines/{machine}/snapshots": {
+   "get": {
+    "operationId": "snapshots_api_v1_va_machines__machine__snapshots_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "machine",
+      "required": true,
+      "schema": {
+       "title": "Machine",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "items": {
+          "$ref": "#/components/schemas/SnapshotEntry"
+         },
+         "title": "Response Snapshots Api V1 Va Machines  Machine  Snapshots Get",
+         "type": "array"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Snapshots",
+    "tags": [
+     "virtual accelerator"
+    ]
+   },
+   "post": {
+    "operationId": "snapshot_api_v1_va_machines__machine__snapshots_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "machine",
+      "required": true,
+      "schema": {
+       "title": "Machine",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/SnapshotRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "201": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/SnapshotEntry"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Snapshot",
+    "tags": [
+     "virtual accelerator"
+    ]
+   }
+  },
+  "/api/v1/va/machines/{machine}/snapshots/{snapshot}/restore": {
+   "post": {
+    "operationId": "restore_api_v1_va_machines__machine__snapshots__snapshot__restore_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "machine",
+      "required": true,
+      "schema": {
+       "title": "Machine",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "snapshot",
+      "required": true,
+      "schema": {
+       "title": "Snapshot",
+       "type": "integer"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "anyOf": [
+         {
+          "$ref": "#/components/schemas/Reason"
+         },
+         {
+          "type": "null"
+         }
+        ],
+        "title": "Body"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/WriteResult"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Restore",
+    "tags": [
+     "virtual accelerator"
+    ]
+   }
+  },
+  "/api/v1/va/machines/{machine}/start": {
+   "post": {
+    "operationId": "start_api_v1_va_machines__machine__start_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "machine",
+      "required": true,
+      "schema": {
+       "title": "Machine",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "anyOf": [
+         {
+          "$ref": "#/components/schemas/Reason"
+         },
+         {
+          "type": "null"
+         }
+        ],
+        "title": "Body"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/MachineEntry"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Start",
+    "tags": [
+     "virtual accelerator"
+    ]
+   }
+  },
+  "/api/v1/va/machines/{machine}/stop": {
+   "post": {
+    "operationId": "stop_api_v1_va_machines__machine__stop_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "machine",
+      "required": true,
+      "schema": {
+       "title": "Machine",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "anyOf": [
+         {
+          "$ref": "#/components/schemas/Reason"
+         },
+         {
+          "type": "null"
+         }
+        ],
+        "title": "Body"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/MachineEntry"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Stop",
+    "tags": [
+     "virtual accelerator"
+    ]
+   }
+  },
+  "/api/v1/va/me": {
+   "get": {
+    "operationId": "whoami_api_v1_va_me_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Me"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "Whoami",
+    "tags": [
+     "virtual accelerator"
+    ]
+   }
+  },
+  "/api/v1/va/me/password": {
+   "post": {
+    "operationId": "change_password_api_v1_va_me_password_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/PasswordChange"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "204": {
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Change Password",
+    "tags": [
+     "virtual accelerator"
+    ]
+   }
+  },
+  "/api/v1/va/me/tokens": {
+   "get": {
+    "operationId": "my_tokens_api_v1_va_me_tokens_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "items": {
+          "$ref": "#/components/schemas/TokenEntry"
+         },
+         "title": "Response My Tokens Api V1 Va Me Tokens Get",
+         "type": "array"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "My Tokens",
+    "tags": [
+     "virtual accelerator"
+    ]
+   },
+   "post": {
+    "operationId": "new_token_api_v1_va_me_tokens_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/TokenRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/TokenIssued"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "New Token",
+    "tags": [
+     "virtual accelerator"
+    ]
+   }
+  },
+  "/api/v1/va/options": {
+   "get": {
+    "operationId": "options_api_v1_va_options_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/VaOptions"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "Options",
+    "tags": [
+     "virtual accelerator"
+    ]
+   }
+  },
+  "/api/v1/va/status": {
+   "get": {
+    "operationId": "status_api_v1_va_status_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/VaStatus"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "Status",
+    "tags": [
+     "virtual accelerator"
+    ]
+   }
+  },
+  "/api/v1/va/users": {
+   "get": {
+    "operationId": "users_api_v1_va_users_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "items": {
+          "$ref": "#/components/schemas/UserEntry"
+         },
+         "title": "Response Users Api V1 Va Users Get",
+         "type": "array"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "Users",
+    "tags": [
+     "virtual accelerator"
+    ]
+   },
+   "post": {
+    "operationId": "add_user_api_v1_va_users_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/NewUser"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "201": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/UserCreated"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Add User",
+    "tags": [
+     "virtual accelerator"
+    ]
+   }
+  },
+  "/api/v1/va/users/{name}": {
+   "patch": {
+    "operationId": "change_user_api_v1_va_users__name__patch",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "name",
+      "required": true,
+      "schema": {
+       "title": "Name",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/UserChange"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/UserEntry"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Change User",
+    "tags": [
+     "virtual accelerator"
+    ]
+   }
+  },
+  "/api/v1/va/users/{name}/password": {
+   "post": {
+    "operationId": "reset_password_api_v1_va_users__name__password_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "name",
+      "required": true,
+      "schema": {
+       "title": "Name",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/UserCreated"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Reset Password",
+    "tags": [
+     "virtual accelerator"
+    ]
    }
   }
  }

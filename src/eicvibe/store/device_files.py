@@ -12,7 +12,8 @@ Magnets and instruments are referred to as ``branch/occurrence`` (lattice
 names), which do not change when EIC names do.
 """
 
-from collections.abc import Mapping
+import re
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -263,6 +264,69 @@ def _write_diagnostics(description: MachineDescription, refs: References, path: 
     data = mapping([("bpms", block(bpms))])
     data["tune_monitors"] = flow([refs.branch_name[t.branch] for t in description.tune_monitors])
     return write_yaml(path, data, _DIAGNOSTICS_HEADER)
+
+
+def rename_references(folder: Path, renames: Mapping[str, str]) -> list[Path]:
+    """Replace the references ``branch/old`` by ``branch/new`` in the naming and device files.
+
+    For an import that renamed occurrences where they are: everything else in
+    the files, comments included, stays as people wrote it. A supply keyed by
+    a renamed magnet takes the new name as its key, and with it a new id; its
+    EIC name and channels stay. Returns the files changed.
+    """
+    changed = []
+    for path in [folder / NAMING_FILE, *sorted((folder / "devices").glob("*.yaml"))]:
+        if not path.is_file():
+            continue
+        text = original = path.read_text()
+        for old, new in renames.items():
+            text = re.sub(rf"(?<![\w./-]){re.escape(old)}(?![\w.])", new, text)
+        if text != original:
+            path.write_text(text)
+            changed.append(path)
+    return changed
+
+
+def add_bpms(folder: Path, bpms: Sequence[str], branches: Sequence[str]) -> Path | None:
+    """Add BPMs at ``bpms`` (``branch/occurrence``) to the diagnostics file, in its words.
+
+    Each goes after the last BPM of its branch, or else before the first BPM
+    of a branch that comes later in ``branches``; the rest of the file stays
+    as it is. Returns the file, or None when there was nothing to add.
+    """
+    path = folder / DIAGNOSTICS_FILE
+    lines = path.read_text().splitlines(keepends=True)
+    try:
+        start = next(i for i, line in enumerate(lines) if re.match(r"bpms:\s*$", line))
+    except StopIteration:
+        raise FileError(
+            f"{path}: no block list of bpms to add {len(bpms)} BPMs to; add them by hand"
+        ) from None
+    end = start + 1
+    while end < len(lines) and re.match(r"\s+- ", lines[end]):
+        end += 1
+    entries = lines[start + 1 : end]
+    indent = re.match(r"(\s+)- ", entries[0]).group(1) if entries else "  "
+    listed = {m.group(1) for line in entries if (m := re.search(r"([\w.]+/[\w.]+)", line))}
+    order = {branch: i for i, branch in enumerate(branches)}
+
+    def branch_of(line: str) -> int:
+        m = re.search(r"([\w.]+)/", line)
+        return order.get(m.group(1), len(order)) if m else len(order)
+
+    added = 0
+    for bpm in bpms:
+        if bpm in listed:
+            continue
+        rank = order.get(bpm.split("/")[0], len(order))
+        at = next((i for i, line in enumerate(entries) if branch_of(line) > rank), len(entries))
+        entries.insert(at, f"{indent}- {bpm}\n")
+        listed.add(bpm)
+        added += 1
+    if not added:
+        return None
+    path.write_text("".join([*lines[: start + 1], *entries, *lines[end:]]))
+    return path
 
 
 def _write_rf(stations, refs: References, path: Path) -> Path:

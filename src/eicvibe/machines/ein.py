@@ -1,9 +1,12 @@
 """The electron injector complex (EIN) as one machine.
 
 The sources live in the EIN folder of the virtual accelerator project: MAD-X
-files staged in ``EICVIBE_lattice/madx`` (converted from the Bmad and Elegant
-designs of the ``einlattices`` checkout by ``EIN_connection.ipynb``) and the
-preinjector beam in ``einlattices/LTR``. They are the LTR, the BAR with its
+files staged in ``EICVIBE_lattice/madx`` and the preinjector beam in
+``einlattices/LTR``. The Bmad designs of the ``einlattices`` checkout (the
+LTR and the RTE) are staged by :func:`convert_ein_bmad`, through Bmad's own
+writer with its losses corrected (:mod:`eicvibe.importers.bmad`): the LTR's
+magnets and BPMs keep their names, and its injection patch its sign. The
+Elegant BAR and the MAD-X lines were staged by ``EIN_connection.ipynb``. They are the LTR, the BAR with its
 injection and extraction lines (ITL, ETL), the 40-cell 9 GeV RCS
 (RCS9GeV40CellV1) and the 10 GeV RTE, connected as in the legacy route
 notebooks, with one difference. LTR_P1 and LTR_P2 are not separate
@@ -80,6 +83,7 @@ from eicvibe.domain.machine import (
     default_repository,
     describe_machine,
 )
+from eicvibe.importers.bmad import BmadConversion, BmadTools, bmad_to_madx
 from eicvibe.importers.madx import ImportNote, import_madx
 from eicvibe.store import (
     FileError,
@@ -87,11 +91,13 @@ from eicvibe.store import (
     check_machine,
     is_machine,
     load_lattice,
+    update_names,
     write_machine,
     write_settings,
 )
+from eicvibe.store.device_files import add_bpms, rename_references
 from eicvibe.store.lattice_files import write_lattice
-from eicvibe.store.machine import write_index
+from eicvibe.store.machine import write_index, write_routes
 
 _STAGED = "EICVIBE_lattice/madx"
 
@@ -114,6 +120,16 @@ class EinSources:
     """The RTE leaves at the RCS marker right after this element."""
     rte: str = f"{_STAGED}/RTE_10GeV.madx"
 
+
+#: The Bmad design files of the EIN and the staged MAD-X files they become (:func:`convert_ein_bmad`).
+EIN_BMAD: Mapping[str, str] = MappingProxyType(
+    {
+        "einlattices/LTR/LTR_main.bmad": f"{_STAGED}/LTR_main.madx",
+        "einlattices/LTR/LTR_P1.bmad": f"{_STAGED}/LTR_P1.madx",
+        "einlattices/LTR/LTR_P2.bmad": f"{_STAGED}/LTR_P2.madx",
+        "einlattices/RTE/RTE_10GeV.bmad": f"{_STAGED}/RTE_10GeV.madx",
+    }
+)
 
 #: The RCS of the earlier route notebook, RCSV5S1, as written in the einlattices checkout.
 RCSV5S1 = {"rcs": "einlattices/RCS/RCSV5S1.madx", "rcs_extraction_after": "es_pip03"}
@@ -139,6 +155,12 @@ EIN_SERIES: Mapping[str, tuple[ElementKind, ...]] = MappingProxyType(
     {"bar": (ElementKind.BEND, ElementKind.QUADRUPOLE), "rcs": (ElementKind.BEND, ElementKind.QUADRUPOLE)}
 )
 _BRANCHES = ("ltr", "itl", "bar", "etl", "rcs", "rte")
+
+#: The beam's paths (routes.yaml): straight from the linac into the RCS, or through the BAR
+#: (into it by the ITL, out by the ETL, back onto the LTR) first. Both go once round the RCS.
+EIN_ROUTES: Mapping[str, tuple[str, ...]] = MappingProxyType(
+    {"direct": ("ltr", "rcs"), "bar": ("ltr", "itl", "bar", "etl", "ltr", "rcs")}
+)
 
 
 @dataclass(frozen=True)
@@ -247,6 +269,19 @@ def build_ein(
     return Ein(lattice, bar_mode, notes, read, imports["ltr"].madx_version)
 
 
+def convert_ein_bmad(folder: str | Path, *, tools: BmadTools | None = None) -> dict[str, BmadConversion]:
+    """Stage the EIN's Bmad design files (:data:`EIN_BMAD`) as MAD-X, corrected (ADR 0002).
+
+    Bmad runs on copies of the design folders; the MAD-X files replace those
+    in ``EICVIBE_lattice/madx``. Returns each conversion, with its notes.
+    """
+    folder = Path(folder)
+    (folder / _STAGED).mkdir(parents=True, exist_ok=True)
+    return {
+        source: bmad_to_madx(folder / source, folder / madx, tools=tools) for source, madx in EIN_BMAD.items()
+    }
+
+
 def ein_areas(
     lattice: Lattice, areas: Mapping[str, str | Iterable[NamingArea]] | None = None
 ) -> dict[str, tuple[NamingArea, ...]]:
@@ -344,26 +379,93 @@ def write_ein_machine(
     folder = Path(folder)
     written = write_machine(folder, ein.lattice, description or ein_description(ein), source=ein_source(ein))
     written.append(_write_bar_mode(folder, ein, ein.lattice))
+    if routes := write_routes(folder, {name: list(b) for name, b in EIN_ROUTES.items()}):
+        written.append(routes)
     return written
 
 
-def update_ein_machine(ein: Ein, folder: str | Path, *, write: bool = False) -> tuple[Change, ...]:
+def update_ein_machine(
+    ein: Ein, folder: str | Path, *, write: bool = False, devices: bool = False
+) -> tuple[Change, ...]:
     """What a fresh import changes in ``folder``'s lattice files; with ``write``, apply it.
 
     The import keeps the ids of every element, occurrence and branch whose
-    name it keeps, so devices stay attached. Writing replaces the lattice
-    files, the provenance in machine.yaml and the BAR-mode settings; naming,
-    device and other settings files are left as people edited them.
+    name it keeps, or that it only renamed (:func:`renamed_occurrences`), so
+    devices stay attached. Writing replaces the lattice files, the provenance
+    in machine.yaml and the BAR-mode settings; naming, device and other
+    settings files are left as people edited them, unless ``devices``: then
+    their references follow the renamed occurrences, and instruments the
+    import adds become BPMs (:func:`update_ein_devices`).
     """
     folder = Path(folder)
     old = load_lattice(folder)
-    new = adopt_ids(ein.lattice, old)
+    renamed = renamed_occurrences(old, ein.lattice)
+    new = adopt_ids(ein.lattice, old, renamed)
     changes = diff(old, new)
+    if write and devices:
+        update_ein_devices(folder, old, new, renamed)
     if write:
         write_index(folder, new, ein_source(ein))
         write_lattice(new, folder)
         _write_bar_mode(folder, ein, new)
+        write_routes(folder, {name: list(b) for name, b in EIN_ROUTES.items()})  # only if there is none
+        update_names(folder)  # the EIC names, by the naming files people keep
     return changes
+
+
+def renamed_occurrences(old: Lattice, new: Lattice) -> dict[tuple[str, str], str]:
+    """Occurrences ``new`` has under another name than ``old``: ``(branch, new name)`` to the old name.
+
+    An occurrence is the same when it is of the same kind and length and ends
+    at the same place in the same branch, and only its name differs (drifts
+    aside, whose names follow the elements around them).
+    """
+
+    def unnamed(lattice: Lattice, others: Lattice) -> dict[tuple, str]:
+        out = {}
+        branches = {b.name for b in others.branches}
+        for branch in lattice.branches:
+            if branch.name not in branches:
+                continue
+            names = {p.name for p in others.layout(branch.name).placements}
+            for placed in lattice.layout(branch.name).placements:
+                if placed.name in names or placed.kind is ElementKind.DRIFT:
+                    continue
+                key = (branch.name, placed.kind, round(placed.length, 9), round(placed.s_exit, 6))
+                out[key] = placed.name
+        return out
+
+    before, after = unnamed(old, new), unnamed(new, old)
+    return {(key[0], name): before[key] for key, name in after.items() if key in before}
+
+
+def update_ein_devices(
+    folder: str | Path, old: Lattice, new: Lattice, renamed: Mapping[tuple[str, str], str]
+) -> list[Path]:
+    """Keep the device files on the lattice: references follow ``renamed``, new instruments become BPMs.
+
+    Everything else people wrote in the naming and device files stays.
+    Returns the files changed.
+    """
+    folder = Path(folder)
+    changed = rename_references(folder, {f"{b}/{was}": f"{b}/{name}" for (b, name), was in renamed.items()})
+    instruments = {
+        (branch.name, p.name)
+        for branch in old.branches
+        for p in old.layout(branch.name).placements
+        if p.kind is ElementKind.INSTRUMENT
+    }
+    added = [
+        f"{branch.name}/{p.name}"
+        for branch in new.branches
+        for p in new.layout(branch.name).placements
+        if p.kind is ElementKind.INSTRUMENT
+        and (branch.name, p.name) not in instruments
+        and (branch.name, p.name) not in renamed
+    ]
+    if added and (path := add_bpms(folder, added, [b.name for b in new.branches])):
+        changed.append(path)
+    return changed
 
 
 def _write_bar_mode(folder: Path, ein: Ein, lattice: Lattice) -> Path:
@@ -396,14 +498,34 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--machine", type=Path, help=f"the machine folder (default: FOLDER/{MACHINE_DIR})")
     parser.add_argument("--write", action="store_true", help="replace the lattice files with the import")
+    parser.add_argument(
+        "--devices",
+        action="store_true",
+        help="with --write: device references follow renamed magnets, and new instruments become BPMs",
+    )
+    parser.add_argument(
+        "--convert-bmad",
+        action="store_true",
+        help="first stage the Bmad designs (LTR, RTE) as MAD-X again, through Bmad's writer, corrected",
+    )
+    parser.add_argument(
+        "--bmad-bin", type=Path, help="the folder of Bmad's programs (tao, bmad_to_mad_sad_elegant)"
+    )
     args = parser.parse_args(argv)
     machine = args.machine or args.folder / MACHINE_DIR
+    if args.convert_bmad:
+        from eicvibe.importers.bmad import bmad_tools
+
+        for source, conversion in convert_ein_bmad(args.folder, tools=bmad_tools(args.bmad_bin)).items():
+            print(f"{source} -> {conversion.madx.relative_to(args.folder)}")
+            for note in conversion.notes:
+                print(f"  {note}")
     ein = build_ein(args.folder)
     if not is_machine(machine):
         written = write_ein_machine(ein, machine)
         print(f"wrote a new machine folder, {machine} ({len(written)} files)")
     else:
-        changes = update_ein_machine(ein, machine, write=args.write)
+        changes = update_ein_machine(ein, machine, write=args.write, devices=args.devices)
         if not changes:
             print(f"{machine}: the lattice files match the design files")
         else:
@@ -415,9 +537,9 @@ def main(argv: list[str] | None = None) -> int:
             if len(changes) > 40:
                 print(f"  ... and {len(changes) - 40} more")
             print(
-                "replaced the lattice files"
+                ("replaced the lattice files" + (" and updated the device files" if args.devices else ""))
                 if args.write
-                else "nothing written; --write replaces the lattice files"
+                else "nothing written; --write replaces the lattice files, --devices also the device files"
             )
     try:
         problems = check_machine(machine)

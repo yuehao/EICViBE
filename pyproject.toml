@@ -8,6 +8,7 @@ authors = [
 ]
 requires-python = ">=3.14"
 dependencies = [
+    "numpy>=2",
     "pydantic>=2.12",
     "ruamel-yaml>=0.18",
 ]
@@ -15,8 +16,13 @@ dependencies = [
 [project.scripts]
 eicvibe = "eicvibe.store.cli:main"
 eicvibe-web = "eicvibe.api.__main__:main"
+eicvibe-virtual = "eicvibe.virtual.__main__:main"
+eicvibe-va = "eicvibe.va.__main__:main"
 
 [project.optional-dependencies]
+hdf5 = [
+    "h5py>=3.12",
+]
 madx = [
     "cpymad>=1.19",
 ]
@@ -41,7 +47,7 @@ build-backend = "uv_build"
 [dependency-groups]
 dev = [
     "cpymad>=1.19",
-    "eicvibe[web,xsuite,trackpad]",
+    "eicvibe[web,xsuite,trackpad,hdf5]",
     "httpx2>=2.13.1",
     "pytest>=9.1.1",
 ]

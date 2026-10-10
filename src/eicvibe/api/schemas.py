@@ -14,8 +14,8 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 #: Bumped when a response changes shape; the web client refuses other versions.
-#: 2: element EIC names (``eic_name``) and setting targets. 3: power circuits. 4: optics.
-SCHEMA_VERSION = 4
+#: 2: element EIC names (``eic_name``) and setting targets. 3: power circuits. 4: optics. 5: BPM orbits.
+SCHEMA_VERSION = 5
 
 
 class _Model(BaseModel):
@@ -124,6 +124,26 @@ class LatticeSummary(_Model):
     channels: int
     circuits: int = Field(description="Power circuits in the registry")
     strings: int = Field(description="Circuits that drive several magnets in series")
+    routes: list[RouteSummary] = Field(default_factory=list, description="The machine's routes")
+
+
+class RouteSegment(_Model):
+    branch: str = Field(description="Branch id")
+    start: str = Field(description="First occurrence (from its entrance)")
+    end: str = Field(description="Last occurrence (to its exit)")
+    s_start: float = Field(description="s along the route where the segment starts, m")
+    length: float
+
+
+class RouteSummary(_Model):
+    """A route: the beam's path through several branches, joined at forks (routes.yaml)."""
+
+    id: str = Field(description="route:<name>, as views address it where they take a branch id")
+    name: str
+    branches: list[str] = Field(description="The branch names it was given")
+    segments: list[RouteSegment]
+    length: float
+    problems: list[str] = Field(description="What keeps it from being one pass, e.g. an energy change")
 
 
 class Column(_Model):
@@ -317,3 +337,145 @@ class BranchOptics(_Model):
     profile: OpticsProfile | None = Field(
         description="Optics inside elements, where the engine samples them (TrackPad: its integrator steps)"
     )
+
+
+class RunEntry(_Model):
+    """A virtual machine's run (ADR 0007): what ran, and how far it has come.
+
+    A ring's run records turns; a route's records shots, single passes along
+    the route, and its turn numbers count shots.
+    """
+
+    id: str
+    kind: str = Field(description="ring or route")
+    unit: str = Field(description="What its turn numbers count: turn or shot")
+    lattice: str = Field(description="Lattice name")
+    lattice_digest: str
+    branch: str = Field(description="Branch name, or the route's name")
+    branch_id: str = Field(description="Branch id, or route:<name>")
+    engine: str
+    fidelity: str
+    start: str = Field(description="Turn 0 on the run's own clock, ISO 8601")
+    revolution_period: float = Field(description="s per turn, or per shot")
+    bpms: int
+    first_turn: int = Field(description="Earliest turn still kept turn by turn")
+    end_turn: int = Field(description="Turns recorded so far")
+    state: str = Field(description="running, stopped, done, failed or unknown")
+    updated: str | None = Field(description="When the run last wrote, ISO 8601")
+    machine: str | None = Field(None, description="The virtual accelerator's machine that runs it (ADR 0008)")
+    buffer_turns: int = Field(description="Turns its BPMs' buffer keeps (a ring); 0: every turn or shot")
+    slow_period: float = Field(description="Its slow orbit's sample, s; 0: one per chunk")
+    captures: int = Field(
+        description="Captures saved: the buffer frozen by a kick, injection, loss or request"
+    )
+
+
+class CaptureEntry(_Model):
+    """The BPM buffer frozen around a trigger and saved, as a real BPM system's acquisitions are."""
+
+    id: str
+    kind: str = Field(description="kick, inject, post-mortem (the beam was lost) or request")
+    trigger: int = Field(description="The turn of the trigger")
+    first: int = Field(description="Its first turn")
+    turns: int
+    wall: str = Field(description="When it was saved, ISO 8601")
+    partial: bool = Field(description="The run ended before all its turns were tracked")
+    detail: dict[str, Any]
+
+
+class RunEvent(_Model):
+    turn: int
+    kind: str = Field(description="start, inject, kick, settings, loss, warning, error")
+    detail: dict[str, Any]
+
+
+class OrbitFrames(_Model):
+    """BPM readings ``every`` turns (shots, samples) apart, oldest first: one orbit, or trajectory, each.
+
+    From the BPMs' buffer (the latest turns), from a capture, or from the slow orbit, whose
+    frames are samples, each the mean over ``sample_period`` seconds of the run.
+    """
+
+    schema_version: int = SCHEMA_VERSION
+    run: str
+    source: str = Field(description="buffer, slow, or capture:<id>")
+    unit: str = Field(description="What turn numbers count: turn, shot, or sample (the slow orbit)")
+    sample_period: float | None = Field(description="s between the slow orbit's samples")
+    times: list[float] | None = Field(description="The slow orbit's samples: their wall-clock time, s (Unix)")
+    bpms: list[str] = Field(description="BPM names in beam order")
+    s: list[float] = Field(description="s of every BPM, m")
+    every: int
+    turns: list[int] = Field(description="The turn of every orbit, oldest first")
+    x: list[list[float | None]] = Field(description="[orbit][bpm], mm; null where the BPM read nothing")
+    y: list[list[float | None]]
+    intensity: list[list[float | None]] = Field(description="[orbit][bpm], nC")
+    first_turn: int = Field(description="Earliest turn kept")
+    end_turn: int = Field(description="Turns recorded so far")
+    state: str
+    events: list[RunEvent] = Field(description="What happened before the orbits shown, from the oldest on")
+
+
+class PlaneCheck(_Model):
+    """One plane of a run's check: what its BPMs measured against what the model gives."""
+
+    measured_tune: float | None = Field(
+        description="Fractional tune of the readings, 0 to 1: the line seen, or 1 minus it where the phase "
+        "advance along the ring says so"
+    )
+    measured_full: float | None = Field(description="With the model's integer part")
+    model_tune: float | None = Field(description="The model's tune (optics), integer part included")
+    map_tune: float | None = Field(
+        description="The run's own one-turn map's fractional tune, when it started"
+    )
+    amplitude: float | None = Field(description="Oscillation amplitude, median over the BPMs, mm")
+    initial_amplitude: float | None = Field(
+        description="The same over the first 32 turns: before the bunch decoheres, its particles' amplitude"
+    )
+    spectrum: list[float] = Field(
+        description="Line amplitudes at RunCheck.frequencies, mean over the BPMs, mm"
+    )
+    phase_error: list[float | None] = Field(
+        description="Measured phase advance from the first BPM minus the model's, degrees"
+    )
+    phase_rms: float | None = Field(description="rms of phase_error, degrees")
+    beta_beating: list[float | None] = Field(
+        description="Relative beta error from the oscillation amplitudes (BPM gain errors included)"
+    )
+    beta_beating_rms: float | None
+    orbit: list[float | None] = Field(description="Mean reading of every BPM over the stretch, mm")
+    model_orbit: list[float | None] = Field(description="The model's closed orbit at every BPM, mm")
+    drift_tune: list[float | None] = Field(description="Tune of each stretch of RunCheck.drift_turns")
+    drift_amplitude: list[float | None] = Field(description="Amplitude of each stretch, mm")
+
+
+class Detuning(_Model):
+    """Tune against amplitude in the model: single particles kicked in one plane, tracked by the engine."""
+
+    plane: str = Field(description="The plane kicked: the one the beam oscillates in most")
+    amplitude: list[float] = Field(description="Largest oscillation amplitude over the BPMs, mm")
+    tune_x: list[float]
+    tune_y: list[float]
+    turns: int
+
+
+class RunCheck(_Model):
+    """A ring run's tracking checked against the model of its lattice and settings, over some turns."""
+
+    run: str
+    engine: str = Field(description="The engine of the model")
+    fidelity: str
+    source: str = Field(description="buffer or capture:<id>")
+    first_turn: int
+    turns: int
+    trigger: int | None = Field(description="A capture's trigger turn (a kick)")
+    settings: str = Field(description="Which settings the model has")
+    bpms: list[str]
+    s: list[float]
+    frequencies: list[float] = Field(description="Of the spectra, fractions of the revolution")
+    drift_turns: list[int] = Field(description="First turn of each stretch of the tune drift")
+    drift_window: int
+    synchrotron_tune: float | None = Field(description="The run's own one-turn map's, when it started")
+    x: PlaneCheck
+    y: PlaneCheck
+    detuning: Detuning | None
+    notes: list[str]

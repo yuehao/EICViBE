@@ -22,15 +22,26 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import RootModel
 
 from eicvibe.engines.contracts import EngineUnavailable, Fidelity, UnsupportedRequest
+from eicvibe.va.api import va_router
+from eicvibe.va.service import VirtualAccelerator
 
 from . import schemas
 from .catalog import Catalog, Payload, Revision
+from .checks import RunChecks
 from .optics import OpticsService, UnknownEngine
+from .runs import MAX_ORBITS, RunCatalog
 
 #: Where ``npm run build`` in ``web/`` puts the client.
 STATIC_DIR = Path(__file__).parent / "static"
 #: Lattice files and folders for :func:`app_from_environment`, separated by ``os.pathsep``.
 LATTICES_VARIABLE = "EICVIBE_LATTICES"
+#: Folders of virtual rings' runs (ADR 0007), likewise.
+RUNS_VARIABLE = "EICVIBE_RUNS"
+#: The virtual accelerator's state folder (ADR 0008), and the machine files it runs.
+VA_VARIABLE = "EICVIBE_VA"
+VA_SOURCE_VARIABLE = "EICVIBE_VA_SOURCE"
+#: The first administrator's password, for automated setups; otherwise one is made and printed.
+VA_ADMIN_VARIABLE = "EICVIBE_VA_ADMIN_PASSWORD"
 
 _MISSING_CLIENT = """<!doctype html><meta charset="utf-8"><title>EICViBE</title>
 <body style="font-family: system-ui; max-width: 40em; margin: 3em auto; line-height: 1.5">
@@ -57,14 +68,25 @@ def _not_modified(request: Request, etag: str) -> Response | None:
 
 
 def create_app(
-    catalog: Catalog, *, static_dir: Path | None = STATIC_DIR, optics: OpticsService | None = None
+    catalog: Catalog,
+    *,
+    static_dir: Path | None = STATIC_DIR,
+    optics: OpticsService | None = None,
+    runs: RunCatalog | None = None,
+    va: VirtualAccelerator | None = None,
 ) -> FastAPI:
     optics = optics or OpticsService()
+    runs = runs or RunCatalog([])
+    checks = RunChecks(runs, catalog, optics.worker)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
+        if va is not None:
+            va.autostart()
         yield
         optics.close()  # stops the engine workers
+        if va is not None:
+            va.close()  # stops the machines; their settings and the log stay
 
     app = FastAPI(
         title="EICViBE lattice viewer",
@@ -136,10 +158,14 @@ def create_app(
         optics at their forks), which can take a while: TrackPad starts Julia on first use.
         """
         found = revision(digest)
-        try:
-            found.lattice.layout(branch)
-        except KeyError:
-            raise HTTPException(404, f"no branch {branch}") from None
+        if branch.startswith("route:"):
+            if branch.removeprefix("route:") not in found.views.routes:
+                raise HTTPException(404, f"no {branch}")
+        else:
+            try:
+                found.lattice.layout(branch)
+            except KeyError:
+                raise HTTPException(404, f"no branch {branch}") from None
         try:
             payload = await optics.branch(found, engine, fidelity, branch)
         except UnknownEngine:
@@ -151,6 +177,74 @@ def create_app(
         except BrokenProcessPool:
             raise HTTPException(503, f"the {engine} worker stopped; try again") from None
         return _send(request, payload)
+
+    @api.get("/runs", response_model=list[schemas.RunEntry])
+    def run_list() -> list[schemas.RunEntry]:
+        """Virtual rings' runs in the folders the server was given, newest first."""
+        return runs.entries()
+
+    @api.get("/runs/{run}/orbits", response_model=schemas.OrbitFrames)
+    def orbits(
+        run: str,
+        request: Request,
+        every: int = Query(5, ge=1, le=1_000_000, description="Turns between orbits"),
+        count: int = Query(5, ge=1, le=MAX_ORBITS, description="Orbits"),
+        end: int | None = Query(
+            None, ge=1, description="The newest orbit is at turn end - 1; default: the latest"
+        ),
+        source: str = Query(
+            "buffer",
+            pattern=r"^(buffer|slow|capture:[\w.-]+)$",
+            description="buffer (the latest turns), slow (the slow orbit's samples) or capture:<id>",
+        ),
+    ) -> Response:
+        """BPM readings along the ring ``every`` turns (or samples) apart, from the BPMs' buffer, a
+        capture, or the slow orbit."""
+        try:
+            payload = runs.orbits(run, every, count, end, source)
+        except KeyError:
+            raise HTTPException(404, f"no run {run}") from None
+        except ValueError as error:
+            raise HTTPException(404, str(error)) from None
+        return _send(request, payload)
+
+    @api.get("/runs/{run}/captures", response_model=list[schemas.CaptureEntry])
+    def captures(run: str) -> list[schemas.CaptureEntry]:
+        """A run's captures, oldest first: its BPM buffer frozen by a kick, injection, loss or request."""
+        try:
+            return runs.captures(run)
+        except KeyError:
+            raise HTTPException(404, f"no run {run}") from None
+
+    @api.get("/runs/{run}/check", response_model=schemas.RunCheck)
+    def check(
+        run: str,
+        source: str = Query(
+            "kick",
+            pattern=r"^(kick|buffer|capture:[\w.-]+)$",
+            description="kick (the latest kick's capture, from the kick on), buffer (the latest turns) or "
+            "capture:<id>",
+        ),
+        first: int | None = Query(
+            None, ge=0, description="First turn; default: the kick, or the latest turns"
+        ),
+        turns: int = Query(1024, ge=64, le=8192, description="Turns to analyse"),
+        engine: str | None = Query(None, description="The model's engine; default: the run's"),
+        detuning: bool = Query(False, description="Also track single particles for tune against amplitude"),
+    ) -> schemas.RunCheck:
+        """A ring run's tracking against the model: tunes, phase advance, beta and orbit at its BPMs."""
+        try:
+            return checks.check(run, source, first, turns, engine, detuning)
+        except KeyError:
+            raise HTTPException(404, f"no run {run}") from None
+        except UnknownEngine:
+            raise HTTPException(404, f"no engine {engine}") from None
+        except (ValueError, UnsupportedRequest) as error:
+            raise HTTPException(422, str(error)) from None
+        except EngineUnavailable as error:
+            raise HTTPException(503, str(error)) from None
+        except BrokenProcessPool:
+            raise HTTPException(503, f"the {engine} worker stopped; try again") from None
 
     @api.get("/engines", response_model=list[schemas.EngineInfo])
     def engines() -> list[schemas.EngineInfo]:
@@ -172,6 +266,7 @@ def create_app(
     def health() -> dict[str, str]:
         return {"status": "ok"}
 
+    api.include_router(va_router(lambda: va))
     app.include_router(api)
 
     if static_dir is not None and (static_dir / "index.html").is_file():
@@ -198,4 +293,18 @@ def create_app(
 def app_from_environment() -> FastAPI:
     """The app for lattices listed in ``EICVIBE_LATTICES``; the factory server worker processes use."""
     paths = [p for p in os.environ.get(LATTICES_VARIABLE, "").split(os.pathsep) if p]
-    return create_app(Catalog(paths))
+    runs = [p for p in os.environ.get(RUNS_VARIABLE, "").split(os.pathsep) if p]
+    va = None
+    if state := os.environ.get(VA_VARIABLE):
+        from eicvibe.va import load_source
+
+        va = VirtualAccelerator(load_source(os.environ[VA_SOURCE_VARIABLE]), state)
+        runs.append(str(va.runs))
+        given = os.environ.get(VA_ADMIN_VARIABLE)
+        if (password := va.first_admin(given)) and not given:
+            print(
+                f"Virtual accelerator: a first user, admin, with password {password} "
+                "(shown once; change it on the admin page)",
+                flush=True,
+            )
+    return create_app(Catalog(paths), runs=RunCatalog(runs), va=va)

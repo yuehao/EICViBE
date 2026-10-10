@@ -164,10 +164,540 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Run List
+         * @description Virtual rings' runs in the folders the server was given, newest first.
+         */
+        get: operations["run_list_api_v1_runs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runs/{run}/captures": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Captures
+         * @description A run's captures, oldest first: its BPM buffer frozen by a kick, injection, loss or request.
+         */
+        get: operations["captures_api_v1_runs__run__captures_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runs/{run}/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Check
+         * @description A ring run's tracking against the model: tunes, phase advance, beta and orbit at its BPMs.
+         */
+        get: operations["check_api_v1_runs__run__check_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runs/{run}/orbits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Orbits
+         * @description BPM readings along the ring ``every`` turns (or samples) apart, from the BPMs' buffer, a
+         *     capture, or the slow orbit.
+         */
+        get: operations["orbits_api_v1_runs__run__orbits_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/va/actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Actions
+         * @description Starts, stops, forks, snapshots, kicks, logins and user changes, newest first; for operators.
+         */
+        get: operations["actions_api_v1_va_actions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/va/log": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Log
+         * @description Every write, newest first; ``before`` an id pages back. For users who are logged in.
+         */
+        get: operations["log_api_v1_va_log_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/va/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Login */
+        post: operations["login_api_v1_va_login_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/va/logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Logout */
+        post: operations["logout_api_v1_va_logout_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/va/machines": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Machines */
+        get: operations["machines_api_v1_va_machines_get"];
+        put?: never;
+        /** Create */
+        post: operations["create_api_v1_va_machines_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/va/machines/{machine}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Machine */
+        get: operations["machine_api_v1_va_machines__machine__get"];
+        put?: never;
+        post?: never;
+        /** Remove */
+        delete: operations["remove_api_v1_va_machines__machine__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/va/machines/{machine}/acquire": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Acquire
+         * @description Capture a ring's BPM buffer now; it appears among the run's captures.
+         */
+        post: operations["acquire_api_v1_va_machines__machine__acquire_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/va/machines/{machine}/beam": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Beam */
+        post: operations["beam_api_v1_va_machines__machine__beam_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/va/machines/{machine}/fork": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Fork */
+        post: operations["fork_api_v1_va_machines__machine__fork_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/va/machines/{machine}/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reset */
+        post: operations["reset_api_v1_va_machines__machine__reset_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/va/machines/{machine}/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Settings */
+        get: operations["settings_api_v1_va_machines__machine__settings_get"];
+        put?: never;
+        /** Write */
+        post: operations["write_api_v1_va_machines__machine__settings_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/va/machines/{machine}/snapshots": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Snapshots */
+        get: operations["snapshots_api_v1_va_machines__machine__snapshots_get"];
+        put?: never;
+        /** Snapshot */
+        post: operations["snapshot_api_v1_va_machines__machine__snapshots_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/va/machines/{machine}/snapshots/{snapshot}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Restore */
+        post: operations["restore_api_v1_va_machines__machine__snapshots__snapshot__restore_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/va/machines/{machine}/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start */
+        post: operations["start_api_v1_va_machines__machine__start_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/va/machines/{machine}/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Stop */
+        post: operations["stop_api_v1_va_machines__machine__stop_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/va/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Whoami */
+        get: operations["whoami_api_v1_va_me_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/va/me/password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Change Password */
+        post: operations["change_password_api_v1_va_me_password_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/va/me/tokens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** My Tokens */
+        get: operations["my_tokens_api_v1_va_me_tokens_get"];
+        put?: never;
+        /** New Token */
+        post: operations["new_token_api_v1_va_me_tokens_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/va/options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Options */
+        get: operations["options_api_v1_va_options_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/va/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Status */
+        get: operations["status_api_v1_va_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/va/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Users */
+        get: operations["users_api_v1_va_users_get"];
+        put?: never;
+        /** Add User */
+        post: operations["add_user_api_v1_va_users_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/va/users/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Change User */
+        patch: operations["change_user_api_v1_va_users__name__patch"];
+        trace?: never;
+    };
+    "/api/v1/va/users/{name}/password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reset Password */
+        post: operations["reset_password_api_v1_va_users__name__password_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** ActionEntry */
+        ActionEntry: {
+            /** Action */
+            action: string;
+            /** Detail */
+            detail: {
+                [key: string]: unknown;
+            };
+            /** Id */
+            id: number;
+            /** Machine */
+            machine: string | null;
+            /** Reason */
+            reason: string;
+            /** Time */
+            time: string;
+            /** User */
+            user: string;
+        };
+        /** BeamRequest */
+        BeamRequest: {
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "kick" | "inject";
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
+            /**
+             * X
+             * @description Kick angle, rad
+             * @default 0
+             */
+            x: number;
+            /**
+             * Y
+             * @default 0
+             */
+            y: number;
+        };
         /**
          * Bounds
          * @description Extent of a branch on the floor, m.
@@ -189,7 +719,7 @@ export interface components {
             floor: components["schemas"]["BranchFloor"];
             /**
              * Schema Version
-             * @default 4
+             * @default 5
              */
             schema_version: number;
             table: components["schemas"]["BranchTable"];
@@ -269,7 +799,7 @@ export interface components {
             s: number[];
             /**
              * Schema Version
-             * @default 4
+             * @default 5
              */
             schema_version: number;
             /**
@@ -371,6 +901,52 @@ export interface components {
                 [key: string]: (number | null)[];
             };
         };
+        /**
+         * CaptureEntry
+         * @description The BPM buffer frozen around a trigger and saved, as a real BPM system's acquisitions are.
+         */
+        CaptureEntry: {
+            /** Detail */
+            detail: {
+                [key: string]: unknown;
+            };
+            /**
+             * First
+             * @description Its first turn
+             */
+            first: number;
+            /** Id */
+            id: string;
+            /**
+             * Kind
+             * @description kick, inject, post-mortem (the beam was lost) or request
+             */
+            kind: string;
+            /**
+             * Partial
+             * @description The run ended before all its turns were tracked
+             */
+            partial: boolean;
+            /**
+             * Trigger
+             * @description The turn of the trigger
+             */
+            trigger: number;
+            /** Turns */
+            turns: number;
+            /**
+             * Wall
+             * @description When it was saved, ISO 8601
+             */
+            wall: string;
+        };
+        /** Change */
+        Change: {
+            /** Channel */
+            channel: string;
+            /** Value */
+            value: number;
+        };
         /** Channel */
         Channel: {
             /**
@@ -437,6 +1013,28 @@ export interface components {
             /** Unit */
             unit: string | null;
         };
+        /**
+         * Detuning
+         * @description Tune against amplitude in the model: single particles kicked in one plane, tracked by the engine.
+         */
+        Detuning: {
+            /**
+             * Amplitude
+             * @description Largest oscillation amplitude over the BPMs, mm
+             */
+            amplitude: number[];
+            /**
+             * Plane
+             * @description The plane kicked: the one the beam oscillates in most
+             */
+            plane: string;
+            /** Tune X */
+            tune_x: number[];
+            /** Tune Y */
+            tune_y: number[];
+            /** Turns */
+            turns: number;
+        };
         /** Device */
         Device: {
             /** Channels */
@@ -461,6 +1059,13 @@ export interface components {
             message: string;
             /** Subject */
             subject: string;
+        };
+        /** EngineChoice */
+        EngineChoice: {
+            /** Available */
+            available: boolean;
+            /** Name */
+            name: string;
         };
         /**
          * EngineInfo
@@ -492,6 +1097,16 @@ export interface components {
          * @enum {string}
          */
         Fidelity: "linear" | "fast" | "standard" | "precise";
+        /** Fork */
+        Fork: {
+            /** Name */
+            name?: string | null;
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
+        };
         /** ForkLink */
         ForkLink: {
             /** To Branch */
@@ -603,8 +1218,13 @@ export interface components {
             /** Root Branch */
             root_branch: string | null;
             /**
+             * Routes
+             * @description The machine's routes
+             */
+            routes?: components["schemas"]["RouteSummary"][];
+            /**
              * Schema Version
-             * @default 4
+             * @default 5
              */
             schema_version: number;
             /** Shared Components */
@@ -616,6 +1236,184 @@ export interface components {
              * @description Circuits that drive several magnets in series
              */
             strings: number;
+        };
+        /** LogEntry */
+        LogEntry: {
+            /** Applied */
+            applied: boolean;
+            /** Channel */
+            channel: string;
+            /** Correlation */
+            correlation: string;
+            /** Id */
+            id: number;
+            /** Machine */
+            machine: string;
+            /** New */
+            new: number;
+            /** Old */
+            old: number | null;
+            /** Reason */
+            reason: string;
+            /** Refusal */
+            refusal: string | null;
+            /** Run */
+            run: string | null;
+            /** Time */
+            time: string;
+            /**
+             * Turn
+             * @description The run's turn or shot when it was written
+             */
+            turn: number | null;
+            /** Unit */
+            unit: string;
+            /** User */
+            user: string;
+        };
+        /** Login */
+        Login: {
+            /** Name */
+            name: string;
+            /** Password */
+            password: string;
+        };
+        /** MachineEntry */
+        MachineEntry: {
+            /** Autostart */
+            autostart: boolean;
+            /**
+             * Changes
+             * @description Setting channels away from their original values
+             */
+            changes: number;
+            /** Engine */
+            engine: string | null;
+            /** Error */
+            error: string | null;
+            /** Fidelity */
+            fidelity: string;
+            /** Id */
+            id: string;
+            /**
+             * Kind
+             * @description ring or route
+             */
+            kind: string;
+            /** Mode */
+            mode: string | null;
+            /** Name */
+            name: string;
+            /** Owner */
+            owner: string;
+            /** Parent */
+            parent: string | null;
+            /** Particles */
+            particles: number;
+            /**
+             * Position
+             * @description Its run's turn (ring) or shot (route) now
+             */
+            position: number | null;
+            /**
+             * Ramp Turns
+             * @description Turns a ring's setting change ramps over; 0 steps
+             */
+            ramp_turns: number;
+            /** Rate */
+            rate: number | null;
+            /**
+             * Run
+             * @description The run it writes now (its BPM history, /runs/{run})
+             */
+            run: string | null;
+            /** Shared */
+            shared: boolean;
+            /** Started */
+            started: string | null;
+            /**
+             * State
+             * @description stopped, starting, running, stopping or failed
+             */
+            state: string;
+            /**
+             * Target
+             * @description The ring's branch name, or the route's name
+             */
+            target: string;
+            /**
+             * Warnings
+             * @description What the run found wrong, e.g. an RF phase that holds no bunch
+             */
+            warnings: string[];
+        };
+        /** Me */
+        Me: {
+            /** Logged In */
+            logged_in: boolean;
+            /** Name */
+            name: string;
+            /**
+             * Role
+             * @description viewer, physicist, operator or admin
+             */
+            role: string;
+        };
+        /** NewMachine */
+        NewMachine: {
+            /**
+             * Autostart
+             * @default false
+             */
+            autostart: boolean;
+            /** Engine */
+            engine?: string | null;
+            /**
+             * Fidelity
+             * @default standard
+             */
+            fidelity: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "ring" | "route";
+            /** Mode */
+            mode?: string | null;
+            /** Name */
+            name: string;
+            /**
+             * Particles
+             * @default 50
+             */
+            particles: number;
+            /**
+             * Ramp Turns
+             * @description Turns a ring's setting change ramps over
+             * @default 1024
+             */
+            ramp_turns: number;
+            /** Rate */
+            rate?: number | null;
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
+            /**
+             * Shared
+             * @default true
+             */
+            shared: boolean;
+            /** Target */
+            target: string;
+        };
+        /** NewUser */
+        NewUser: {
+            /** Name */
+            name: string;
+            /** Role */
+            role: string;
         };
         /** OccurrenceDetail */
         OccurrenceDetail: {
@@ -657,7 +1455,7 @@ export interface components {
             s_exit: number;
             /**
              * Schema Version
-             * @default 4
+             * @default 5
              */
             schema_version: number;
             /** Tags */
@@ -686,6 +1484,88 @@ export interface components {
                 [key: string]: number[];
             };
         };
+        /**
+         * OrbitFrames
+         * @description BPM readings ``every`` turns (shots, samples) apart, oldest first: one orbit, or trajectory, each.
+         *
+         *     From the BPMs' buffer (the latest turns), from a capture, or from the slow orbit, whose
+         *     frames are samples, each the mean over ``sample_period`` seconds of the run.
+         */
+        OrbitFrames: {
+            /**
+             * Bpms
+             * @description BPM names in beam order
+             */
+            bpms: string[];
+            /**
+             * End Turn
+             * @description Turns recorded so far
+             */
+            end_turn: number;
+            /**
+             * Events
+             * @description What happened before the orbits shown, from the oldest on
+             */
+            events: components["schemas"]["RunEvent"][];
+            /** Every */
+            every: number;
+            /**
+             * First Turn
+             * @description Earliest turn kept
+             */
+            first_turn: number;
+            /**
+             * Intensity
+             * @description [orbit][bpm], nC
+             */
+            intensity: (number | null)[][];
+            /** Run */
+            run: string;
+            /**
+             * S
+             * @description s of every BPM, m
+             */
+            s: number[];
+            /**
+             * Sample Period
+             * @description s between the slow orbit's samples
+             */
+            sample_period: number | null;
+            /**
+             * Schema Version
+             * @default 5
+             */
+            schema_version: number;
+            /**
+             * Source
+             * @description buffer, slow, or capture:<id>
+             */
+            source: string;
+            /** State */
+            state: string;
+            /**
+             * Times
+             * @description The slow orbit's samples: their wall-clock time, s (Unix)
+             */
+            times: number[] | null;
+            /**
+             * Turns
+             * @description The turn of every orbit, oldest first
+             */
+            turns: number[];
+            /**
+             * Unit
+             * @description What turn numbers count: turn, shot, or sample (the slow orbit)
+             */
+            unit: string;
+            /**
+             * X
+             * @description [orbit][bpm], mm; null where the BPM read nothing
+             */
+            x: (number | null)[][];
+            /** Y */
+            y: (number | null)[][];
+        };
         /** Parameter */
         Parameter: {
             /** Description */
@@ -701,6 +1581,91 @@ export interface components {
             unit: string | null;
             /** Value */
             value: unknown;
+        };
+        /** PasswordChange */
+        PasswordChange: {
+            /** New */
+            new: string;
+            /** Old */
+            old: string;
+        };
+        /**
+         * PlaneCheck
+         * @description One plane of a run's check: what its BPMs measured against what the model gives.
+         */
+        PlaneCheck: {
+            /**
+             * Amplitude
+             * @description Oscillation amplitude, median over the BPMs, mm
+             */
+            amplitude: number | null;
+            /**
+             * Beta Beating
+             * @description Relative beta error from the oscillation amplitudes (BPM gain errors included)
+             */
+            beta_beating: (number | null)[];
+            /** Beta Beating Rms */
+            beta_beating_rms: number | null;
+            /**
+             * Drift Amplitude
+             * @description Amplitude of each stretch, mm
+             */
+            drift_amplitude: (number | null)[];
+            /**
+             * Drift Tune
+             * @description Tune of each stretch of RunCheck.drift_turns
+             */
+            drift_tune: (number | null)[];
+            /**
+             * Initial Amplitude
+             * @description The same over the first 32 turns: before the bunch decoheres, its particles' amplitude
+             */
+            initial_amplitude: number | null;
+            /**
+             * Map Tune
+             * @description The run's own one-turn map's fractional tune, when it started
+             */
+            map_tune: number | null;
+            /**
+             * Measured Full
+             * @description With the model's integer part
+             */
+            measured_full: number | null;
+            /**
+             * Measured Tune
+             * @description Fractional tune of the readings, 0 to 1: the line seen, or 1 minus it where the phase advance along the ring says so
+             */
+            measured_tune: number | null;
+            /**
+             * Model Orbit
+             * @description The model's closed orbit at every BPM, mm
+             */
+            model_orbit: (number | null)[];
+            /**
+             * Model Tune
+             * @description The model's tune (optics), integer part included
+             */
+            model_tune: number | null;
+            /**
+             * Orbit
+             * @description Mean reading of every BPM over the stretch, mm
+             */
+            orbit: (number | null)[];
+            /**
+             * Phase Error
+             * @description Measured phase advance from the first BPM minus the model's, degrees
+             */
+            phase_error: (number | null)[];
+            /**
+             * Phase Rms
+             * @description rms of phase_error, degrees
+             */
+            phase_rms: number | null;
+            /**
+             * Spectrum
+             * @description Line amplitudes at RunCheck.frequencies, mean over the BPMs, mm
+             */
+            spectrum: number[];
         };
         /**
          * Pose
@@ -764,6 +1729,14 @@ export interface components {
             /** @description This magnet's transfer function */
             transfer: components["schemas"]["Transfer"] | null;
         };
+        /** Reason */
+        Reason: {
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
+        };
         /** Reference */
         Reference: {
             /**
@@ -779,6 +1752,276 @@ export interface components {
             /** Species */
             species: string | null;
         };
+        /** ResetRequest */
+        ResetRequest: {
+            /**
+             * Channels
+             * @description None: every changed channel
+             */
+            channels?: string[] | null;
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
+        };
+        /** RouteSegment */
+        RouteSegment: {
+            /**
+             * Branch
+             * @description Branch id
+             */
+            branch: string;
+            /**
+             * End
+             * @description Last occurrence (to its exit)
+             */
+            end: string;
+            /** Length */
+            length: number;
+            /**
+             * S Start
+             * @description s along the route where the segment starts, m
+             */
+            s_start: number;
+            /**
+             * Start
+             * @description First occurrence (from its entrance)
+             */
+            start: string;
+        };
+        /**
+         * RouteSummary
+         * @description A route: the beam's path through several branches, joined at forks (routes.yaml).
+         */
+        RouteSummary: {
+            /**
+             * Branches
+             * @description The branch names it was given
+             */
+            branches: string[];
+            /**
+             * Id
+             * @description route:<name>, as views address it where they take a branch id
+             */
+            id: string;
+            /** Length */
+            length: number;
+            /** Name */
+            name: string;
+            /**
+             * Problems
+             * @description What keeps it from being one pass, e.g. an energy change
+             */
+            problems: string[];
+            /** Segments */
+            segments: components["schemas"]["RouteSegment"][];
+        };
+        /**
+         * RunCheck
+         * @description A ring run's tracking checked against the model of its lattice and settings, over some turns.
+         */
+        RunCheck: {
+            /** Bpms */
+            bpms: string[];
+            detuning: components["schemas"]["Detuning"] | null;
+            /**
+             * Drift Turns
+             * @description First turn of each stretch of the tune drift
+             */
+            drift_turns: number[];
+            /** Drift Window */
+            drift_window: number;
+            /**
+             * Engine
+             * @description The engine of the model
+             */
+            engine: string;
+            /** Fidelity */
+            fidelity: string;
+            /** First Turn */
+            first_turn: number;
+            /**
+             * Frequencies
+             * @description Of the spectra, fractions of the revolution
+             */
+            frequencies: number[];
+            /** Notes */
+            notes: string[];
+            /** Run */
+            run: string;
+            /** S */
+            s: number[];
+            /**
+             * Settings
+             * @description Which settings the model has
+             */
+            settings: string;
+            /**
+             * Source
+             * @description buffer or capture:<id>
+             */
+            source: string;
+            /**
+             * Synchrotron Tune
+             * @description The run's own one-turn map's, when it started
+             */
+            synchrotron_tune: number | null;
+            /**
+             * Trigger
+             * @description A capture's trigger turn (a kick)
+             */
+            trigger: number | null;
+            /** Turns */
+            turns: number;
+            x: components["schemas"]["PlaneCheck"];
+            y: components["schemas"]["PlaneCheck"];
+        };
+        /**
+         * RunEntry
+         * @description A virtual machine's run (ADR 0007): what ran, and how far it has come.
+         *
+         *     A ring's run records turns; a route's records shots, single passes along
+         *     the route, and its turn numbers count shots.
+         */
+        RunEntry: {
+            /** Bpms */
+            bpms: number;
+            /**
+             * Branch
+             * @description Branch name, or the route's name
+             */
+            branch: string;
+            /**
+             * Branch Id
+             * @description Branch id, or route:<name>
+             */
+            branch_id: string;
+            /**
+             * Buffer Turns
+             * @description Turns its BPMs' buffer keeps (a ring); 0: every turn or shot
+             */
+            buffer_turns: number;
+            /**
+             * Captures
+             * @description Captures saved: the buffer frozen by a kick, injection, loss or request
+             */
+            captures: number;
+            /**
+             * End Turn
+             * @description Turns recorded so far
+             */
+            end_turn: number;
+            /** Engine */
+            engine: string;
+            /** Fidelity */
+            fidelity: string;
+            /**
+             * First Turn
+             * @description Earliest turn still kept turn by turn
+             */
+            first_turn: number;
+            /** Id */
+            id: string;
+            /**
+             * Kind
+             * @description ring or route
+             */
+            kind: string;
+            /**
+             * Lattice
+             * @description Lattice name
+             */
+            lattice: string;
+            /** Lattice Digest */
+            lattice_digest: string;
+            /**
+             * Machine
+             * @description The virtual accelerator's machine that runs it (ADR 0008)
+             */
+            machine?: string | null;
+            /**
+             * Revolution Period
+             * @description s per turn, or per shot
+             */
+            revolution_period: number;
+            /**
+             * Slow Period
+             * @description Its slow orbit's sample, s; 0: one per chunk
+             */
+            slow_period: number;
+            /**
+             * Start
+             * @description Turn 0 on the run's own clock, ISO 8601
+             */
+            start: string;
+            /**
+             * State
+             * @description running, stopped, done, failed or unknown
+             */
+            state: string;
+            /**
+             * Unit
+             * @description What its turn numbers count: turn or shot
+             */
+            unit: string;
+            /**
+             * Updated
+             * @description When the run last wrote, ISO 8601
+             */
+            updated: string | null;
+        };
+        /** RunEvent */
+        RunEvent: {
+            /** Detail */
+            detail: {
+                [key: string]: unknown;
+            };
+            /**
+             * Kind
+             * @description start, inject, kick, settings, loss, warning, error
+             */
+            kind: string;
+            /** Turn */
+            turn: number;
+        };
+        /** SettingRow */
+        SettingRow: {
+            /** At */
+            at: string | null;
+            /** By */
+            by: string | null;
+            /** Changed */
+            changed: boolean;
+            /** Channel */
+            channel: string;
+            /** Device */
+            device: string;
+            /**
+             * Kind
+             * @description circuit (a supply's current) or parameter (e.g. an RF voltage)
+             */
+            kind: string;
+            /** Limits */
+            limits: number[] | null;
+            /**
+             * Occurrences
+             * @description Lattice occurrences it sets
+             */
+            occurrences: string[];
+            /**
+             * Original
+             * @description From the machine files: design, and the mode
+             */
+            original: number;
+            /** Unit */
+            unit: string;
+            /**
+             * Value
+             * @description Now: the live value, or the original
+             */
+            value: number;
+        };
         /** SharedComponent */
         SharedComponent: {
             /** Id */
@@ -787,6 +2030,46 @@ export interface components {
             name: string;
             /** Traversals */
             traversals: components["schemas"]["Traversal"][];
+        };
+        /** SnapshotEntry */
+        SnapshotEntry: {
+            /** Changes */
+            changes: number;
+            /** Id */
+            id: number;
+            /** Name */
+            name: string;
+            /** Time */
+            time?: string | null;
+            /** User */
+            user?: string | null;
+        };
+        /** SnapshotRequest */
+        SnapshotRequest: {
+            /** Name */
+            name: string;
+        };
+        /** TokenEntry */
+        TokenEntry: {
+            /** Created */
+            created: string;
+            /** Label */
+            label: string;
+        };
+        /** TokenIssued */
+        TokenIssued: {
+            /** Label */
+            label: string;
+            /**
+             * Token
+             * @description Shown once: send it as Authorization: Bearer <token>
+             */
+            token: string;
+        };
+        /** TokenRequest */
+        TokenRequest: {
+            /** Label */
+            label: string;
         };
         /**
          * Transfer
@@ -827,6 +2110,66 @@ export interface components {
             /** Role */
             role: string;
         };
+        /** UserChange */
+        UserChange: {
+            /** Disabled */
+            disabled?: boolean | null;
+            /** Role */
+            role?: string | null;
+        };
+        /** UserCreated */
+        UserCreated: {
+            /** Name */
+            name: string;
+            /**
+             * Password
+             * @description Shown once
+             */
+            password: string;
+            /** Role */
+            role: string;
+        };
+        /** UserEntry */
+        UserEntry: {
+            /** Created */
+            created: string;
+            /** Disabled */
+            disabled: boolean;
+            /** Name */
+            name: string;
+            /** Role */
+            role: string;
+        };
+        /**
+         * VaOptions
+         * @description What machines can be made of.
+         */
+        VaOptions: {
+            /** Engines */
+            engines: components["schemas"]["EngineChoice"][];
+            /** Fidelities */
+            fidelities: string[];
+            /** Modes */
+            modes: string[];
+            /** Rings */
+            rings: string[];
+            /** Routes */
+            routes: string[];
+            /** Sandbox Quota */
+            sandbox_quota: number;
+            /** Source */
+            source: string;
+        };
+        /** VaStatus */
+        VaStatus: {
+            /** Enabled */
+            enabled: boolean;
+            /**
+             * Source
+             * @description The machine files it runs
+             */
+            source?: string | null;
+        };
         /** ValidationError */
         ValidationError: {
             /** Context */
@@ -839,6 +2182,49 @@ export interface components {
             msg: string;
             /** Error Type */
             type: string;
+        };
+        /** WriteEntry */
+        WriteEntry: {
+            /** Applied */
+            applied: boolean;
+            /** Channel */
+            channel: string;
+            /** New */
+            new: number;
+            /** Old */
+            old: number | null;
+            /** Refusal */
+            refusal: string | null;
+            /** Unit */
+            unit: string;
+        };
+        /** WriteRequest */
+        WriteRequest: {
+            /**
+             * Atomic
+             * @description One refused write refuses them all
+             * @default true
+             */
+            atomic: boolean;
+            /** Changes */
+            changes: components["schemas"]["Change"][];
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
+        };
+        /** WriteResult */
+        WriteResult: {
+            /** Applied */
+            applied: boolean;
+            /**
+             * Correlation
+             * @description Groups the writes of one change in the log
+             */
+            correlation: string | null;
+            /** Writes */
+            writes: components["schemas"]["WriteEntry"][];
         };
     };
     responses: never;
@@ -1060,6 +2446,1014 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OccurrenceDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_list_api_v1_runs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunEntry"][];
+                };
+            };
+        };
+    };
+    captures_api_v1_runs__run__captures_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaptureEntry"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    check_api_v1_runs__run__check_get: {
+        parameters: {
+            query?: {
+                /** @description kick (the latest kick's capture, from the kick on), buffer (the latest turns) or capture:<id> */
+                source?: string;
+                /** @description First turn; default: the kick, or the latest turns */
+                first?: number | null;
+                /** @description Turns to analyse */
+                turns?: number;
+                /** @description The model's engine; default: the run's */
+                engine?: string | null;
+                /** @description Also track single particles for tune against amplitude */
+                detuning?: boolean;
+            };
+            header?: never;
+            path: {
+                run: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunCheck"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    orbits_api_v1_runs__run__orbits_get: {
+        parameters: {
+            query?: {
+                /** @description Turns between orbits */
+                every?: number;
+                /** @description Orbits */
+                count?: number;
+                /** @description The newest orbit is at turn end - 1; default: the latest */
+                end?: number | null;
+                /** @description buffer (the latest turns), slow (the slow orbit's samples) or capture:<id> */
+                source?: string;
+            };
+            header?: never;
+            path: {
+                run: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrbitFrames"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    actions_api_v1_va_actions_get: {
+        parameters: {
+            query?: {
+                machine?: string | null;
+                user?: string | null;
+                before?: number | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActionEntry"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    log_api_v1_va_log_get: {
+        parameters: {
+            query?: {
+                machine?: string | null;
+                user?: string | null;
+                channel?: string | null;
+                correlation?: string | null;
+                before?: number | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LogEntry"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    login_api_v1_va_login_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Login"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Me"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    logout_api_v1_va_logout_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    machines_api_v1_va_machines_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MachineEntry"][];
+                };
+            };
+        };
+    };
+    create_api_v1_va_machines_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NewMachine"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MachineEntry"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    machine_api_v1_va_machines__machine__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                machine: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MachineEntry"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_api_v1_va_machines__machine__delete: {
+        parameters: {
+            query?: {
+                reason?: string;
+            };
+            header?: never;
+            path: {
+                machine: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    acquire_api_v1_va_machines__machine__acquire_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                machine: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["Reason"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    beam_api_v1_va_machines__machine__beam_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                machine: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BeamRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    fork_api_v1_va_machines__machine__fork_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                machine: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["Fork"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MachineEntry"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reset_api_v1_va_machines__machine__reset_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                machine: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResetRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    settings_api_v1_va_machines__machine__settings_get: {
+        parameters: {
+            query?: {
+                changed?: boolean;
+            };
+            header?: never;
+            path: {
+                machine: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingRow"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    write_api_v1_va_machines__machine__settings_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                machine: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WriteRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    snapshots_api_v1_va_machines__machine__snapshots_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                machine: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SnapshotEntry"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    snapshot_api_v1_va_machines__machine__snapshots_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                machine: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SnapshotRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SnapshotEntry"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    restore_api_v1_va_machines__machine__snapshots__snapshot__restore_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                machine: string;
+                snapshot: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["Reason"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_api_v1_va_machines__machine__start_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                machine: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["Reason"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MachineEntry"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stop_api_v1_va_machines__machine__stop_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                machine: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["Reason"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MachineEntry"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    whoami_api_v1_va_me_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Me"];
+                };
+            };
+        };
+    };
+    change_password_api_v1_va_me_password_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PasswordChange"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    my_tokens_api_v1_va_me_tokens_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TokenEntry"][];
+                };
+            };
+        };
+    };
+    new_token_api_v1_va_me_tokens_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TokenRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TokenIssued"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    options_api_v1_va_options_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VaOptions"];
+                };
+            };
+        };
+    };
+    status_api_v1_va_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VaStatus"];
+                };
+            };
+        };
+    };
+    users_api_v1_va_users_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserEntry"][];
+                };
+            };
+        };
+    };
+    add_user_api_v1_va_users_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NewUser"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserCreated"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    change_user_api_v1_va_users__name__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UserChange"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserEntry"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reset_password_api_v1_va_users__name__password_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserCreated"];
                 };
             };
             /** @description Validation Error */

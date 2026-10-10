@@ -18,8 +18,9 @@ An engine that cannot meet a request refuses it and says why
 (:class:`UnsupportedRequest`); it never drops an effect silently.
 """
 
+from dataclasses import dataclass
 from enum import StrEnum
-from typing import Self
+from typing import Any, Self
 
 from pydantic import Field, model_validator
 
@@ -204,6 +205,11 @@ class OpticsRequest(DomainModel):
         description="Also report optics inside elements (OpticsResult.profile), where the engine can "
         "sample them without changing its results",
     )
+    start: str | None = Field(
+        None,
+        description="Occurrence at whose entrance to start: a part of the branch, single pass, as a line",
+    )
+    end: str | None = Field(None, description="Occurrence at whose exit to end")
 
 
 class OrbitRequest(DomainModel):
@@ -211,6 +217,11 @@ class OrbitRequest(DomainModel):
     initial: tuple[Real, Real, Real, Real, Real, Real] | None = Field(
         None, description="(x, px, y, py, zeta, delta) where a line starts; a ring finds its closed orbit"
     )
+    start: str | None = Field(
+        None,
+        description="Occurrence at whose entrance to start: a part of the branch, single pass, as a line",
+    )
+    end: str | None = Field(None, description="Occurrence at whose exit to end")
     delta: Real = Field(
         0.0,
         description="Momentum deviation of a ring's closed orbit; RF sets it if longitudinal",
@@ -365,6 +376,49 @@ class OrbitResult(_Result):
             if len(getattr(self, name)) != n:
                 raise ValueError(f"{name} has {len(getattr(self, name))} values for {n} occurrences")
         return self
+
+
+@dataclass(frozen=True, eq=False)
+class Ramp:
+    """Settings that move while a bunch is tracked, turn by turn, as magnets follow their power supplies.
+
+    Each (occurrence, parameter) of ``start`` goes to its value in ``end``: before turn ``t`` of the
+    tracking call it is ``start + fraction[t] * (end - start)``. ``fraction`` has a value per turn of
+    the call, from 0 to 1, held at either end outside the ramp; a ramp may begin or end within a
+    call, or span several. Settings change the beam this way rather than by a step between calls.
+    """
+
+    start: dict[tuple[str, str], float]
+    end: dict[tuple[str, str], float]
+    fraction: Any
+    """numpy array, one value per turn of the call."""
+
+    def at(self, turn: int) -> dict[tuple[str, str], float]:
+        """The values before ``turn`` of the call."""
+        f = float(self.fraction[turn])
+        if f == 1.0:
+            return dict(self.end)  # exactly where the ramp ends
+        return {key: value + f * (self.end[key] - value) for key, value in self.start.items()}
+
+
+@dataclass(frozen=True, eq=False)
+class BeamTrack:
+    """A bunch tracked turn after turn, seen as BPMs see it: its centroid at every observation point.
+
+    The bulk form of tracking, for long runs of many particles: numpy arrays,
+    not nested tuples. ``x``, ``y`` (m) and ``count`` are ``[point, turn]``: the
+    mean over the particles still alive (NaN when none is) and how many there
+    are. ``final`` holds every particle's ``(x, px, y, py, zeta, delta)`` after the
+    last turn, to continue from; ``lost`` marks those lost.
+    """
+
+    observe: tuple[str, ...]
+    turns: int
+    x: Any
+    y: Any
+    count: Any
+    final: Any
+    lost: Any
 
 
 type Record = tuple[tuple[tuple[float, ...], ...], ...]

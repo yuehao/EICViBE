@@ -1,9 +1,10 @@
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 
 import { api, type LatticeEntry, type LatticeSummary } from "../api/client";
 import { isOpen, type BranchModel } from "../model/branch";
 import { formatEnergy, formatNumber } from "../model/format";
 import { BRANCH_COLORS, isDrift, swatch } from "../model/kinds";
+import type { RouteModel } from "../model/route";
 import type { Target } from "../model/store";
 
 interface Props {
@@ -13,15 +14,19 @@ interface Props {
   summary: LatticeSummary | null;
   branchOrder: string[];
   models: Map<string, BranchModel>;
+  routes: Map<string, RouteModel>;
   current: string | null;
   onSource(source: string): void;
   onRevision(digest: string): void;
   onBranch(branch: string): void;
   onFind(target: Target): void;
+  /** The virtual accelerator's machine chooser and account menu, when there is one. */
+  machine?: ReactNode;
+  account?: ReactNode;
 }
 
 export function TopBar(props: Props) {
-  const { entries, source, digest, summary, branchOrder, models, current } = props;
+  const { entries, source, digest, summary, branchOrder, models, routes, current } = props;
   const entry = entries?.find((e) => e.source === source);
   const newer = entry && digest && entry.digest !== digest ? entry.digest : null;
   const branches = new Map(summary?.branches.map((b) => [b.id, b]));
@@ -77,10 +82,33 @@ export function TopBar(props: Props) {
           );
         })}
       </nav>
+      {summary?.routes?.length ? (
+        <nav className="branches routes" aria-label="Routes">
+          {summary.routes.map((r) => (
+            <button
+              key={r.id}
+              type="button"
+              className={r.id === current ? "active" : ""}
+              aria-pressed={r.id === current}
+              disabled={!routes.has(r.id)}
+              onClick={() => props.onBranch(r.id)}
+              title={
+                `Route ${r.name}: ${r.branches.join(" → ")}, ${formatNumber(r.length, 6)} m` +
+                (r.problems.length ? `. ${r.problems.join("; ")}` : "") +
+                (routes.has(r.id) ? "" : " (loading)")
+              }
+            >
+              ⇢ {r.name}
+              {r.problems.length ? " ⚠" : ""}
+            </button>
+          ))}
+        </nav>
+      ) : null}
 
       <Search models={models} branchOrder={branchOrder} onFind={props.onFind} />
 
       <div className="spacer" />
+      {props.machine}
       {summary ? (
         <div className="notes-wrap">
           <button
@@ -158,6 +186,7 @@ export function TopBar(props: Props) {
           Download
         </a>
       ) : null}
+      {props.account}
     </header>
   );
 }

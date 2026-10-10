@@ -68,6 +68,8 @@ The registry is generated for the virtual accelerator from the imported lattice 
 
 ## Virtual accelerator service
 
+The first version runs over HTTP, with local accounts and shared machines plus private sandboxes (ADR 0008); pvAccess comes next, on the same write path and log.
+
 One process publishes every registry channel with p4p's pvAccess server, and holds the virtual machine's state:
 
 - **State:**

@@ -168,6 +168,43 @@ code {
   font-weight: 600;
 }
 
+.routes {
+  padding-left: 8px;
+  border-left: 1px solid var(--border);
+}
+
+.tab-panel {
+  position: absolute;
+  inset: 0;
+}
+
+.tab-panel[hidden] {
+  display: none;
+}
+
+/* Tabs of a panel, first in its bar: Optics | Orbit */
+.panel-tabs {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.panel-tabs button {
+  border: none;
+  border-radius: 0;
+  padding: 1px 10px;
+}
+
+.panel-tabs button + button {
+  border-left: 1px solid var(--border);
+}
+
+.panel-tabs button[aria-selected="true"] {
+  background: var(--row-selected);
+  font-weight: 600;
+}
+
 .spacer {
   flex: 1;
 }
@@ -177,7 +214,7 @@ code {
 }
 
 .search input {
-  width: 220px;
+  width: 170px;
 }
 
 .search .results {
@@ -369,6 +406,57 @@ code {
   white-space: nowrap;
 }
 
+/* BPM orbits */
+.bpm {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.bpm-bar input[type="number"] {
+  width: 4.5em;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 1px 4px;
+  font: inherit;
+  color: inherit;
+}
+
+.bpm-turns {
+  flex: 1 1 0;
+  min-width: 0;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bpm-controls {
+  display: flex;
+  gap: 4px;
+}
+
+.bpm-state {
+  border-radius: 9px;
+  padding: 0 7px;
+  font-size: 11px;
+  background: var(--grid);
+  color: var(--muted);
+}
+
+.bpm-state.running {
+  background: #2b8a3e;
+  color: #fff;
+}
+
+.bpm-state.failed {
+  background: var(--danger);
+  color: #fff;
+}
+
 /* Optics */
 .optics {
   position: absolute;
@@ -454,6 +542,10 @@ code {
   text-align: center;
   color: var(--muted);
   pointer-events: none;
+}
+
+.optics-message button {
+  pointer-events: auto;
 }
 
 .legend {
@@ -751,4 +843,483 @@ ul.plain {
   .search input {
     width: 160px;
   }
+}
+
+/* The virtual accelerator's admin page (admin.html) */
+.admin {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.admin-empty {
+  max-width: 40em;
+  margin: 3em auto;
+  font-size: 14px;
+}
+
+.admin-tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.admin-tabs button[aria-current="page"] {
+  border-color: var(--accent);
+  background: var(--row-selected);
+  font-weight: 600;
+}
+
+.admin-user,
+.admin-login {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.admin input:not([type="checkbox"]),
+.admin select {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 3px 6px;
+  font: inherit;
+  color: inherit;
+}
+
+.admin input.narrow {
+  width: 7em;
+}
+
+.admin-main {
+  flex: 1 1 0;
+  overflow: auto;
+  padding: 10px 16px 40px;
+}
+
+.admin-main h2 {
+  margin: 6px 0 4px;
+  font-size: 17px;
+}
+
+.admin-main h3 {
+  margin: 16px 0 6px;
+  font-size: 14px;
+}
+
+.admin-table {
+  border-collapse: collapse;
+  width: 100%;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
+}
+
+.admin-table th,
+.admin-table td {
+  text-align: left;
+  vertical-align: top;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.admin-table th {
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.admin-table .num {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.admin-table tr.changed td {
+  background: var(--row-selected);
+}
+
+.admin-table tr.refused td {
+  opacity: 0.7;
+}
+
+.admin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.admin-actions button,
+.admin-actions .button {
+  padding: 1px 7px;
+}
+
+button.danger {
+  color: var(--danger);
+}
+
+.state {
+  border-radius: 9px;
+  padding: 0 7px;
+  font-size: 11px;
+  background: var(--grid);
+  color: var(--muted);
+}
+
+.state.running {
+  background: #2b8a3e;
+  color: #fff;
+}
+
+.state.starting,
+.state.stopping {
+  background: var(--highlight);
+  color: #000;
+}
+
+.state.failed {
+  background: var(--danger);
+  color: #fff;
+}
+
+.admin-error {
+  color: var(--danger);
+}
+
+.admin-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.admin-scroll {
+  max-height: 55vh;
+  overflow: auto;
+}
+
+.admin-apply {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  margin-top: 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.admin-apply input {
+  flex: 1 1 auto;
+}
+
+.admin-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  margin-top: 16px;
+  padding: 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.admin-form h3 {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+.admin-outcome {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.admin-outcome.ok {
+  border-color: #2b8a3e;
+}
+
+.admin-outcome.refused {
+  border-color: var(--danger);
+}
+
+.admin-outcome pre {
+  white-space: pre-wrap;
+  margin: 6px 0 0;
+}
+
+/* Setpoints in the inspector */
+.setpoints tr.changed td {
+  background: var(--row-selected);
+}
+
+.setpoint-edit {
+  display: flex;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.setpoint-edit input,
+.setpoint-reason {
+  width: 9em;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 1px 5px;
+  font: inherit;
+  color: inherit;
+}
+
+.setpoint-reason {
+  width: 100%;
+  margin-top: 4px;
+}
+
+.admin-error {
+  color: var(--danger);
+}
+
+/* The machine chooser, the login dialog and the account menu (ADR 0008) */
+.machine-menu {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.machine-menu select {
+  max-width: 9.5em;
+}
+
+.state-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--axis);
+}
+
+.state-dot.running {
+  background: #2b8a3e;
+}
+
+.state-dot.starting,
+.state-dot.stopping {
+  background: var(--highlight);
+}
+
+.state-dot.failed {
+  background: var(--danger);
+}
+
+@media (max-width: 1600px) {
+  .topbar .brand span {
+    display: none;
+  }
+}
+
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(380px, 92vw);
+  padding: 14px 18px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25);
+}
+
+.dialog h3 {
+  margin: 0;
+}
+
+.dialog p {
+  margin: 0;
+}
+
+.dialog label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.dialog input,
+.popover.account input {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 3px 6px;
+  font: inherit;
+  color: inherit;
+}
+
+.dialog-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.popover.account {
+  width: min(340px, 90vw);
+}
+
+.popover.account pre.token {
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-size: 11px;
+}
+
+/* Check: a ring run's tracking against the model */
+.check-body {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.check-summary {
+  padding: 6px 10px 2px;
+  font-size: 12px;
+}
+
+.check-summary p {
+  margin: 3px 0;
+}
+
+.check-table th,
+.check-table td {
+  text-align: right;
+  padding: 1px 10px 1px 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.check-table thead th {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.check-good {
+  color: #2b8a3e;
+}
+
+.check-off {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.check-note {
+  color: var(--text);
+  border-left: 3px solid var(--highlight);
+  padding-left: 6px;
+}
+
+.check-charts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+  gap: 6px 10px;
+  padding: 4px 10px 10px;
+}
+
+.chart {
+  margin: 0;
+  min-width: 0;
+}
+
+.chart figcaption {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  font-size: 12px;
+}
+
+.chart-title {
+  font-weight: 600;
+  margin-right: auto;
+}
+
+.chart-key {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.chart-key i {
+  display: inline-block;
+  width: 10px;
+  height: 3px;
+  vertical-align: middle;
+}
+
+.chart-plot {
+  position: relative;
+  height: 190px;
+}
+
+.chart-plot canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: crosshair;
+}
+
+.chart-readout {
+  position: absolute;
+  top: 10px;
+  right: 14px;
+  max-width: 90%;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  pointer-events: none;
+}
+
+/* The check page */
+.check-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.check-page .topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.check-page .topbar span {
+  color: var(--muted);
+  margin-right: auto;
+}
+
+.check-page-main {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+.check-page .chart-plot {
+  height: 260px;
 }

@@ -9,13 +9,16 @@ the RF phase in MAD-X's convention (2 pi LAG: ``zero_phase`` below transition)
 is Xsuite's ``phase``.
 
 Fidelity selects Xsuite's element models: ``fast`` keeps only the linear
-part of bend edges, ``standard`` adds their chromatic terms (as MAD-X's thick
-bends do: the chromaticity of strongly bent rings needs them), and
+part of bend edges and integrates bends in ten Yoshida kicks,
+``standard`` adds the edges' chromatic terms (as MAD-X's thick bends do: the
+chromaticity of strongly bent rings needs them), and
 ``precise`` uses the full bend model and exact drifts. Xsuite's expanded bend
 body is not used: it misses half the chromaticity of a ring with rho ~ 5 m.
 """
 
+import itertools
 from collections import defaultdict
+from collections.abc import Sequence
 from contextlib import contextmanager
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any
@@ -23,6 +26,7 @@ from typing import Any
 from eicvibe.domain.lattice import ElementKind, Lattice, PlacedElement
 
 from .contracts import (
+    BeamTrack,
     Capabilities,
     Computation,
     Effect,
@@ -34,6 +38,7 @@ from .contracts import (
     OrbitRequest,
     OrbitResult,
     ParticleLost,
+    Ramp,
     Support,
     TimeScale,
     TrackRequest,
@@ -55,7 +60,7 @@ from .convert import (
     rf_frequency,
     rf_phase,
 )
-from .model import SETTINGS, Values, effective, require
+from .model import SETTINGS, Values, effective, require, span
 
 try:
     import numpy as np
@@ -203,6 +208,79 @@ class XsuiteSession:
                 for field, value in _fields(element).items():
                     setattr(target, field, value)
 
+    def _set(self, line, values: Values, longitudinal: bool = True) -> None:
+        """Set the elements of ``line`` (a tracking call's) to ``values`` on top of the session's."""
+        changed = defaultdict(dict)
+        for (occurrence, path), value in values.items():
+            if path not in SETTINGS:
+                raise UnsupportedRequest(NAME, [f"{path} cannot change in place; open a new session"])
+            changed[occurrence][path] = value
+        merged = dict(self.values) | dict(values)
+        for occurrence in changed:
+            placed = self.lattice.placement(occurrence)
+            if placed.branch_id != self.branch:
+                raise UnsupportedRequest(NAME, [f"occurrence {occurrence} is not in this branch"])
+            if placed.kind is ElementKind.RFCAVITY and not longitudinal:
+                continue  # its voltage stays 0: the RF does not act
+            pieces = _pieces(placed, effective(placed, merged), self._revolution)
+            if [n for n, _ in pieces] != self._pieces[occurrence]:
+                raise UnsupportedRequest(NAME, [f"{placed.name}: the change alters its structure"])
+            for name, element in pieces:
+                target = line[name]
+                for field, value in _fields(element).items():
+                    setattr(target, field, value)
+
+    def _ramp_fields(self, line, ramps: Sequence[Ramp], longitudinal: bool) -> tuple[list, set[str]]:
+        """The element fields ``ramps`` move, each as ``(element, field, base, [(ramp, delta)])``: before
+        a turn it is ``base + sum(fraction[ramp] * delta)``, set straight on the element of ``line``.
+
+        Xsuite's fields are linear in the settings (checked at each ramp's middle), so this equals
+        making the elements anew each turn at a fraction of the cost; the occurrences where a field is
+        not linear (a combined tilt) are returned to be made anew.
+        """
+        owner = {key: r for r, ramp in enumerate(ramps) for key in ramp.start}  # the last ramp wins
+        by_occurrence = defaultdict(list)
+        for key in owner:
+            if key[1] not in SETTINGS:
+                raise UnsupportedRequest(NAME, [f"{key[1]} cannot change in place; open a new session"])
+            by_occurrence[key[0]].append(key)
+        fields, rebuilt = [], set()
+        for occurrence, keys in by_occurrence.items():
+            placed = self.lattice.placement(occurrence)
+            if placed.branch_id != self.branch:
+                raise UnsupportedRequest(NAME, [f"occurrence {occurrence} is not in this branch"])
+            if placed.kind is ElementKind.RFCAVITY and not longitudinal:
+                continue  # its voltage stays 0: the RF does not act
+
+            def made(values, placed=placed):
+                pieces = _pieces(placed, effective(placed, values), self._revolution)
+                if [n for n, _ in pieces] != self._pieces[placed.id]:
+                    raise UnsupportedRequest(NAME, [f"{placed.name}: the change alters its structure"])
+                return {name: _fields(element) for name, element in pieces}
+
+            start = dict(self.values) | {key: ramps[owner[key]].start[key] for key in keys}
+            base = made(start)
+            moved = defaultdict(list)
+            linear = True
+            for r in sorted({owner[key] for key in keys}):
+                own = [key for key in keys if owner[key] == r]
+                end = made(start | {key: ramps[r].end[key] for key in own})
+                middle = made(start | {key: 0.5 * (start[key] + ramps[r].end[key]) for key in own})
+                for name, values in base.items():
+                    for field, value in values.items():
+                        delta = np.asarray(end[name][field]) - value
+                        expected = value + 0.5 * delta
+                        if not np.allclose(middle[name][field], expected, rtol=1e-9, atol=1e-15):
+                            linear = False
+                        if np.any(delta != 0):
+                            moved[name, field].append((r, delta))
+            if not linear:
+                rebuilt.add(occurrence)
+                continue
+            for (name, field), deltas in moved.items():
+                fields.append((line.element_dict[name], field, base[name][field], deltas))
+        return fields, rebuilt
+
     # -- computations --------------------------------------------------------------
 
     def _method(self, options: Options) -> str:
@@ -213,17 +291,18 @@ class XsuiteSession:
         require(XsuiteEngine().capabilities(), self.lattice, self.branch, options, Computation.OPTICS)
         _radiation(self.line, options)
         method = self._method(options)
-        if self.layout.periodic:
+        partial = request.start is not None or request.end is not None
+        occurrences = span(self._occurrence_ids, request.start, request.end, NAME)
+        if self.layout.periodic and not partial:
             table = self.line.twiss(method=method)
         else:
             if request.initial is None:
                 raise UnsupportedRequest(NAME, ["a line's optics need initial conditions"])
-            init = _twiss_init(self.line, request.initial)
-            table = self.line.twiss(
-                start=self.line.element_names[0], end="_end_point", init=init, method=method
-            )
+            first = self._pieces[occurrences[0]][0]
+            init = _twiss_init(self.line, request.initial, first)
+            table = self.line.twiss(start=first, end=self._exit[occurrences[-1]], init=init, method=method)
         rows = {name: i for i, name in enumerate(table.name)}
-        exits = [rows[self._exit[o]] + 1 for o in self._occurrence_ids]
+        exits = [rows[self._exit[o]] + 1 for o in occurrences]
 
         def column(name):
             values = getattr(table, name)
@@ -245,14 +324,14 @@ class XsuiteSession:
             y=float(table.y[0]),
             py=float(table.py[0]),
         )
-        periodic = self.layout.periodic
+        periodic = self.layout.periodic and not partial
         return OpticsResult(
             engine=NAME,
             fidelity=options.fidelity,
             effects=options.effects,
             branch=self.branch,
             periodic=periodic,
-            occurrences=tuple(self._occurrence_ids),
+            occurrences=tuple(occurrences),
             s=column("s"),
             beta_x=column("betx"),
             alpha_x=column("alfx"),
@@ -283,38 +362,48 @@ class XsuiteSession:
         _radiation(self.line, options)
         longitudinal = Effect.LONGITUDINAL in options.effects
         names = ("x", "px", "y", "py", "zeta", "delta")
-        if self.layout.periodic and not longitudinal:
+        partial = request.start is not None or request.end is not None
+        occurrences = span(self._occurrence_ids, request.start, request.end, NAME)
+        if self.layout.periodic and not longitudinal and not partial:
             # The closed orbit at fixed momentum with the RF frozen: the 4D Twiss's.
             table = self.line.twiss(method="4d", delta0=request.delta)
             rows = {name: i for i, name in enumerate(table.name)}
             exits = [rows[self._exit[o]] + 1 for o in self._occurrence_ids]
             columns = {k: tuple(float(getattr(table, k)[i]) for i in exits) for k in names}
         else:
+            positions = {name: i for i, name in enumerate(self.line.element_names)}
+            first = positions[self._pieces[occurrences[0]][0]]
+            stop = positions[self._exit[occurrences[-1]]] + 1
             with _rf(self.line, longitudinal):
-                if self.layout.periodic:  # 6D: the RF sets the momentum
+                if self.layout.periodic and not partial:  # 6D: the RF sets the momentum
                     particle = self.line.find_closed_orbit().copy()
                 else:
                     x, px, y, py, zeta, delta = request.initial or (0.0, 0.0, 0.0, 0.0, 0.0, request.delta)
                     particle = self.line.build_particles(
                         x=[x], px=[px], y=[y], py=[py], zeta=[zeta], delta=[delta]
                     )
-                self.line.track(particle, turn_by_turn_monitor="ONE_TURN_EBE")
+                if partial:
+                    self.line.track(
+                        particle, ele_start=first, ele_stop=stop, turn_by_turn_monitor="ONE_TURN_EBE"
+                    )
+                else:
+                    self.line.track(particle, turn_by_turn_monitor="ONE_TURN_EBE")
             record = self.line.record_last_track
-            positions = {name: i for i, name in enumerate(self.line.element_names)}
-            exits = [positions[self._exit[o]] + 1 for o in self._occurrence_ids]
+            exits = [positions[self._exit[o]] + 1 for o in occurrences]
             if particle.state[0] <= 0:
                 where = int(particle.at_element[0])
-                raise ParticleLost(
-                    NAME, next(o for o, e in zip(self._occurrence_ids, exits, strict=True) if e > where)
+                lost_at = next(
+                    (o for o, e in zip(occurrences, exits, strict=True) if e > where), occurrences[-1]
                 )
+                raise ParticleLost(NAME, lost_at)
             columns = {k: tuple(float(getattr(record, k)[0, i]) for i in exits) for k in names}
         return OrbitResult(
             engine=NAME,
             fidelity=options.fidelity,
             effects=options.effects,
             branch=self.branch,
-            closed=self.layout.periodic,
-            occurrences=tuple(self._occurrence_ids),
+            closed=self.layout.periodic and not partial,
+            occurrences=tuple(occurrences),
             **columns,
         )
 
@@ -376,6 +465,110 @@ class XsuiteSession:
             lost=tuple(bool(particles.state[i] <= 0) for i in order),
         )
 
+    def track_beam(
+        self,
+        coordinates,
+        turns: int,
+        observe,
+        options: Options,
+        start: str | None = None,
+        end: str | None = None,
+        ramps: Sequence[Ramp] = (),
+    ) -> BeamTrack:
+        """Track a bunch for ``turns`` turns of the ring, or once through a line or part of a branch.
+
+        Xsuite's beam monitors average it at every observation point, every turn. With ``ramps`` the
+        line is tracked a turn at a time while settings move, its elements set before each turn.
+        """
+        partial = start is not None or end is not None or not self.layout.periodic
+        if partial and turns != 1:
+            raise UnsupportedRequest(NAME, ["a line, or part of a branch, is passed once: turns = 1"])
+        if partial and ramps:
+            raise UnsupportedRequest(NAME, ["settings ramp while a ring turns, not in one pass"])
+        occurrences = span(self._occurrence_ids, start, end, NAME)
+        if missing := [o for o in observe if o not in occurrences]:
+            raise UnsupportedRequest(NAME, [f"observation points outside the part tracked: {missing[:3]}"])
+        time_scale = TimeScale.SINGLE_PASS if partial else TimeScale.TURNS
+        require(
+            XsuiteEngine().capabilities(),
+            self.lattice,
+            self.branch,
+            options,
+            Computation.TRACKING,
+            time_scale,
+        )
+        coordinates = np.asarray(coordinates, dtype=float).reshape(-1, 6)
+        n = len(coordinates)
+        monitors = {
+            occurrence: xt.BeamStatsMonitor(
+                start_at_turn=0,
+                stop_at_turn=turns,
+                particle_id_range=(0, n),
+                stats=["mean_x", "mean_y", "num_particles"],
+            )
+            for occurrence in observe
+        }
+        line = self._line(options, monitors)
+        _radiation(line, options)
+        if Effect.LONGITUDINAL not in options.effects:
+            for element in line.elements:
+                if isinstance(element, xt.Cavity):
+                    element.voltage = 0.0
+        c = coordinates.T
+        particles = line.build_particles(x=c[0], px=c[1], y=c[2], py=c[3], zeta=c[4], delta=c[5])
+        if partial:
+            positions = {name: i for i, name in enumerate(line.element_names)}
+            last = self._exit[occurrences[-1]]
+            after = f"{occurrences[-1]}.monitor" if f"{occurrences[-1]}.monitor" in positions else last
+            line.track(
+                particles, ele_start=positions[self._pieces[occurrences[0]][0]], ele_stop=positions[after] + 1
+            )
+        elif ramps:
+            longitudinal = Effect.LONGITUDINAL in options.effects
+            fractions = np.array([np.asarray(r.fraction, dtype=float)[:turns] for r in ramps])
+            moves = [
+                0,
+                *(t for t in range(1, turns) if (fractions[:, t] != fractions[:, t - 1]).any()),
+                turns,
+            ]
+            fields, rebuilt = self._ramp_fields(line, ramps, longitudinal)
+            for here, there in itertools.pairwise(moves):
+                f = fractions[:, here]
+                for element, field, base, deltas in fields:
+                    setattr(element, field, base + sum(f[r] * delta for r, delta in deltas))
+                if rebuilt:
+                    values: dict[tuple[str, str], float] = {}
+                    for ramp in ramps:
+                        values |= ramp.at(here)
+                    self._set(line, {k: v for k, v in values.items() if k[0] in rebuilt}, longitudinal)
+                line.track(particles, num_turns=there - here)
+            after: dict[tuple[str, str], float] = {}
+            for ramp in ramps:
+                after |= ramp.at(turns - 1)
+            self.update(after)  # the session goes on from where the ramps are
+        else:
+            line.track(particles, num_turns=turns)
+
+        def stat(name: str) -> np.ndarray:
+            return np.array([np.asarray(monitors[o].get(name), dtype=float)[:turns] for o in observe])
+
+        count = stat("num_particles")
+        x = np.where(count > 0, stat("mean_x"), np.nan)
+        y = np.where(count > 0, stat("mean_y"), np.nan)
+        order = np.argsort(particles.particle_id)
+        final = np.column_stack(
+            [np.asarray(getattr(particles, k))[order] for k in ("x", "px", "y", "py", "zeta", "delta")]
+        )
+        return BeamTrack(
+            observe=tuple(observe),
+            turns=turns,
+            x=x.reshape(len(observe), turns),
+            y=y.reshape(len(observe), turns),
+            count=count.reshape(len(observe), turns).astype(int),
+            final=final,
+            lost=np.asarray(particles.state)[order] <= 0,
+        )
+
     def close(self) -> None:
         self.line = None
 
@@ -387,6 +580,12 @@ def _configure(line, options: Options) -> None:
     if options.fidelity is Fidelity.FAST:
         line.configure_bend_model(core="adaptive", edge="linear")
         line.configure_drift_model("expanded")
+        # Xsuite's adaptive integrator takes many kicks in strong combined-function bends (the BAR's:
+        # 170 of its 173 us per particle and turn); ten Yoshida kicks keep tunes within 1e-3.
+        for element in line.elements:
+            if isinstance(element, xt.Bend):
+                element.integrator = "yoshida-6"
+                element.num_multipole_kicks = 10
     elif options.fidelity is Fidelity.PRECISE:
         line.configure_bend_model(core="full", edge="full")
         line.configure_drift_model("exact")
@@ -418,9 +617,9 @@ def _radiation(line, options: Options) -> None:
         line.configure_radiation(model=None)
 
 
-def _twiss_init(line, start: TwissInit):
+def _twiss_init(line, start: TwissInit, element: str | None = None):
     return xt.TwissInit(
-        element_name=line.element_names[0],
+        element_name=element or line.element_names[0],
         line=line,
         betx=start.beta_x,
         alfx=start.alpha_x,

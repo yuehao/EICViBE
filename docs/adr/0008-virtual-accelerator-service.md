@@ -1,0 +1,47 @@
+# ADR 0008: The virtual accelerator service: machines, the settings people change, and the log
+
+Status: proposed (2026-10-09). Scope: `eicvibe.va` (the service, its store, settings, HTTP API, notebook client and console), the admin page (`web/admin.html`) and the viewer's setpoints. Depends on ADR 0003 (roles, the write log, the virtual accelerator), ADR 0005 (machine files and operating modes) and ADR 0007 (rings and routes that keep running). Chosen on 2026-10-09: local accounts, HTTP before pvAccess, shared machines plus private sandboxes.
+
+## Decisions
+
+1. **One service owns the machines.** `eicvibe-web MACHINE --va STATE` runs the virtual accelerator in the web server's process (so with one worker), on the first machine folder given. A machine is a ring tracked turn after turn or a route shot after shot (ADR 0007), with its engine, fidelity, operating mode, particles, pace and (a ring) how many turns a setting change ramps over; it is stopped, starting, running, stopping or failed, and a shared machine may start with the service. Its runs write their BPM history into `STATE/runs`, which the viewer's Orbit tab reads like any run, labelled with the machine.
+2. **Settings come in layers, and the machine files are never written.** What a machine runs with is the design (the lattice files), then its mode (`settings/<mode>.yaml`), then the live layer: what people wrote. Users write setting channels of the registry in their own units (`ltr-q1:1-ps:sp` in A, `bar-cav0:sp:phase` in degrees); a channel's original value is what the files give, converted through the transfer functions and calibrations; a supply of a string sets every magnet of it, and a trim adds to its string. A channel nobody changed keeps the lattice's value exactly. Resetting drops entries from the live layer; snapshots save it and restore it.
+3. **Every change goes through one write path, and the log keeps it.** A write is checked against the user's role and ownership and the channel's limits, appended to the write log (time, user, machine, channel, old value, new value, applied or why refused, a correlation id grouping one change's writes, the reason, and the run and turn it met) in the same transaction that updates the live layer, and then applied to the running engine, whose own event log records the user and correlation id: on a ring it ramps in turn by turn over the machine's `ramp_turns` (1024 turns by default, set when the machine is made; ADR 0007), so a change never jumps under the beam; on a route it applies from the next shot. A change is atomic by default: one refused write refuses them all, and all are logged. Resets and restores are writes too. Everything else (creating, starting, stopping, forking, removing, snapshots, kicks, logins, users and tokens) goes to the action log. Both logs are append-only: SQLite triggers refuse any update or deletion.
+4. **Roles follow ADR 0003.** A physicist writes the settings of shared machines, takes snapshots and runs sandboxes; an operator also starts, stops, kicks, resets and restores shared machines; an administrator also creates and removes shared machines and manages users. The service enforces this whatever a page shows.
+5. **Viewing needs nothing; changing asks who.** Machines and their settings are read without a login, so the viewer shows the setpoints and orbits of any machine to anyone. The first time a user changes something (sets a value, makes a sandbox) the viewer asks them to log in, then does what they asked; the login lasts the day, and the top bar then shows who they are, with a menu to log out, make a notebook token or change the password. The write log is for users who are logged in; the action log (logins, users) for operators and administrators.
+6. **Administration is a page of its own that nothing links to.** `/admin.html` (machines to create, start and stop, every setting, the logs, users) shows only a login until an operator or administrator logs in, and turns anyone else away; it loads no data before. Users never see it: they work in the viewer. Its protection is the login and the service's role checks, not its address.
+7. **Local accounts first.** Passwords are stored as scrypt hashes; a browser logs in for a 12-hour session (an HttpOnly, SameSite=Lax cookie); a notebook uses a personal token (stored as a hash, shown once). The first start makes the user `admin` and prints its password once (or takes `EICVIBE_VA_ADMIN_PASSWORD`, for automated setups). Institutional sign-on can replace the login later without changing the log.
+8. **Shared machines and sandboxes.** Shared machines are the ones everyone works on, as on the real accelerator. The viewer works with one machine at a time (a chooser in its top bar; the inspector's setpoints and the Orbit tab follow it); choosing a machine shows what it tracks, its ring or route, and an Orbit tab on another branch offers to go there. A machine carries its run's warnings (RF that holds no bunch), checked again whenever an RF setting changes. Acquire (the Orbit tab, `POST /va/machines/{id}/acquire`, `Client.acquire`) captures a ring's BPM buffer for any logged-in physicist or above: it reads the machine and changes nothing, and the action log records it. A sandbox is a user's own copy of a machine, starting from its live settings at that moment, for trying things without disturbing others; users make, start, stop and remove their sandboxes from the chooser, at most two each (an administrator's setting).
+9. **HTTP first, pvAccess later.** `/api/v1/va/...` serves the admin page, the viewer and the notebook client (`eicvibe.va.client.Client`); its types are in the OpenAPI document like the viewer's. A pvAccess endpoint (ADR 0003) will be another way in to the same write path, log and live layer.
+
+## Using it
+
+```sh
+eicvibe-web /path/to/EIN/machine --va /path/to/va-state     # prints admin's first password
+```
+
+In the viewer, choose a machine in the top bar; select an element, and the inspector shows its setpoints on that machine, the original value and who changed it; type a value and Set (the first time, log in). The administration page, `/admin.html`, which only operators and administrators are told of, has Machines (create, start, stop, kick, remove), Settings (every channel's original and present value, edits applied as one change with a reason, reset, snapshots), Log (every write, filtered by machine, user or change; and the actions), Users and Account. From a notebook:
+
+```python
+from eicvibe.va.client import Client
+
+va = Client("http://localhost:8000", token="...")              # from the viewer's account menu, or eicvibe-va token
+va.set("main-ring", {"dr-t8-ps:sp:h": 2.0, "dr-t17-ps:sp:h": -1.2}, reason="orbit bump")
+va.orbits("main-ring", every=1, count=1)                        # what the BPMs read now
+va.reset("main-ring", ["dr-t8-ps:sp:h"], reason="undo")
+```
+
+`eicvibe-va` manages accounts and prints the logs from the state folder, also while the service runs (`add-user`, `password`, `role`, `token`, `log`, `actions`).
+
+## Validation (2026-10-09)
+
+- On the demo machine: a corrector written through the API reaches the running engine (the run logs the change with its user and correlation id); a write beyond the limits is refused with its whole change, and both are logged; a reset and a snapshot's restore are logged as writes; a viewer cannot write, a physicist cannot reset a shared machine, a sandbox's owner can change it and an operator cannot; the third sandbox is refused; a notebook token writes as its user; the lattice file is unchanged after all of it; the database refuses to update or delete log rows. Browser tests: the administration page shows only a login and turns a physicist away; nothing in the viewer links to it; a user sees a machine's setpoints without logging in, is asked to log in when setting one, and then sets values and makes a sandbox without being asked again; an administrator creates and starts a machine, changes a setting and finds it in the log.
+- A quadrupole string's original current gives back the lattice's Kn1 to 1e-9, and a mode's value scales it; the demo's RF phase channel reads its lattice value in degrees (90).
+
+## Not yet
+
+- The pvAccess endpoint, device leases (a study reserving the correctors), rate-of-change limits, and hidden errors an administrator sets (misalignments, field errors).
+- The viewer's optics for a machine's live settings (the Optics tab shows the design's), and promoting a snapshot to a mode file through review.
+- Institutional sign-on, HTTPS (serve it behind the site's proxy) and throttling of failed logins.
+- One service runs one machine folder; machines that ran when the service stopped come back only with autostart.
+- On the EIN: the BAR's cavity needs `bar-cav0:sp:phase` = 180 degrees to hold a stored beam (ADR 0007), and the RCS's injection kicker `rcs-t10` needs −2.945 mrad to put the beam of either route on its axis (ADR 0007); its extraction kickers likewise for the RTE.

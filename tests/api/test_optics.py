@@ -88,3 +88,24 @@ def test_trackpad_computes_with_tpsa_and_agrees_with_xsuite(client):
     assert (ours["chroma_x"], ours["chroma_y"]) == pytest.approx(
         (theirs["chroma_x"], theirs["chroma_y"]), rel=1e-2
     )
+
+
+def test_a_route_beside_a_lattice_file_has_its_optics(tmp_path):
+    from eicvibe.api.demo import write_demo
+
+    write_demo(tmp_path)
+    with TestClient(create_app(Catalog([tmp_path]), static_dir=None)) as client:
+        digest = digest_of(client)
+        routes = {r["name"]: r for r in client.get(f"/api/v1/lattices/{digest}").json()["routes"]}
+        assert set(routes) == {"transfer", "fill"}
+        transfer = routes["transfer"]
+        assert transfer["id"] == "route:transfer" and transfer["branches"] == [
+            "injection",
+            "ring",
+            "extraction",
+        ]
+        assert len(transfer["segments"]) == 3 and transfer["problems"] == []
+        url = f"/api/v1/lattices/{digest}/branches/route:transfer/optics"
+        body = client.get(url, params={"engine": "xsuite"}).json()
+        assert body["s"][-1] == pytest.approx(transfer["length"]) and not body["periodic"]
+        assert client.get(f"/api/v1/lattices/{digest}/branches/route:nowhere/optics").status_code == 404

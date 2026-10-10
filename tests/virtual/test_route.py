@@ -1,0 +1,107 @@
+"""Shots along a route: every BPM's trajectory reading, shot after shot, as a real line records them."""
+
+import math
+
+import numpy as np
+import pytest
+
+pytest.importorskip("xtrack")
+
+from eicvibe.api.demo import ROUTES, demo_lattice  # noqa: E402
+from eicvibe.diagnostics import NO_BEAM  # noqa: E402
+from eicvibe.domain.lattice import ElementKind, route_through  # noqa: E402
+from eicvibe.domain.machine import NamingArea, generate_machine_registry  # noqa: E402
+from eicvibe.engines import engine, route_optics  # noqa: E402
+from eicvibe.engines.contracts import Fidelity  # noqa: E402
+from eicvibe.virtual import Beam, BpmHistory, BpmModel, Jitter, RouteRun, route_bpms  # noqa: E402
+
+QUIET = {
+    "jitter": Jitter(x=0, px=0, y=0, py=0, delta=0),
+    "bpm": BpmModel(resolution=0, offset_rms=0, gain_rms=0),
+}
+
+
+@pytest.fixture(scope="module")
+def demo():
+    lattice = demo_lattice()
+    areas = {
+        "ring": (NamingArea(prefix="dr", start=0.0, end=lattice.layout("ring").length + 1.0),),
+        "injection": None,
+        "extraction": (NamingArea(prefix="dx", start=0.0, end=lattice.layout("extraction").length + 1.0),),
+    }
+    registry = generate_machine_registry(lattice, areas)
+    return lattice, registry, route_through(lattice, "transfer", ROUTES["transfer"])
+
+
+def shots(demo, folder, **options) -> RouteRun:
+    lattice, registry, route = demo
+    options = {
+        "engine": "xsuite",
+        "fidelity": Fidelity.FAST,
+        "beam": Beam(particles=16),
+        "rate": 1000.0,
+    } | options
+    return RouteRun(lattice, route, folder, registry=registry, **options)
+
+
+def test_a_route_run_records_every_shot_as_bpms_read_it(demo, tmp_path):
+    lattice, registry, route = demo
+    run = shots(demo, tmp_path / "run", shots=12, chunk=4).start()
+    run.wait()
+    run.stop()
+    assert run.error is None
+    history = BpmHistory.open(tmp_path / "run")
+    info = history.info
+    assert (info.kind, info.unit, info.branch, info.branch_id) == (
+        "route",
+        "shot",
+        "transfer",
+        "route:transfer",
+    )
+    assert history.span() == (0, 12) and history.state()["state"] == "done"
+    bpms = route_bpms(lattice, route, registry)
+    assert info.bpms == [b[2] for b in bpms] and info.s == pytest.approx([b[3] for b in bpms])
+    assert info.bpms[0].startswith("injection-b") and info.bpms[-1].startswith("dx-b")  # every branch's
+    x = history.turn_by_turn(0, 12).x.position
+    assert np.isfinite(x).all()
+    assert (np.std(x, axis=1) > 0.005).all()  # shot-to-shot jitter, beyond the BPMs' resolution
+
+
+def test_a_corrector_moves_the_trajectory_downstream_as_linear_optics_predict(demo, tmp_path):
+    lattice, _, route = demo
+    corrector = next(p for p in lattice.layout("ring").placements if p.kind is ElementKind.KICKER)
+    run = shots(demo, tmp_path / "kick", beam=Beam(particles=1), chunk=1, **QUIET).start()
+    run.wait(3)
+    run.update({(corrector.id, "MagneticMultipoleP.Kn0L"): 1e-5})  # 1e-5 toward -x
+    run.wait(6)
+    run.stop()
+    history = BpmHistory.open(tmp_path / "kick")
+    (event,) = [e for e in history.events() if e["kind"] == "settings"]
+    x = history.turn_by_turn(0, 6).x.position
+    before, after = x[:, event["turn"] - 1], x[:, event["turn"]]
+    optics = route_optics(engine("xsuite"), lattice, route)
+    k = optics.occurrences.index(corrector.id)
+    at = [optics.occurrences.index(o) for o in history.info.occurrences]
+    beta, mu = np.array(optics.beta_x), np.array(optics.mu_x)
+    phase = 2 * math.pi * (mu[at] - mu[k])
+    expected = np.where(np.array(at) > k, -1e-2 * np.sqrt(beta[at] * beta[k]) * np.sin(phase), 0.0)  # mm
+    # A thick kick, not a point: compared on the trajectory's scale, as near a node of the sine
+    scale = np.abs(expected).max()
+    assert after - before == pytest.approx(expected, rel=3e-2, abs=2e-2 * scale)
+
+
+def test_a_lost_beam_reads_nothing_downstream(demo, tmp_path):
+    lattice, _, _ = demo
+    corrector = next(p for p in lattice.layout("ring").placements if p.kind is ElementKind.KICKER)
+    run = shots(
+        demo, tmp_path / "lost", chunk=2, shots=4, values={(corrector.id, "MagneticMultipoleP.Kn0L"): 0.5}
+    )
+    run.start()
+    run.wait()
+    run.stop()
+    history = BpmHistory.open(tmp_path / "lost")
+    tbt = history.turn_by_turn(0, 4)
+    last = tbt.x.position[-1]
+    assert np.isnan(last).all() and (tbt.x.status[-1] == NO_BEAM).all()
+    assert np.isfinite(tbt.x.position[0]).all()  # the line before the ring still sees it
+    assert "loss" in [e["kind"] for e in history.events()]

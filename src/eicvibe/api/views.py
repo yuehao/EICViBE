@@ -14,7 +14,9 @@ from eicvibe.domain.lattice import (
     ElementKind,
     Lattice,
     PlacedElement,
+    Route,
     parameter_info,
+    route_problems,
 )
 from eicvibe.domain.machine import MachineRegistry
 from eicvibe.domain.machine.power import (
@@ -162,10 +164,16 @@ class RevisionViews:
     """Payloads of one lattice revision; each is computed once, on first use."""
 
     def __init__(
-        self, lattice: Lattice, registry: MachineRegistry | None = None, *, source: str = ""
+        self,
+        lattice: Lattice,
+        registry: MachineRegistry | None = None,
+        *,
+        source: str = "",
+        routes: tuple[Route, ...] = (),
     ) -> None:
         self.lattice = lattice
         self.registry = registry
+        self.routes = {route.name: route for route in routes}
         self.source = source or lattice.name
         self._path_cache: dict[str, list[tuple]] = {}
 
@@ -273,6 +281,7 @@ class RevisionViews:
                 ),
             ],
             kinds=dict(sorted(kinds.items())),
+            routes=[self._route(route) for route in self.routes.values()],
             devices=len(self.registry.devices) if self.registry else 0,
             channels=len(self.registry.channels) if self.registry else 0,
             circuits=len(self.registry.circuits) if self.registry else 0,
@@ -282,6 +291,27 @@ class RevisionViews:
     @property
     def digest(self) -> str:
         return self.lattice.digest.removeprefix("sha256:")
+
+    def _route(self, route: Route) -> schemas.RouteSummary:
+        lattice = self.lattice
+        segments, s = [], 0.0
+        for segment in route.segments:
+            placed = {p.id: p for p in lattice.layout(segment.branch).placements}
+            length = placed[segment.end].s_exit - placed[segment.start].s_enter
+            segments.append(
+                schemas.RouteSegment(
+                    branch=segment.branch, start=segment.start, end=segment.end, s_start=s, length=length
+                )
+            )
+            s += length
+        return schemas.RouteSummary(
+            id=f"route:{route.name}",
+            name=route.name,
+            branches=list(route.branches),
+            segments=segments,
+            length=s,
+            problems=route_problems(lattice, route),
+        )
 
     def _component(self, component) -> schemas.SharedComponent:
         return schemas.SharedComponent(

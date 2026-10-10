@@ -8,7 +8,7 @@ export interface UrlState {
   source?: string;
   /** Revision digest; absent means the current revision. */
   rev?: string;
-  /** Branch name. */
+  /** Branch name, or route:<name>. */
   branch?: string;
   /** Selected occurrence id. */
   sel?: string;
@@ -19,6 +19,10 @@ export interface UrlState {
   /** Optics engine and fidelity. */
   engine?: string;
   fidelity?: string;
+  /** The lower panel's tab: optics (absent), orbit or check. */
+  tab?: string;
+  /** The run the Orbit tab shows first (a link from the admin page); read once. */
+  run?: string;
 }
 
 const numbers = (text: string | null, count: number): number[] | null => {
@@ -30,7 +34,7 @@ const numbers = (text: string | null, count: number): number[] | null => {
 export function parseHash(hash: string): UrlState {
   const params = new URLSearchParams(hash.replace(/^#/, ""));
   const state: UrlState = {};
-  for (const key of ["source", "rev", "branch", "sel", "q", "engine", "fidelity"] as const) {
+  for (const key of ["source", "rev", "branch", "sel", "q", "engine", "fidelity", "tab", "run"] as const) {
     const value = params.get(key);
     if (value) state[key] = value;
   }
@@ -57,6 +61,7 @@ export function formatHash(state: UrlState): string {
   if (state.q) params.set("q", state.q);
   if (state.engine) params.set("engine", state.engine);
   if (state.fidelity) params.set("fidelity", state.fidelity);
+  if (state.tab) params.set("tab", state.tab);
   return "#" + params.toString().replaceAll("%2C", ",");
 }
 

@@ -17,11 +17,17 @@ export type OccurrenceDetail = Schemas["OccurrenceDetail"];
 export type Pose = Schemas["Pose"];
 export type EngineInfo = Schemas["EngineInfo"];
 export type BranchOptics = Schemas["BranchOptics"];
+export type RunEntry = Schemas["RunEntry"];
+export type OrbitFrames = Schemas["OrbitFrames"];
+export type CaptureEntry = Schemas["CaptureEntry"];
+export type RunCheck = Schemas["RunCheck"];
+export type PlaneCheck = Schemas["PlaneCheck"];
+export type Detuning = Schemas["Detuning"];
 
 const BASE = "/api/v1";
 
 /** The response schema this client reads (eicvibe.api.schemas.SCHEMA_VERSION). */
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 export class ApiError extends Error {
   constructor(
@@ -73,6 +79,30 @@ export const api = {
   /** Engines that compute optics; their versions fill in once they have run. */
   engines: () => getJson<EngineInfo[]>("/engines"),
   /** Design optics of a branch; the first request for a revision may take a while (Julia starts). */
+  /** Virtual rings' runs the server reads; not cached: runs come and go on. */
+  runs: (signal?: AbortSignal) => getJson<RunEntry[]>("/runs", signal),
+  /** ``count`` orbits ``every`` turns apart, the newest at turn ``end - 1`` or the latest. */
+  orbits: (run: string, every: number, count: number, end?: number, signal?: AbortSignal, source = "buffer") =>
+    getJson<OrbitFrames>(
+      `/runs/${enc(run)}/orbits?every=${every}&count=${count}${end === undefined ? "" : `&end=${end}`}` +
+        (source === "buffer" ? "" : `&source=${enc(source)}`),
+      signal,
+    ),
+  /** A ring run's captures: its BPM buffer frozen by a kick, injection, loss or request. */
+  captures: (run: string, signal?: AbortSignal) => getJson<CaptureEntry[]>(`/runs/${enc(run)}/captures`, signal),
+  /** A ring run's tracking against the model: tunes, phases, beta and orbit at its BPMs (engine work: seconds). */
+  check: (
+    run: string,
+    options: { source: string; turns: number; first?: number; engine?: string; detuning?: boolean },
+    signal?: AbortSignal,
+  ) =>
+    getJson<RunCheck>(
+      `/runs/${enc(run)}/check?source=${enc(options.source)}&turns=${options.turns}` +
+        (options.first === undefined ? "" : `&first=${options.first}`) +
+        (options.engine ? `&engine=${enc(options.engine)}` : "") +
+        (options.detuning ? "&detuning=true" : ""),
+      signal,
+    ),
   optics: (digest: string, branch: string, engine: string, fidelity: string) =>
     once<BranchOptics>(
       `/lattices/${enc(digest)}/branches/${enc(branch)}/optics?engine=${enc(engine)}&fidelity=${enc(fidelity)}`,

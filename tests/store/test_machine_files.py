@@ -8,14 +8,18 @@ from eicvibe.domain.machine import TableTransfer, assemble_registry, describe_ma
 from eicvibe.store import (
     FileError,
     Setting,
+    build_machine,
     check_machine,
     load_lattice,
     load_machine,
+    name_ids,
     read_settings,
+    update_names,
     write_machine,
     write_settings,
 )
 from eicvibe.store.cli import main as cli
+from eicvibe.store.device_files import add_bpms, rename_references
 
 
 def described(lattice):
@@ -34,7 +38,7 @@ def folder(tmp_path):
 
 
 def test_a_machine_folder_reads_back_exactly(folder):
-    lattice = demo_lattice()
+    lattice = name_ids(demo_lattice())  # definitions, branches and components go by name in the files
     machine = load_machine(folder)
     assert machine.lattice == lattice and machine.lattice.digest == lattice.digest
     assert machine.description == described(lattice)
@@ -53,6 +57,41 @@ def test_a_machine_folder_reads_back_exactly(folder):
         "naming.yaml",
     ]
     assert check_machine(folder) == []
+    ring = (folder / "lattice" / "ring.yaml").read_text()
+    assert "id: ele_" not in ring and "id: br_" not in ring  # only occurrences keep ids
+    assert "  - {name: QF_1, eic: ring-q4, element: QF, id: occ_4}" in ring  # its EIC name beside it
+    drifts = [line for line in ring.splitlines() if "element: D}" in line or "element: DL}" in line]
+    assert drifts and all("id:" not in line and "eic: ring-dt" in line for line in drifts)  # by name
+
+
+def test_eic_names_follow_the_naming_rules_and_build_keeps_them_current(folder):
+    ring = folder / "lattice" / "ring.yaml"
+    ring.write_text(ring.read_text().replace("elements:", "elements:  # checked by Ann", 1))
+    naming = folder / "naming.yaml"
+    naming.write_text(naming.read_text().replace("  ring: ring\n", "  ring: dr\n", 1))  # SEG's prefix arrives
+    problems = check_machine(folder)
+    assert len(problems) == 1 and "EIC names in the lattice files differ" in problems[0]
+    changes = update_names(folder, write=False)
+    assert "eic ring/QF_1: ring-q4 -> dr-q4" in changes
+    build_machine(folder)
+    text = ring.read_text()
+    assert "{name: QF_1, eic: dr-q4, element: QF, id: occ_4}" in text and "# checked by Ann" in text
+    assert check_machine(folder) == []
+    assert load_lattice(folder).placement("QF_1", branch="ring").id == "occ_4"  # the same magnet
+
+
+def test_ids_other_than_occurrences_are_dropped_by_build(folder):
+    ring = folder / "lattice" / "ring.yaml"
+    old = ring.read_text()
+    ring.write_text(
+        old.replace("kind: periodic\n", "kind: periodic\nid: br_old\n", 1).replace(
+            "DL: {kind: Drift, length: 2.0}", "DL: {kind: Drift, length: 2.0, id: ele_old}", 1
+        )
+    )
+    assert load_lattice(folder).branch("ring").id == "br_old"
+    assert update_names(folder) == ["ids lattice/ring.yaml: removed 2 (definitions and branches go by name)"]
+    assert ring.read_text() == old
+    assert load_lattice(folder) == name_ids(demo_lattice())
 
 
 def test_overrides_tags_forks_and_shared_definitions_round_trip(tmp_path):
@@ -68,7 +107,7 @@ def test_overrides_tags_forks_and_shared_definitions_round_trip(tmp_path):
     b.add_fork("a", "b", after="D_1", to="Q_1", to_side="exit", propagate_reference=True)
     lattice = b.build()
     write_machine(tmp_path, lattice)
-    assert load_lattice(tmp_path) == lattice
+    assert load_lattice(tmp_path) == name_ids(lattice)
     text = (tmp_path / "lattice" / "a.yaml").read_text()
     assert "overrides: {MagneticMultipoleP: {Kn1: 0.55}}" in text
     assert "fork: {to: b, at: Q_1, side: exit, propagate_reference: true}" in text
@@ -163,3 +202,49 @@ def test_the_command_line_checks_and_builds(folder, capsys):
     (folder / "devices" / "rf.yaml").write_text("cavities:\n  ring/NOPE: {voltage: [0, 1]}\n")
     assert cli(["check", str(folder)]) == 1
     assert "rf.yaml: cavity ring/NOPE: no occurrence 'ring/NOPE'" in capsys.readouterr().err
+
+
+def test_routes_are_read_by_branch_names_and_never_rewritten(folder):
+    from eicvibe.store.machine import ROUTES_FILE, write_routes
+
+    assert load_machine(folder).routes == ()
+    assert write_routes(folder, {"transfer": ["injection", "ring", "extraction"]}) is not None
+    (route,) = load_machine(folder).routes
+    assert route.name == "transfer" and route.branches == ("injection", "ring", "extraction")
+    edited = (folder / ROUTES_FILE).read_text().replace("transfer:", "out:")
+    (folder / ROUTES_FILE).write_text(edited)
+    assert write_routes(folder, {"transfer": ["injection", "ring"]}) is None  # people's file stays
+    assert [r.name for r in load_machine(folder).routes] == ["out"]
+    (folder / ROUTES_FILE).write_text("routes:\n  back: [extraction, ring]\n")
+    with pytest.raises(FileError, match="routes.yaml.*back: no fork from extraction"):
+        load_machine(folder)
+
+
+def test_device_references_follow_an_occurrence_renamed_in_place(folder):
+    before = load_machine(folder).registry
+    ring = folder / "lattice" / "ring.yaml"
+    ring.write_text(ring.read_text().replace("{name: COR_1,", "{name: HCOR_1,"))
+    power = folder / "devices" / "power.yaml"
+    text = power.read_text()
+    assert rename_references(folder, {"ring/COR_1": "ring/HCOR_1"}) == [power]
+    assert power.read_text() == text.replace("ring/COR_1:", "ring/HCOR_1:").replace(
+        "[ring/COR_1]", "[ring/HCOR_1]"
+    )  # COR_10 and COR_11 are other magnets; comments and everything else stay
+    assert check_machine(folder) == []
+    after = load_machine(folder).registry  # the supply keyed by the magnet takes its new key, and a new id
+    assert [d.name for d in after.devices] == [d.name for d in before.devices]
+    assert [c.name for c in after.channels] == [c.name for c in before.channels]
+
+
+def test_bpms_are_added_after_their_branchs(folder):
+    path = folder / "devices" / "diagnostics.yaml"
+    original = path.read_text()
+    path.write_text(original.replace("  - ring/BPM_3\n", "").replace("  - injection/BPM_1\n", ""))
+    branches = ["ring", "injection", "extraction"]
+    assert add_bpms(folder, ["injection/BPM_1", "ring/BPM_3"], branches) == path
+    lines = path.read_text().splitlines()
+    bpms = [line for line in lines if line.startswith("  - ")]
+    assert bpms[-4:] == ["  - ring/BPM_11", "  - ring/BPM_3", "  - injection/BPM_1", "  - extraction/BPM_1"]
+    assert lines[0] == original.splitlines()[0]  # the header comment stays
+    assert add_bpms(folder, ["ring/BPM_3"], branches) is None  # listed already
+    assert check_machine(folder) == []

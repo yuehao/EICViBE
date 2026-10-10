@@ -5,10 +5,14 @@ occurrences in beam order, one per line. Everything refers by name: an
 occurrence names its element, a fork names the branch and the occurrence it
 leads to, a shared component names its traversals as ``branch/occurrence``.
 A definition placed in several branches is written in the first branch's
-file and named from the others. Every entry keeps its stable ``id``, its
-identity for devices and history; a new entry may leave it out and then gets
-an id derived from its name. Values are in the units and conventions of the
-lattice model (SI, angles in rad, normalized strengths; ADR 0001).
+file and named from the others. Definitions, branches, shared components and
+drifts are identified by their names; every other occurrence (a magnet,
+monitor, cavity or marker in the beam line) keeps a stable ``id``, its identity
+for devices, settings and history through renames, and a new one may leave it
+out to get an id derived from its name. An occurrence's ``eic`` is its EIC name (EIC-SEG-RSI-009) from
+the naming rules of ``naming.yaml``, written and kept current by the tools.
+Values are in the units and conventions of the lattice model (SI, angles in
+rad, normalized strengths; ADR 0001).
 """
 
 from collections.abc import Mapping
@@ -17,7 +21,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from eicvibe.domain.lattice import FORMAT_VERSION, Lattice, derived_id
+from eicvibe.domain.lattice import FORMAT_VERSION, ElementKind, Lattice, derived_id
 
 from .yamlio import FileError, block, flow, mapping, read_yaml, write_yaml
 
@@ -29,9 +33,26 @@ _ONE_LINE = 150
 
 _BRANCH_HEADER = """Branch {branch} of {lattice}: its element definitions, then its line in beam order.
 Units SI, angles in rad, strengths normalized (PALS conventions, ADR 0001).
+Elements are referred to by name. `eic` is the element's EIC name, from the rules in
+naming.yaml; `eicvibe build` keeps it current (to choose a name, add it to naming.yaml's
+names). Keep each occurrence's `id` (drifts have none: they go by name): it is its
+identity for devices, settings and history. A new occurrence may leave it out; it then
+gets an id derived from its name."""
+
+#: Headers the tools wrote before, replaced by the current one where a file still has them.
+OLD_BRANCH_HEADERS = (
+    """Branch {branch} of {lattice}: its element definitions, then its line in beam order.
+Units SI, angles in rad, strengths normalized (PALS conventions, ADR 0001).
 Elements are referred to by name. Keep each `id`: it is the entry's identity for
 devices and history. A new element or occurrence may leave it out; it then gets
-an id derived from its name."""
+an id derived from its name.""",
+    """Branch {branch} of {lattice}: its element definitions, then its line in beam order.
+Units SI, angles in rad, strengths normalized (PALS conventions, ADR 0001).
+Elements are referred to by name. `eic` is the element's EIC name, from the rules in
+naming.yaml; `eicvibe build` keeps it current (to choose a name, add it to naming.yaml's
+names). Keep each occurrence's `id`: it is its identity for devices, settings and
+history. A new occurrence may leave it out; it then gets an id derived from its name.""",
+)
 
 _SHARED_HEADER = """Physical components that several branches pass through, such as a septum: one
 piece of hardware, a traversal (branch/occurrence) for each beam that passes it."""
@@ -55,8 +76,49 @@ def branch_order(lattice: Lattice) -> list[str]:
     return [lattice.branch(b).name for b in order]
 
 
-def write_lattice(lattice: Lattice, folder: Path, order: list[str] | None = None) -> list[Path]:
-    """Write the branch files and the shared-component file; returns the paths written."""
+def name_ids(lattice: Lattice) -> Lattice:
+    """The lattice as its files identify it: definitions, branches, shared components and drifts by name.
+
+    Other occurrences keep their ids. Reading back what :func:`write_lattice` wrote gives this lattice.
+    """
+    data = lattice.to_dict()
+    elements = {e["id"]: derived_id("ele", lattice.name, e["name"]) for e in data.get("elements", [])}
+    branches = {b["id"]: derived_id("br", lattice.name, b["name"]) for b in data.get("branches", [])}
+    drifts = {
+        o.id: derived_id("occ", lattice.name, b.name, o.name)
+        for b in lattice.branches
+        for o in b.occurrences
+        if lattice.element(o.element).kind is ElementKind.DRIFT
+    }
+    for element in data.get("elements", []):
+        element["id"] = elements[element["id"]]
+    for branch in data.get("branches", []):
+        branch["id"] = branches[branch["id"]]
+        for occurrence in branch.get("occurrences", []):
+            occurrence["id"] = drifts.get(occurrence["id"], occurrence["id"])
+            occurrence["element"] = elements[occurrence["element"]]
+            if "fork" in occurrence:
+                fork = occurrence["fork"]
+                fork["to_branch"] = branches[fork["to_branch"]]
+                if fork.get("to_occurrence"):
+                    fork["to_occurrence"] = drifts.get(fork["to_occurrence"], fork["to_occurrence"])
+    if data.get("root_branch"):
+        data["root_branch"] = branches[data["root_branch"]]
+    for component in data.get("shared_components", []):
+        component["id"] = derived_id("cmp", lattice.name, component["name"])
+        for traversal in component.get("traversals", []):
+            traversal["occurrence"] = drifts.get(traversal["occurrence"], traversal["occurrence"])
+    return Lattice.from_dict(data)
+
+
+def write_lattice(
+    lattice: Lattice, folder: Path, order: list[str] | None = None, eic: Mapping[str, str] | None = None
+) -> list[Path]:
+    """Write the branch files and the shared-component file; returns the paths written.
+
+    ``eic`` gives occurrences' EIC names, by occurrence id (a registry's slots).
+    """
+    eic = eic or {}
     order = order or branch_order(lattice)
     directory = Path(folder) / LATTICE_DIR
     owner: dict[str, str] = {}  # definition id -> branch whose file holds it
@@ -77,8 +139,18 @@ def write_lattice(lattice: Lattice, folder: Path, order: list[str] | None = None
         for element_id in placed_here + unplaced:
             if owner[element_id] == name:
                 elements[names[element_id]] = _element_entry(lattice.element(element_id))
-        line = block(_occurrence_entry(o, names, branch_names, occurrence_names) for o in branch.occurrences)
-        data = mapping([("branch", branch.name), ("kind", branch.kind.value), ("id", branch.id)])
+        line = block(
+            _occurrence_entry(
+                o,
+                names,
+                branch_names,
+                occurrence_names,
+                eic.get(o.id),
+                lattice.element(o.element).kind is not ElementKind.DRIFT,
+            )
+            for o in branch.occurrences
+        )
+        data = mapping([("branch", branch.name), ("kind", branch.kind.value)])
         data["elements"] = elements
         data["line"] = line
         header = _BRANCH_HEADER.format(branch=branch.name, lattice=lattice.name)
@@ -89,14 +161,14 @@ def write_lattice(lattice: Lattice, folder: Path, order: list[str] | None = None
         for t in component.traversals:
             branch_name = branch_names[lattice.placement(t.occurrence).branch_id]
             traversals[t.role] = f"{branch_name}/{occurrence_names[t.occurrence]}"
-        shared[component.name] = flow({"traversals": traversals, "id": component.id})
+        shared[component.name] = flow({"traversals": traversals})
     written.append(write_yaml(directory / SHARED_FILE, shared, _SHARED_HEADER))
     return written
 
 
 def _element_entry(element) -> Any:
     data = element.model_dump(mode="json", exclude_defaults=True, exclude={"id", "name"})
-    data = {"kind": element.kind.value, **{k: v for k, v in data.items() if k != "kind"}, "id": element.id}
+    data = {"kind": element.kind.value, **{k: v for k, v in data.items() if k != "kind"}}
     one_line = flow(data)
     if len(str(dict(data))) <= _ONE_LINE:
         return one_line
@@ -104,8 +176,13 @@ def _element_entry(element) -> Any:
     return entry
 
 
-def _occurrence_entry(occurrence, names, branch_names, occurrence_names) -> Any:
-    data: dict[str, Any] = {"name": occurrence.name, "element": names[occurrence.element]}
+def _occurrence_entry(
+    occurrence, names, branch_names, occurrence_names, eic: str | None = None, with_id: bool = True
+) -> Any:
+    data: dict[str, Any] = {"name": occurrence.name}
+    if eic:
+        data["eic"] = eic
+    data["element"] = names[occurrence.element]
     if occurrence.tags:
         data["tags"] = list(occurrence.tags)
     if occurrence.overrides:
@@ -126,7 +203,8 @@ def _occurrence_entry(occurrence, names, branch_names, occurrence_names) -> Any:
             if key in fork:
                 link[renamed] = fork[key]
         data["fork"] = link
-    data["id"] = occurrence.id
+    if with_id:  # drifts go by name: nothing attaches to them
+        data["id"] = occurrence.id
     return flow(data)
 
 

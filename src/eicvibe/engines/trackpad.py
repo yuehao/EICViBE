@@ -28,6 +28,7 @@ import os
 import shutil
 import subprocess
 from collections import defaultdict
+from collections.abc import Sequence
 from importlib.util import find_spec
 from pathlib import Path
 from typing import Any
@@ -35,6 +36,7 @@ from typing import Any
 from eicvibe.domain.lattice import ElementKind, Lattice, PlacedElement
 
 from .contracts import (
+    BeamTrack,
     Capabilities,
     Computation,
     Effect,
@@ -47,6 +49,7 @@ from .contracts import (
     OrbitRequest,
     OrbitResult,
     ParticleLost,
+    Ramp,
     Support,
     TimeScale,
     TrackRequest,
@@ -67,7 +70,7 @@ from .convert import (
     rf_frequency,
     rf_phase,
 )
-from .model import SETTINGS, Values, effective, require
+from .model import SETTINGS, Values, effective, require, span
 
 try:
     import numpy as np
@@ -312,6 +315,84 @@ class TrackPadSession:
                 )
             self.jl.setelements_b(self.model, self._first[occurrence] + 1, *_arrays(pieces), self.beam)
 
+    def _rows(self, placed: PlacedElement, values: Values):
+        """The kind codes, names and rows of an occurrence's pieces with ``values``."""
+        pieces = _pieces(placed, effective(placed, values), self._beta0, self._revolution, self._fidelity)
+        kinds, names, _, rows = _arrays(pieces)
+        return kinds, names.split("\n"), rows
+
+    def _ramped(self, ramps: Sequence[Ramp], turns: int, options: Options) -> tuple:
+        """The ramps as the element groups trackpad.jl rebuilds turn by turn (see its ``centroids``).
+
+        An occurrence's rows at the ramps' start, and each ramp's change of them at its end: element
+        inputs are linear in the settings (strengths per length, rolls, RF voltage and phase), which a
+        midpoint checks, so the rows before any turn are the start plus the fractions times the changes.
+        """
+        longitudinal = Effect.LONGITUDINAL in options.effects
+        moving: dict[str, list[tuple[int, str, float, float]]] = defaultdict(list)
+        for k, ramp in enumerate(ramps):
+            for (occurrence, path), value in ramp.start.items():
+                if path not in SETTINGS:
+                    raise UnsupportedRequest(NAME, [f"{path} cannot change in place; open a new session"])
+                placed = self.lattice.placement(occurrence)
+                if placed.branch_id != self.branch:
+                    raise UnsupportedRequest(NAME, [f"occurrence {occurrence} is not in this branch"])
+                if placed.kind is ElementKind.RFCAVITY and not longitudinal:
+                    continue  # a drift here: the RF does not act
+                moving[occurrence].append((k, path, value, ramp.end[(occurrence, path)]))
+        order = COLUMNS.index("order")
+        firsts, counts, kinds, names, base, group, ramp_of, delta = [], [], [], [], [], [], [], []
+        for g, (occurrence, entries) in enumerate(moving.items(), start=1):
+            placed = self.lattice.placement(occurrence)
+            start = dict(self.values) | {(occurrence, p): v0 for _, p, v0, _ in entries}
+            kinds0, names0, rows0 = self._rows(placed, start)
+            if [KINDS[k] for k in kinds0] != self._kinds[occurrence]:
+                raise UnsupportedRequest(NAME, [f"{placed.name}: the change alters its structure"])
+            ends: dict[int, dict[tuple[str, str], float]] = defaultdict(dict)
+            for k, path, _, v1 in entries:
+                ends[k][(occurrence, path)] = v1
+            changes = []
+            for k, target in ends.items():
+                kinds1, _, rows1 = self._rows(placed, start | target)
+                middle = {key: 0.5 * (start[key] + v) for key, v in target.items()}
+                _, _, rows_mid = self._rows(placed, start | middle)
+                if list(kinds1) != list(kinds0):
+                    raise UnsupportedRequest(NAME, [f"{placed.name}: the change alters its structure"])
+                rows0[:, order] = np.maximum(rows0[:, order], rows1[:, order])
+                change = rows1 - rows0
+                change[:, order] = 0.0
+                check = np.delete(rows0 + 0.5 * change - rows_mid, order, axis=1)
+                if not np.allclose(check, 0.0, rtol=0.0, atol=1e-12 * max(1.0, np.abs(rows1).max())):
+                    raise UnsupportedRequest(
+                        NAME, [f"{placed.name}: its elements do not follow the setting linearly"]
+                    )
+                changes.append((k, change))
+            firsts.append(self._first[occurrence] + 1)
+            counts.append(len(kinds0))
+            kinds.extend(kinds0)
+            names.extend(names0)
+            base.append(rows0)
+            for k, change in changes:
+                group.append(g)
+                ramp_of.append(k + 1)
+                delta.append(change)
+        columns = len(COLUMNS)
+        fraction = np.array([np.asarray(r.fraction, dtype=float)[:turns] for r in ramps]).reshape(
+            len(ramps), turns
+        )
+        return (
+            np.array(firsts, dtype=np.int64),
+            np.array(counts, dtype=np.int64),
+            np.array(kinds, dtype=np.int64),
+            "\n".join(names),
+            ",".join(COLUMNS),
+            np.vstack(base) if base else np.zeros((0, columns)),
+            np.array(group, dtype=np.int64),
+            np.array(ramp_of, dtype=np.int64),
+            np.vstack(delta) if delta else np.zeros((0, columns)),
+            fraction,
+        )
+
     # -- coordinates ---------------------------------------------------------------
 
     def _to_trackpad(self, x, px, y, py, zeta, delta):
@@ -321,25 +402,45 @@ class TrackPadSession:
         """delta from TrackPad's dE: (1 + delta)^2 = 1 + 2 dE / beta0 + dE^2."""
         return math.sqrt(1.0 + 2.0 * energy / self._beta0 + energy * energy) - 1.0
 
-    def _check(self, orbit) -> None:
+    def _check(self, orbit, occurrences=None, exits=None) -> None:
         """Raise :class:`ParticleLost` if the orbit (6 x elements+1) was lost on the way."""
+        occurrences = occurrences if occurrences is not None else self._occurrence_ids
+        exits = exits if exits is not None else self._exits
         bad = np.flatnonzero(~np.isfinite(orbit).all(axis=0))
         if bad.size:
-            raise ParticleLost(
-                NAME, next(o for o, e in zip(self._occurrence_ids, self._exits, strict=True) if e >= bad[0])
+            lost_at = next(
+                (o for o, e in zip(occurrences, exits, strict=True) if e >= bad[0]), occurrences[-1]
             )
+            raise ParticleLost(NAME, lost_at)
 
     def _model(self, options: Options):
         """The lattice, with RF cavities as drifts unless the longitudinal motion is wanted."""
         return self.model if Effect.LONGITUDINAL in options.effects else self.jl.transverse(self.model)
+
+    def _part(self, options: Options, start: str | None, end: str | None):
+        """What to compute on: the lattice or part of it (as a line), its occurrences, and where they end.
+
+        Returns the TrackPad lattice, the occurrence ids, every occurrence's exit index in its arrays
+        (which start at the entrance), the occurrence (by position) of each of its elements, and whether
+        it is a part.
+        """
+        occurrences = span(self._occurrence_ids, start, end, NAME)
+        model = self._model(options)
+        if start is None and end is None:
+            return model, occurrences, self._exits, self._occurrence_of, False
+        first = self._first[occurrences[0]]
+        stop = self._first[occurrences[-1]] + len(self._kinds[occurrences[-1]])
+        exits = [self._first[o] + len(self._kinds[o]) - first for o in occurrences]
+        owners = self._occurrence_of[first:stop] - self._occurrence_of[first]
+        return self.jl.segment(model, first + 1, stop), occurrences, exits, owners, True
 
     # -- computations --------------------------------------------------------------
 
     def optics(self, request: OpticsRequest) -> OpticsResult:
         options = request.options
         require(TrackPadEngine().capabilities(), self.lattice, self.branch, options, Computation.OPTICS)
-        model = self._model(options)
-        periodic = self.layout.periodic
+        model, occurrences, orbit_exits, owners, partial = self._part(options, request.start, request.end)
+        periodic = self.layout.periodic and not partial
         if periodic:
             start = self.jl.closed_orbit(model, self.beam, 0.0, False)
             entrance = None
@@ -363,17 +464,20 @@ class TrackPadSession:
         result = self.jl.optics(model, self.beam, entrance, start, request.inside)
         table = np.asarray(result.columns)
         # The occurrence each piece belongs to, and the point where each occurrence's last piece ends.
-        pieces = self._occurrence_of[np.asarray(result.owner) - 1]
-        exits = np.searchsorted(pieces, np.arange(len(self._occurrence_ids)), side="right")
+        pieces = owners[np.asarray(result.owner) - 1]
+        exits = np.searchsorted(pieces, np.arange(len(occurrences)), side="right")
         orbit = np.asarray(self.jl.along(model, self.beam, start))
-        self._check(orbit)
+        self._check(orbit, occurrences, orbit_exits)
         s, betx, alfx, bety, alfy, mux, muy, dx, dpx, dy, dpy = (list(row) for row in table)
+        if partial:  # TrackPad's s starts at the part's start; the branch's at the branch's
+            origin = self.lattice.placement(occurrences[0]).s_enter
+            s = [v + origin for v in s]
 
         def column(values, scale=1.0):
             return tuple(float(values[i]) * scale for i in exits)
 
         def orbit_column(values):
-            return tuple(float(values[i]) for i in self._exits)
+            return tuple(float(values[i]) for i in orbit_exits)
 
         turn = 1 / (2 * math.pi)
         profile = None
@@ -398,7 +502,7 @@ class TrackPadSession:
             effects=options.effects,
             branch=self.branch,
             periodic=periodic,
-            occurrences=tuple(self._occurrence_ids),
+            occurrences=tuple(occurrences),
             s=column(s),
             beta_x=column(betx),
             alpha_x=column(alfx),
@@ -442,28 +546,28 @@ class TrackPadSession:
     def orbit(self, request: OrbitRequest) -> OrbitResult:
         options = request.options
         require(TrackPadEngine().capabilities(), self.lattice, self.branch, options, Computation.ORBIT)
-        model = self._model(options)
-        if self.layout.periodic:
+        model, occurrences, exits, _, partial = self._part(options, request.start, request.end)
+        if self.layout.periodic and not partial:
             six = Effect.LONGITUDINAL in options.effects
             start = self.jl.closed_orbit(model, self.beam, request.delta, six)
         else:
             x, px, y, py, zeta, delta = request.initial or (0.0, 0.0, 0.0, 0.0, 0.0, request.delta)
             start = self._to_trackpad(x, px, y, py, zeta, delta)
         orbit = np.asarray(self.jl.along(model, self.beam, start))
-        self._check(orbit)
+        self._check(orbit, occurrences, exits)
         return OrbitResult(
             engine=NAME,
             fidelity=options.fidelity,
             effects=options.effects,
             branch=self.branch,
-            closed=self.layout.periodic,
-            occurrences=tuple(self._occurrence_ids),
-            x=tuple(float(orbit[0][i]) for i in self._exits),
-            px=tuple(float(orbit[1][i]) for i in self._exits),
-            y=tuple(float(orbit[2][i]) for i in self._exits),
-            py=tuple(float(orbit[3][i]) for i in self._exits),
-            zeta=tuple(float(orbit[4][i]) * self._beta0 for i in self._exits),
-            delta=tuple(self._delta(float(orbit[5][i])) for i in self._exits),
+            closed=self.layout.periodic and not partial,
+            occurrences=tuple(occurrences),
+            x=tuple(float(orbit[0][i]) for i in exits),
+            px=tuple(float(orbit[1][i]) for i in exits),
+            y=tuple(float(orbit[2][i]) for i in exits),
+            py=tuple(float(orbit[3][i]) for i in exits),
+            zeta=tuple(float(orbit[4][i]) * self._beta0 for i in exits),
+            delta=tuple(self._delta(float(orbit[5][i])) for i in exits),
         )
 
     def track(self, request: TrackRequest) -> TrackResult:
@@ -514,6 +618,72 @@ class TrackPadSession:
             y=series(2),
             py=series(3),
             lost=tuple(bool(flag) for flag in np.asarray(lost)),
+        )
+
+    def track_beam(
+        self,
+        coordinates,
+        turns: int,
+        observe,
+        options: Options,
+        start: str | None = None,
+        end: str | None = None,
+        ramps: Sequence[Ramp] = (),
+    ) -> BeamTrack:
+        """Track a bunch for ``turns`` turns of the ring, or once through a line or part of a branch.
+
+        Julia averages it at every observation point, every turn, and with ``ramps`` rebuilds the
+        elements whose settings move before each turn they change.
+        """
+        partial = start is not None or end is not None or not self.layout.periodic
+        if partial and turns != 1:
+            raise UnsupportedRequest(NAME, ["a line, or part of a branch, is passed once: turns = 1"])
+        if partial and ramps:
+            raise UnsupportedRequest(NAME, ["settings ramp while a ring turns, not in one pass"])
+        time_scale = TimeScale.SINGLE_PASS if partial else TimeScale.TURNS
+        require(
+            TrackPadEngine().capabilities(),
+            self.lattice,
+            self.branch,
+            options,
+            Computation.TRACKING,
+            time_scale,
+        )
+        model, occurrences, exits, _, _ = self._part(options, start, end)
+        if missing := [o for o in observe if o not in occurrences]:
+            raise UnsupportedRequest(NAME, [f"observation points outside the part tracked: {missing[:3]}"])
+        coordinates = np.asarray(coordinates, dtype=float).reshape(-1, 6)
+        index = dict(zip(occurrences, exits, strict=True))
+        cuts = sorted({index[o] for o in observe})
+        initial = coordinates.copy()
+        initial[:, 4] = coordinates[:, 4] / self._beta0
+        initial[:, 5] = [float(self.jl.deltae(d, self.beam)) for d in coordinates[:, 5]]
+        if ramps:
+            groups = self._ramped(ramps, turns, options)
+            x, y, count, final, lost = self.jl.centroids(
+                model, self.beam, initial, turns, np.array(cuts, dtype=np.int64), *groups
+            )
+            after: dict[tuple[str, str], float] = {}
+            for ramp in ramps:
+                after |= ramp.at(turns - 1)
+            self.update(after)  # the session goes on from where the ramps are
+        else:
+            x, y, count, final, lost = self.jl.centroids(
+                model, self.beam, initial, turns, np.array(cuts, dtype=np.int64)
+            )
+        rows = [cuts.index(index[o]) for o in observe]
+        final = np.asarray(final).copy()
+        energy = final[:, 5]
+        final[:, 4] *= self._beta0
+        final[:, 5] = np.sqrt(1.0 + 2.0 * energy / self._beta0 + energy * energy) - 1.0
+        return BeamTrack(
+            observe=tuple(observe),
+            turns=turns,
+            x=np.asarray(x)[rows],
+            y=np.asarray(y)[rows],
+            count=np.asarray(count)[rows],
+            final=final,
+            lost=np.asarray(lost) != 0,
         )
 
     def close(self) -> None:

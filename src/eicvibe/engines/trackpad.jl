@@ -107,6 +107,10 @@ end
 
 beam(pc::Real, mass::Real, charge::Real) = Beam(; pc=Float64(pc), mass=Float64(mass), charge=Float64(charge))
 
+"""Elements `first` to `last` (1-based, inclusive) as a line: part of a branch, passed once."""
+segment(lat::Lattice, first::Integer, last::Integer) =
+    Lattice(lat.elements[first:last]; name=lat.name, periodic=false)
+
 """The lattice with its RF cavities as drifts: the 4D (frozen longitudinal) model."""
 function transverse(lat::Lattice)
     any(e -> e isa RFCavity, lat.elements) || return lat
@@ -203,6 +207,113 @@ function observe(lat::Lattice, b::Beam, coords::AbstractMatrix, turns::Integer, 
         end
     end
     return record, lost
+end
+
+"""Track `coords` (particles x 6) `turns` times and average them after the elements in `cuts`, as BPMs do.
+
+Returns the centroids x and y (cuts x turns, NaN where no particle is left), the
+number of particles averaged, the final coordinates and the lost flags.
+"""
+function centroids(lat::Lattice, b::Beam, coords::AbstractMatrix, turns::Integer, cuts::AbstractVector)
+    r, lost, segments, x, y, count = _setup(lat, coords, turns, cuts)
+    for t in 1:turns
+        _turn!(segments, r, b, lost, x, y, count, t, length(cuts))
+    end
+    return x, y, count, r, lost
+end
+
+"""
+    centroids(lat, b, coords, turns, cuts, first, count, kinds, names, columns, base, group, ramp, delta, fraction)
+
+As `centroids`, while settings move turn by turn. Group `g` is the pieces `first[g]` to
+`first[g] + count[g] - 1` of `lat` (1-based), one occurrence; its rows are the next `count[g]` rows of
+`base` (and of `kinds`, `names`). A contribution `c` adds `fraction[ramp[c], t] * delta_c` to group
+`group[c]`'s rows, `delta_c` being its next `count[group[c]]` rows of `delta`. Before each turn whose
+fractions changed, the group's elements are built anew from those rows: element inputs are linear in
+the settings, so a magnet follows its supply's ramp exactly, turn by turn, and nothing steps.
+"""
+function centroids(lat::Lattice, b::Beam, coords::AbstractMatrix, turns::Integer, cuts::AbstractVector,
+                   first::AbstractVector, count::AbstractVector, kinds::AbstractVector, names::AbstractString,
+                   columns::AbstractString, base::AbstractMatrix, group::AbstractVector, ramp::AbstractVector,
+                   delta::AbstractMatrix, fraction::AbstractMatrix)
+    r, lost, segments, x, y, counts = _setup(lat, coords, turns, cuts)
+    bounds = [0; Int.(cuts); length(lat.elements)]
+    place = Vector{Tuple{Int,Int}}(undef, length(lat.elements))
+    for k in eachindex(segments)
+        for (j, i) in enumerate(bounds[k] + 1:bounds[k + 1])
+            place[i] = (k, j)
+        end
+    end
+    index = header(columns)
+    labels = split(names, '\n')
+    groups = length(first)
+    rows_at = cumsum([1; Int.(count)])
+    contributions = [Int[] for _ in 1:groups]
+    delta_at = zeros(Int, length(group))
+    offset = 1
+    for c in eachindex(group)
+        g = Int(group[c])
+        push!(contributions[g], c)
+        delta_at[c] = offset
+        offset += Int(count[g])
+    end
+    rows = Matrix{Float64}(undef, maximum(Int.(count); init=0), size(base, 2))
+    for t in 1:turns
+        for g in 1:groups
+            if t > 1 && all(fraction[Int(ramp[c]), t] == fraction[Int(ramp[c]), t - 1] for c in contributions[g])
+                continue
+            end
+            p = Int(count[g])
+            at = rows_at[g]
+            part = view(rows, 1:p, :)
+            part .= view(base, at:at + p - 1, :)
+            for c in contributions[g]
+                part .+= fraction[Int(ramp[c]), t] .* view(delta, delta_at[c]:delta_at[c] + p - 1, :)
+            end
+            for j in 1:p
+                e = element(KINDS[Int(kinds[at + j - 1]) + 1], Symbol(labels[at + j - 1]),
+                            Row(view(part, j, :), index), b)
+                k, l = place[Int(first[g]) + j - 1]
+                segments[k].elements[l] = e
+            end
+        end
+        _turn!(segments, r, b, lost, x, y, counts, t, length(cuts))
+    end
+    return x, y, counts, r, lost
+end
+
+"""The bunch's coordinates, its losses, the lattice cut at the observation points, and the readings' arrays."""
+function _setup(lat::Lattice, coords::AbstractMatrix, turns::Integer, cuts::AbstractVector)
+    r = Matrix{Float64}(coords)
+    lost = zeros(Int, size(r, 1))
+    bounds = [0; Int.(cuts); length(lat.elements)]
+    segments = [Lattice(lat.elements[bounds[k] + 1:bounds[k + 1]]) for k in 1:length(bounds) - 1]
+    m = length(cuts)
+    return r, lost, segments, fill(NaN, m, turns), fill(NaN, m, turns), zeros(Int, m, turns)
+end
+
+"""One turn through the segments, the centroid and particle count recorded after each of the first `m`."""
+function _turn!(segments, r, b, lost, x, y, count, t, m)
+    n = size(r, 1)
+    for (k, segment) in enumerate(segments)
+        isempty(segment.elements) || linepass!(r, segment, b, lost)
+        k > m && continue
+        sx = 0.0
+        sy = 0.0
+        c = 0
+        @inbounds for p in 1:n
+            iszero(lost[p]) || continue
+            sx += r[p, 1]
+            sy += r[p, 3]
+            c += 1
+        end
+        count[k, t] = c
+        if c > 0
+            x[k, t] = sx / c
+            y[k, t] = sy / c
+        end
+    end
+    return nothing
 end
 
 end # module

@@ -18,6 +18,7 @@ from eicvibe.engines.contracts import (  # noqa: E402
     OpticsRequest,
     Options,
     OrbitRequest,
+    Ramp,
     TrackRequest,
     UnsupportedRequest,
 )
@@ -176,6 +177,46 @@ def test_turn_by_turn_tracking_oscillates_at_the_tune(ring):
     assert result.lost == (False,)
 
 
+def ramped_and_turn_by_turn(engine, lattice, options):
+    """A corrector and a quadrupole ramped while a bunch turns: tracked in one call with a ``Ramp``,
+    and by setting each turn's values and tracking that turn. Returns both, the one-call session last."""
+    placements = lattice.layout("ring").placements
+    corrector = next(p for p in placements if p.kind.value == "Kicker")
+    quad = next(p for p in placements if p.kind.value == "Quadrupole")
+    kick, k1 = (corrector.id, "MagneticMultipoleP.Kn0L"), (quad.id, "MagneticMultipoleP.Kn1")
+    start = {kick: corrector.element.MagneticMultipoleP.Kn0L, k1: quad.element.MagneticMultipoleP.Kn1}
+    end = {kick: start[kick] + 1e-4, k1: start[k1] * 1.01}
+    turns = 24
+    ramp = Ramp(start, end, np.clip((np.arange(turns) - 4) / 16, 0, 1))  # held, ramping, held
+    bpms = tuple(p.id for p in placements if p.kind.value == "Instrument")
+    bunch = np.random.default_rng(3).normal(0, 1e-4, (20, 6)) * [1, 0.1, 1, 0.1, 0, 1]
+    session = engine.open(lattice, "ring", options)
+    ramped = session.track_beam(bunch, turns, bpms, options, ramps=[ramp])
+    stepped, coordinates, x = engine.open(lattice, "ring", options), bunch, []
+    for t in range(turns):
+        stepped.update(ramp.at(t))
+        one = stepped.track_beam(coordinates, 1, bpms, options)
+        x.append(one.x[:, 0])
+        coordinates = one.final
+    return ramped, np.column_stack(x), coordinates, session, stepped
+
+
+def test_settings_ramp_turn_by_turn_within_one_call(ring):
+    lattice, _ = ring
+    ramped, x, final, session, stepped = ramped_and_turn_by_turn(ENGINE, lattice, Options())
+    assert np.ptp(x, axis=1).max() > 1e-5  # the bunch felt the ramp
+    assert ramped.x == pytest.approx(x, rel=1e-12, abs=1e-15)
+    # The turn-by-turn tracking restarts the bunch from its coordinates every turn, which rounds.
+    assert ramped.final == pytest.approx(final, abs=1e-11)
+    # The session is left where the ramp ended.
+    assert session.orbit(OrbitRequest()).x == pytest.approx(stepped.orbit(OrbitRequest()).x, abs=1e-15)
+    part = lattice.layout("ring").placements[3].id
+    with pytest.raises(UnsupportedRequest, match="settings ramp while a ring turns"):
+        ENGINE.open(lattice, "ring").track_beam(
+            final, 1, (), Options(), end=part, ramps=[Ramp({}, {}, [0.0])]
+        )
+
+
 def test_a_slow_program_is_followed_by_snapshots(ring):
     lattice, _ = ring
     quad = next(p for p in lattice.layout("ring").placements if p.kind.value == "Quadrupole")
@@ -240,3 +281,42 @@ def test_every_rf_phase_reference_is_converted(zero_phase, phase):
     assert orbit.delta[-1] == pytest.approx(
         1e6 / 1e9, rel=1e-6
     )  # the crest: the full voltage, for electrons too
+
+
+def test_a_bunch_is_seen_as_bpms_see_it(ring):
+    lattice, _ = ring
+    session = ENGINE.open(lattice, "ring")
+    bpms = tuple(p.id for p in lattice.layout("ring").placements if p.kind.value == "Instrument")
+    start = np.array([[1e-3, 0.0, 5e-4, 0.0, 0.0, 0.0]])
+    one = session.track_beam(start, 64, bpms, Options())
+    single = session.track(TrackRequest(particles=(tuple(start[0]),), turns=64, observe=bpms))
+    assert one.x == pytest.approx(np.array(single.x)[:, :, 0], abs=1e-15)  # one particle: its own centroid
+    assert one.final[0] == pytest.approx(start[0], abs=1e-2) and not one.lost.any()
+    spread = start + np.random.default_rng(0).normal(0, 1e-4, (40, 6)) * [1, 0.1, 1, 0.1, 0, 0]
+    bunch = session.track_beam(spread, 64, bpms, Options())
+    assert (bunch.count == 40).all() and bunch.final.shape == (40, 6)
+    assert bunch.x[0, 0] != pytest.approx(one.x[0, 0], abs=1e-9)  # the mean of 40, not of one
+
+
+def test_a_route_carries_the_beams_optics_across_its_joins():
+    from eicvibe.api.demo import ROUTES, demo_lattice
+    from eicvibe.domain.lattice import route_length, route_through
+    from eicvibe.engines import route_optics
+
+    lattice = demo_lattice()
+    route = route_through(lattice, "transfer", ROUTES["transfer"])
+    optics = route_optics(ENGINE, lattice, route)
+    assert optics.branch == "route:transfer" and not optics.periodic
+    assert (optics.start.beta_x, optics.start.beta_y) == pytest.approx((8.0, 4.0))  # the line's own start
+    assert np.all(np.diff(optics.s) >= 0) and optics.s[-1] == pytest.approx(route_length(lattice, route))
+    from eicvibe.engines.model import initial_conditions
+
+    start = initial_conditions(lattice, "injection")
+    injection = ENGINE.open(lattice, "injection").optics(OpticsRequest(initial=start))
+    n = len(injection.occurrences)
+    assert optics.beta_x[:n] == pytest.approx(injection.beta_x, rel=1e-9)  # the line, as it is alone
+    # The ring's part starts from where the line ends: one metre of field-free septum further on.
+    b, a = injection.beta_x[-1], injection.alpha_x[-1]
+    assert optics.beta_x[n] == pytest.approx(b - 2 * a + (1 + a * a) / b, rel=1e-9)
+    ring = ENGINE.open(lattice, "ring").optics(OpticsRequest())
+    assert max(optics.beta_x[n:]) != pytest.approx(max(ring.beta_x), rel=1e-3)  # the beam's, not periodic

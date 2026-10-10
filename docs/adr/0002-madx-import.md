@@ -49,6 +49,16 @@ result.warnings     # what was dropped or approximated
 
 Signs were checked against MAD-X itself. XROTATION, YROTATION and SROTATION turn the frame as right-handed rotations (SURVEY). SROTATION(a) followed by a bend and SROTATION(−a) equals the bend with TILT = a. The RF phase map uses MAD-X's LAG convention: LAG = 0 is the zero crossing stable below transition, 0.5 the one stable above, and 0.25 is on crest.
 
+## Bmad lattices, through Bmad's own writer (2026-10-10)
+
+A Bmad design is imported as MAD-X written by Bmad itself: `eicvibe.importers.bmad.bmad_to_madx` runs `bmad_to_mad_sad_elegant -madx -noaperture` on a copy of the design's folder, so Bmad resolves its CALLs, overlays and superposition and nothing is written beside the design files. Bmad is the authority on its language, as MAD-X is on its own. The writer loses three things, which the conversion puts back, each with an `ImportNote`:
+
+- **Elements superimposed on a `PIPE`.** Bmad makes each overlap a slave with two lords, the pipe and the element (`LTR_PIP01\LTR_QUA01`), and the writer names it after the pipe (`LTR_PIP01_L1001`). Such pipes are read as drifts. A pipe is a drift with an aperture, and apertures are not written, so nothing else changes; the conversion checks that every element keeps its length and position. Each element then keeps its own name.
+- **Monitors and instruments**, which the writer writes as drifts (`write_lattice_mad_format.f90`, the drift case). Bmad's element list, read through Tao, names them, and they become MAD-X monitors and instruments again. A monitor that a zero-length element splits keeps its name on its first piece.
+- **The sign of a patch's `x_pitch`.** The writer gives `YROTATION = -x_pitch`. MAD-X 5.09 turns the frame as Bmad does: `x_pitch = +a` and `YROTATION = +a` both turn it by `a` toward +x and give a beam on the axis px = −a (Tao and MAD-X TWISS and SURVEY on a drift, patch, drift line). The angle's sign is corrected. The writer's `XROTATION = -y_pitch` and `SROTATION = tilt` are right; so are its translations.
+
+The Bmad programs come from `$EICVIBE_BMAD_BIN`, `$ACC_EXE`, the PATH or `~/packages/bmad-ecosystem/production/bin`. Checked on the EIN's LTR against Tao, element by element up to the RCS injection point: floor coordinates to 1e-13 m, optics to 5e-7 m, and the orbit at the injection point exactly (x = −30.900 mm, px = +4.391 mrad). Every s after a patch is 1.4e-4 m shorter than Bmad's, since Bmad gives a patch a path length (here 30.9 mm × sin 4.39 mrad) and MAD-X does not. The RTE's floor and orbit agree likewise (8e-13 m, 1e-5 m); with the writer's sign they were 0.8 m and 67 mm off.
+
 ## Not imported (warnings)
 
 - Multipole orders above 10 (`MAX_MULTIPOLE_ORDER`). MAD-X allows up to 20. The RHIC proton lattice uses orders up to 10, in its interaction-region field-error multipoles.
