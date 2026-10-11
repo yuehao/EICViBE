@@ -320,3 +320,53 @@ def test_a_route_carries_the_beams_optics_across_its_joins():
     assert optics.beta_x[n] == pytest.approx(b - 2 * a + (1 + a * a) / b, rel=1e-9)
     ring = ENGINE.open(lattice, "ring").optics(OpticsRequest())
     assert max(optics.beta_x[n:]) != pytest.approx(max(ring.beta_x), rel=1e-3)  # the beam's, not periodic
+
+
+def test_a_beam_stored_in_a_ring_leaves_on_the_rings_own_optics():
+    from eicvibe.api.demo import ROUTES, demo_lattice
+    from eicvibe.domain.lattice import route_through
+    from eicvibe.engines import route_optics
+
+    lattice = demo_lattice()
+    one_pass = route_optics(ENGINE, lattice, route_through(lattice, "transfer", ROUTES["transfer"]))
+    stored = route_optics(ENGINE, lattice, route_through(lattice, "transfer", ROUTES["transfer"], ["ring"]))
+    ring = ENGINE.open(lattice, "ring").optics(OpticsRequest())
+    inside = [i for i, o in enumerate(stored.occurrences) if o in set(ring.occurrences)]
+    by_id = dict(zip(ring.occurrences, ring.beta_x, strict=True))
+    # In the ring the stored beam has the ring's periodic optics, and the extraction line starts from them.
+    assert [stored.beta_x[i] for i in inside] == pytest.approx(
+        [by_id[stored.occurrences[i]] for i in inside], rel=1e-8
+    )
+    assert max(one_pass.beta_x[inside[0] :]) != pytest.approx(max(stored.beta_x[inside[0] :]), rel=1e-3)
+    assert stored.beta_x[: inside[0]] == pytest.approx(
+        one_pass.beta_x[: inside[0]], rel=1e-12
+    )  # the same before
+
+
+def test_matching_finds_strengths_that_give_the_optics_asked_for():
+    from eicvibe.api.demo import demo_lattice
+    from eicvibe.engines.match import match_line, mismatch
+    from eicvibe.engines.model import initial_conditions
+
+    lattice = demo_lattice()
+    line = lattice.layout("injection")
+    start, end = line.placements[1].id, line.placements[-1].id
+    initial = initial_conditions(lattice, "injection")
+    quads = [(p.id, "MagneticMultipoleP.Kn1") for p in line.placements if p.kind.value == "Quadrupole"]
+    # Optics some other strengths give: reachable, so a match from the design's must reach them.
+    other = dict(zip(quads, (0.5, -0.75, 0.7), strict=True))
+    session = ENGINE.open(lattice, line.id, values=other)
+    reached = session.optics(OpticsRequest(initial=initial, start=start, end=end))
+    aim = reached.at(reached.occurrences[-1])
+    targets = {"beta_x": aim.beta_x, "alpha_x": aim.alpha_x, "beta_y": aim.beta_y}  # three quadrupoles, three
+    found = match_line(ENGINE, lattice, line.id, start, end, initial, quads, targets, keep_signs=True)
+    assert found.success and found.bmag_before[0] > 1.01
+    assert found.bmag_after[0] == pytest.approx(1.0, abs=1e-6) and found.after.beta_y == pytest.approx(
+        aim.beta_y, rel=1e-4
+    )
+    assert all(found.values[k] * found.start[k] >= 0 for k in found.values)  # polarities kept
+    four = match_line(
+        ENGINE, lattice, line.id, start, end, initial, quads, targets | {"alpha_y": aim.alpha_y + 1.0}
+    )
+    assert not four.success  # four targets, three quadrupoles, and a fourth out of reach: it says so
+    assert mismatch(10.0, 0.0, 10.0, 0.0) == 1.0 and mismatch(20.0, 0.0, 10.0, 0.0) == pytest.approx(1.25)

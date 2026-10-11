@@ -23,6 +23,8 @@ interface Props {
   /** The virtual accelerator's machine chooser and account menu, when there is one. */
   machine?: ReactNode;
   account?: ReactNode;
+  /** The optional local model's Ask (ADR 0009), when the server has one. */
+  assistant?: ReactNode;
 }
 
 export function TopBar(props: Props) {
@@ -186,6 +188,7 @@ export function TopBar(props: Props) {
           Download
         </a>
       ) : null}
+      {props.assistant}
       {props.account}
     </header>
   );

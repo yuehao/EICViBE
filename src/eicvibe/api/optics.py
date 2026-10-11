@@ -14,6 +14,7 @@ TrackPad's Julia runtime starts once, on the first request that needs it.
 """
 
 import asyncio
+import hashlib
 import threading
 from collections import OrderedDict
 from concurrent.futures import Future
@@ -67,7 +68,20 @@ def _round(value: float) -> float:
     return float(f"{value:.{DIGITS}g}")
 
 
-def branch_optics(revision: Revision, machine: MachineOptics, branch: str) -> schemas.BranchOptics:
+def _key(
+    revision: Revision, name: str, fidelity: Fidelity, route: str | None, mode: str | None
+) -> tuple[str, str, str, str]:
+    """A computation's cache key: by what it computes, not by names, so that a route or a mode
+    edited in its file (the lattice unchanged) is computed again."""
+    values = revision.modes.get(mode, {}) if mode else {}
+    found = revision.views.routes.get(route) if route else None
+    what = (found.model_dump_json() if found else route or "") + repr(sorted(values.items()))
+    return revision.digest, name, fidelity.value, hashlib.sha256(what.encode()).hexdigest()
+
+
+def branch_optics(
+    revision: Revision, machine: MachineOptics, branch: str, mode: str | None = None
+) -> schemas.BranchOptics:
     """One branch of a machine's optics as the viewer reads it."""
     lattice = revision.lattice
     if branch.startswith("route:"):
@@ -82,6 +96,7 @@ def branch_optics(revision: Revision, machine: MachineOptics, branch: str) -> sc
         "version": machine.version,
         "fidelity": machine.fidelity.value,
         "periodic": periodic,
+        "mode": mode,
         "origin": machine.notes.get(branch_id, "not computed"),
         "columns": list(COLUMNS),
     }
@@ -136,7 +151,7 @@ class OpticsService:
         self._lock = threading.Lock()
         self._workers: dict[str, EngineWorker] = {}
         self._machines: OrderedDict[
-            tuple[str, str, str], tuple[Future[MachineOptics], dict[str, Payload]]
+            tuple[str, str, str, str], tuple[Future[MachineOptics], dict[str, Payload]]
         ] = OrderedDict()
 
     def engines(self) -> list[schemas.EngineInfo]:
@@ -163,13 +178,22 @@ class OpticsService:
             return self._workers.setdefault(name, EngineWorker(name))
 
     def machine(
-        self, revision: Revision, name: str, fidelity: Fidelity, route: str | None = None
+        self,
+        revision: Revision,
+        name: str,
+        fidelity: Fidelity,
+        route: str | None = None,
+        mode: str | None = None,
     ) -> tuple[Future[MachineOptics], dict]:
-        """The machine's or a route's optics of a revision, computed once; a failure is tried again."""
+        """The machine's or a route's optics of a revision, in an operating mode's settings or the
+        lattice's, computed once; a failure is tried again."""
+        if mode is not None and mode not in revision.modes:
+            raise KeyError(f"no mode {mode}")
+        values = revision.modes[mode] if mode else {}
         worker = self.worker(name)
         if fidelity not in engine(name).capabilities().fidelities:
             raise UnsupportedRequest(name, [f"no {fidelity.value} fidelity"])
-        key = (revision.digest, name, fidelity.value, route or "")
+        key = _key(revision, name, fidelity, route, mode)
         with self._lock:
             found = self._machines.get(key)
             if found is None or (found[0].done() and found[0].exception() is not None):
@@ -177,13 +201,14 @@ class OpticsService:
                     raise EngineUnavailable(f"engine {name} is not installed on the server")
                 if route is None:
                     computing = worker.machine_optics(
-                        revision.lattice, Options(fidelity=fidelity), inside=True
+                        revision.lattice, Options(fidelity=fidelity), inside=True, values=values
                     )
                 else:
                     computing = worker.route_optics(
                         revision.lattice,
                         revision.views.routes[route],
                         Options(fidelity=fidelity),
+                        values=values,
                         inside=True,
                     )
                 found = (computing, {})
@@ -193,15 +218,29 @@ class OpticsService:
                 self._machines.popitem(last=False)
             return found
 
-    async def branch(self, revision: Revision, name: str, fidelity: Fidelity, branch: str) -> Payload:
+    def computed(
+        self, revision: Revision, name: str, fidelity: Fidelity, branch: str, mode: str | None = None
+    ) -> schemas.BranchOptics | None:
+        """A branch's optics if they have been computed already, else None; never starts a computation."""
+        route = branch.removeprefix("route:") if branch.startswith("route:") else None
+        with self._lock:
+            found = self._machines.get(_key(revision, name, fidelity, route, mode))
+        if found is None or not found[0].done() or found[0].exception() is not None:
+            return None
+        branch_id = branch if route is not None else revision.lattice.layout(branch).id
+        return branch_optics(revision, found[0].result(), branch_id, mode)
+
+    async def branch(
+        self, revision: Revision, name: str, fidelity: Fidelity, branch: str, mode: str | None = None
+    ) -> Payload:
         """One branch's optics as a response, waiting for the machine computation without blocking others."""
         route = branch.removeprefix("route:") if branch.startswith("route:") else None
-        future, payloads = self.machine(revision, name, fidelity, route)
+        future, payloads = self.machine(revision, name, fidelity, route, mode)
         machine = await asyncio.wrap_future(future)
         branch_id = branch if route is not None else revision.lattice.layout(branch).id
         payload = payloads.get(branch_id)
         if payload is None:
-            payload = payloads[branch_id] = Payload.of(branch_optics(revision, machine, branch_id))
+            payload = payloads[branch_id] = Payload.of(branch_optics(revision, machine, branch_id, mode))
         return payload
 
     def close(self) -> None:

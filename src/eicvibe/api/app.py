@@ -17,15 +17,17 @@ from importlib.metadata import version
 from pathlib import Path
 
 from fastapi import APIRouter, FastAPI, HTTPException, Query, Request, Response
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import RootModel
 
+from eicvibe.ai import AiConfig, AiUnavailable
 from eicvibe.engines.contracts import EngineUnavailable, Fidelity, UnsupportedRequest
 from eicvibe.va.api import va_router
 from eicvibe.va.service import VirtualAccelerator
 
 from . import schemas
+from .assist import AiOff, Assistant, Busy, check_messages, view_facts, view_messages
 from .catalog import Catalog, Payload, Revision
 from .checks import RunChecks
 from .optics import OpticsService, UnknownEngine
@@ -74,10 +76,17 @@ def create_app(
     optics: OpticsService | None = None,
     runs: RunCatalog | None = None,
     va: VirtualAccelerator | None = None,
+    ai: AiConfig | None = None,
 ) -> FastAPI:
     optics = optics or OpticsService()
     runs = runs or RunCatalog([])
     checks = RunChecks(runs, catalog, optics.worker)
+    # The AI features (ADR 0009): on, with the local model, unless configured otherwise; with a
+    # virtual accelerator, its administrators choose on the admin page.
+    ai = ai or AiConfig()
+    if va is not None:
+        va.ai_default = ai
+    assistant = Assistant(lambda: (va.ai_config() if va is not None else ai).make())
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -151,13 +160,20 @@ def create_app(
         request: Request,
         engine: str = Query("xsuite", description="Engine name; see /engines"),
         fidelity: Fidelity = Fidelity.STANDARD,
+        mode: str | None = Query(
+            None,
+            description="An operating mode of the machine (see the summary's modes); none: the lattice's",
+        ),
     ) -> Response:
-        """Design optics of one branch: beta functions, dispersion, phase advance, orbit, tunes, chromaticity.
+        """Optics of one branch: beta functions, dispersion, phase advance, orbit, tunes, chromaticity.
 
-        The first request for a revision computes the whole machine (lines start from the
-        optics at their forks), which can take a while: TrackPad starts Julia on first use.
+        With the lattice's settings, or an operating mode's. The first request for a revision
+        computes the whole machine (lines start from the optics at their forks), which can take
+        a while: TrackPad starts Julia on first use.
         """
         found = revision(digest)
+        if mode is not None and mode not in found.modes:
+            raise HTTPException(404, f"no mode {mode}")
         if branch.startswith("route:"):
             if branch.removeprefix("route:") not in found.views.routes:
                 raise HTTPException(404, f"no {branch}")
@@ -167,7 +183,7 @@ def create_app(
             except KeyError:
                 raise HTTPException(404, f"no branch {branch}") from None
         try:
-            payload = await optics.branch(found, engine, fidelity, branch)
+            payload = await optics.branch(found, engine, fidelity, branch, mode)
         except UnknownEngine:
             raise HTTPException(404, f"no engine {engine}") from None
         except UnsupportedRequest as error:
@@ -246,6 +262,85 @@ def create_app(
         except BrokenProcessPool:
             raise HTTPException(503, f"the {engine} worker stopped; try again") from None
 
+    @api.get("/ai", response_model=schemas.AiStatus)
+    def ai_status() -> schemas.AiStatus:
+        """The AI features (ADR 0009): whether they are on, which model answers, and whether it does."""
+        return assistant.status()
+
+    def _streamed(messages, max_tokens: int) -> StreamingResponse:
+        try:
+            pieces = assistant.stream(messages, max_tokens)
+        except AiOff:
+            raise HTTPException(404, "the AI features are turned off on this server") from None
+        except (AiUnavailable, Busy) as error:
+            raise HTTPException(503, str(error)) from None
+        return StreamingResponse(
+            pieces, media_type="text/plain; charset=utf-8", headers={"Cache-Control": "no-store"}
+        )
+
+    @api.post("/ai/explain-check", response_class=StreamingResponse)
+    def explain_check(body: schemas.ExplainCheck) -> StreamingResponse:
+        """A few sentences on a run's check, from its numbers, written by the local model as it goes."""
+        if assistant.model() is None:
+            raise HTTPException(404, "the AI features are turned off on this server")
+        try:
+            check = checks.check(body.run, body.source, body.first, body.turns, body.engine, body.detuning)
+        except KeyError:
+            raise HTTPException(404, f"no run {body.run}") from None
+        except (ValueError, UnsupportedRequest) as error:
+            raise HTTPException(422, str(error)) from None
+        return _streamed(check_messages(check), max_tokens=220)
+
+    @api.post("/ai/ask", response_class=StreamingResponse)
+    def ask(body: schemas.AskRequest) -> StreamingResponse:
+        """A short answer about what the viewer shows; the server gathers the facts from its own data."""
+        if assistant.model() is None:
+            raise HTTPException(404, "the AI features are turned off on this server")
+        found = revision(body.digest)
+        route = None
+        if body.branch.startswith("route:"):
+            summary = found.views.summary()
+            route = next((r for r in summary.routes if r.id == body.branch), None)
+            if route is None:
+                raise HTTPException(404, f"no {body.branch}")
+        else:
+            try:
+                found.lattice.layout(body.branch)
+            except KeyError:
+                raise HTTPException(404, f"no branch {body.branch}") from None
+        occurrence = None
+        if body.occurrence:
+            try:
+                occurrence = found.views.occurrence(body.occurrence)
+            except KeyError:
+                occurrence = None
+        computed = None
+        if body.engine:
+            try:
+                computed = optics.computed(
+                    found, body.engine, Fidelity(body.fidelity or "standard"), body.branch
+                )
+            except KeyError, ValueError:
+                computed = None
+        run = next((r for r in runs.entries() if r.id == body.run), None) if body.run else None
+        machine = None
+        if va is not None and body.machine:
+            try:
+                machine = va.machine(body.machine)
+            except KeyError:
+                machine = None
+        facts = view_facts(
+            found.lattice,
+            body.branch,
+            route=route,
+            tab=body.tab,
+            occurrence=occurrence,
+            optics=computed,
+            run=run,
+            machine=machine,
+        )
+        return _streamed(view_messages(body.question, facts), max_tokens=180)
+
     @api.get("/engines", response_model=list[schemas.EngineInfo])
     def engines() -> list[schemas.EngineInfo]:
         """Physics engines that can compute optics here."""
@@ -307,4 +402,4 @@ def app_from_environment() -> FastAPI:
                 "(shown once; change it on the admin page)",
                 flush=True,
             )
-    return create_app(Catalog(paths), runs=RunCatalog(runs), va=va)
+    return create_app(Catalog(paths), runs=RunCatalog(runs), va=va, ai=AiConfig.from_environment())

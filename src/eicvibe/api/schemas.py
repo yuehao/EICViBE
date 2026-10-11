@@ -125,6 +125,9 @@ class LatticeSummary(_Model):
     circuits: int = Field(description="Power circuits in the registry")
     strings: int = Field(description="Circuits that drive several magnets in series")
     routes: list[RouteSummary] = Field(default_factory=list, description="The machine's routes")
+    modes: list[str] = Field(
+        default_factory=list, description="Its operating modes (settings/<mode>.yaml), for optics in a mode"
+    )
 
 
 class RouteSegment(_Model):
@@ -311,6 +314,9 @@ class BranchOptics(_Model):
     occurrence: one more entry than the branch has occurrences.
     """
 
+    mode: str | None = Field(
+        None, description="The operating mode whose settings they have; none: the lattice's"
+    )
     schema_version: int = SCHEMA_VERSION
     branch: str
     engine: str
@@ -431,6 +437,10 @@ class PlaneCheck(_Model):
     initial_amplitude: float | None = Field(
         description="The same over the first 32 turns: before the bunch decoheres, its particles' amplitude"
     )
+    beam_size: float | None = Field(
+        description="The beam's rms size from the model's beta, median over the BPMs, mm"
+    )
+    kick_sigma: float | None = Field(description="initial_amplitude in beam sizes: a pinger kicks a few")
     spectrum: list[float] = Field(
         description="Line amplitudes at RunCheck.frequencies, mean over the BPMs, mm"
     )
@@ -456,6 +466,10 @@ class Detuning(_Model):
     tune_x: list[float]
     tune_y: list[float]
     turns: int
+    expected_x: float | None = Field(
+        None, description="The model's tune at the amplitude measured after the kick"
+    )
+    expected_y: float | None = None
 
 
 class RunCheck(_Model):
@@ -468,6 +482,7 @@ class RunCheck(_Model):
     first_turn: int
     turns: int
     trigger: int | None = Field(description="A capture's trigger turn (a kick)")
+    kick: dict[str, float] | None = Field(None, description="The kick of a kick's capture: x and y, rad")
     settings: str = Field(description="Which settings the model has")
     bpms: list[str]
     s: list[float]
@@ -479,3 +494,39 @@ class RunCheck(_Model):
     y: PlaneCheck
     detuning: Detuning | None
     notes: list[str]
+
+
+class AiStatus(_Model):
+    """The AI features (ADR 0009): whether they are on, which model answers, and whether it does."""
+
+    enabled: bool = Field(description="On (the default), or turned off by an administrator or --no-ai")
+    available: bool = Field(description="The model answers")
+    provider: str | None = Field(description="local, openai or anthropic")
+    model: str | None
+    where: str | None = Field(description="Where the questions go: 'on this server', 'by OpenAI', ...")
+    reason: str
+
+
+class AskRequest(_Model):
+    """A question about what the viewer shows; the server gathers the facts itself."""
+
+    question: str = Field(min_length=1, max_length=500)
+    digest: str = Field(description="The revision shown")
+    branch: str = Field(description="The branch shown (id or name), or route:<name>")
+    tab: str | None = None
+    occurrence: str | None = Field(None, description="The selected occurrence's id")
+    engine: str | None = Field(None, description="The Optics tab's engine, for the optics already computed")
+    fidelity: str | None = None
+    run: str | None = Field(None, description="The run the Orbit or Check tab shows")
+    machine: str | None = Field(None, description="The virtual accelerator's machine chosen")
+
+
+class ExplainCheck(_Model):
+    """The check to explain, as the Check tab asked for it."""
+
+    run: str
+    source: str = "kick"
+    first: int | None = None
+    turns: int = Field(1024, ge=64, le=8192)
+    engine: str | None = None
+    detuning: bool = False

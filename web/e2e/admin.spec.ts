@@ -123,3 +123,49 @@ test("a user views without logging in, and logs in only to change a setting", as
   await expect(chooser.locator("option:checked")).toContainText("e2e-physicist's sandbox");
   await expect(setpoints).toContainText("1.5 A"); // the sandbox's copy of the settings
 });
+
+test("an administrator chooses the AI's model: local by default, or a provider with a key kept unseen", async ({ browser, request }) => {
+  await asAdmin(request);
+  const password = await addUser(request, "ai-operator", "operator");
+  const operator = await browser.newPage();
+  await adminLogin(operator, "ai-operator", password);
+  await expect(operator.getByRole("button", { name: "Machines" })).toBeVisible();
+  await expect(operator.getByRole("button", { name: "AI", exact: true })).toHaveCount(0); // administrators only
+  await operator.close();
+
+  const page = await browser.newPage();
+  await adminLogin(page, "admin", ADMIN_PASSWORD);
+  await page.getByRole("button", { name: "AI", exact: true }).click();
+  const section = page.getByTestId("ai-settings");
+  await expect(page.getByTestId("ai-now")).toContainText("no model server at http://127.0.0.1:9");
+  await expect(section.getByRole("radio", { name: "Local model (Ollama), the default" })).toBeChecked();
+  await expect(page.getByTestId("ai-note")).toContainText("nothing leaves the host");
+
+  await section.getByRole("radio", { name: "Anthropic Claude" }).check();
+  await expect(page.getByTestId("ai-note")).toContainText("are sent to Anthropic");
+  await expect(page.getByTestId("ai-note")).toContainText("A ChatGPT or Claude subscription does not let other applications use its models");
+  await section.getByLabel("URL").fill("http://127.0.0.1:9"); // nothing there: the test stays offline
+  await section.getByLabel("API key").fill("sk-ant-e2e-secret-9876");
+  await section.getByRole("button", { name: "Test" }).click();
+  await expect(page.getByTestId("ai-test")).toContainText("Does not answer: Anthropic cannot be reached");
+  await section.getByLabel("Reason").fill("e2e: try Claude");
+  await section.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByTestId("ai-now")).toContainText("claude-opus-5-5 on 127.0.0.1");
+  await expect(section).toContainText("Key: stored (…9876)");
+  const settings = await request.get("/api/v1/va/ai");
+  expect(await settings.text()).not.toContain("sk-ant-e2e-secret-9876");
+
+  await page.getByRole("button", { name: "Log", exact: true }).click();
+  await page.getByLabel("Log", { exact: true }).selectOption("actions");
+  const actions = page.getByTestId("actions");
+  await expect(actions).toContainText("ai settings");
+  await expect(actions).toContainText("e2e: try Claude");
+  await expect(actions).not.toContainText("sk-ant-e2e-secret-9876");
+
+  // Back to the default, for the other tests.
+  await page.getByRole("button", { name: "AI", exact: true }).click();
+  await section.getByRole("radio", { name: "Local model (Ollama), the default" }).check();
+  await section.getByLabel("URL").fill("http://127.0.0.1:9");
+  await section.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByTestId("ai-now")).toContainText("no model server at http://127.0.0.1:9");
+});

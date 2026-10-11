@@ -43,7 +43,7 @@ run.update({(corrector, "MagneticMultipoleP.Kn0L"): 1e-5})  # between shots; log
 shots = run.history.turn_by_turn()                         # [bpm, shot] trajectories
 ```
 
-or `eicvibe-virtual route MACHINE --route direct --out runs/direct` (`--through ltr,rcs` for a route the machine does not name). `--mode bar_mode` starts either from an operating mode's settings (`settings/bar_mode.yaml`: the LTR's strengths for the BAR route), and `--set` changes single values after it. Both print what the bunch is matched to; `eicvibe-web MACHINE --runs runs` shows every run under `runs/` in the Orbit tab, including runs started after the server.
+or `eicvibe-virtual route MACHINE --route direct --out runs/direct` (`--through ltr,rcs` for a route the machine does not name). `--mode MODE` starts either from an operating mode's settings (`settings/MODE.yaml`), and `--set` changes single values after it; the EIN's two routes need none, as one setting serves both (ADR 0006). Both print what the bunch is matched to; `eicvibe-web MACHINE --runs runs` shows every run under `runs/` in the Orbit tab, including runs started after the server.
 
 ## Validation (2026-10-08)
 
@@ -69,6 +69,8 @@ or `eicvibe-virtual route MACHINE --route direct --out runs/direct` (`--through 
 - **The EIN's injection into the RCS.** The LTR ends with a patch (`ltr_pat01`) that puts the injected beam at x = −30.9 mm in the RCS, and the RCS's injection kicker (`mqa1_il_ik`, `rcs-t10`, Bmad's `ltr_rcs_kicker`, HKICK = −2.945 mrad) is meant to put it on the axis. In Bmad the patch's `x_pitch` is −4.391 mrad, which gives the beam px = +4.391 mrad: it reaches the kicker 0.39 mm from the axis with px = +2.930 mrad, and the kick takes that out. The staged MAD-X had the angle's sign flipped, by Bmad's own MAD-X writer (`YROTATION = -x_pitch`; ADR 0002), so the imported LTR sent the beam 150 mm rms off in the RCS, and the shots of both routes into it were lost. The same writer had made the LTR's 15 BPMs drifts and named its magnets after the pipes they sit on. With the conversion corrected (2026-10-10), the LTR has its BPMs and names, and both routes take the beam round the RCS: 47 mm off axis with the injection kicker at 0, within 4 mm with it at −2.945 mrad (Kn0L = +2.945e-3). No mode sets the kicker yet. The RTE's extraction patch had the same flipped sign; the beam now meets it on the RCS's axis, 15 mm and 3.1 mrad from the RTE's, because the RCS's extraction kickers (`es.pip01_ek1003`, `ek1004`, `es.pip02_ek1005`; about −0.86 mrad each in the RTE design) are at 0 too.
 
 ## Not yet
+
+- A shot along a route that stores its beam in a ring (`stored`, the EIN's BAR) passes the ring once, as a line; the route's optics (ADR 0004) and a match (ADR 0006) have the stored beam leave on the ring's periodic optics. Storing it would mean tracking the ring's damping (thousands of turns) or replacing the bunch by the ring's equilibrium bunch where it is extracted.
 
 - Publishing the readings as pvAccess channels (`<bpm>:rdx`/`:rdy` from the slow orbit, turn-by-turn waveforms on a trigger) and serving the history to the REPLAY service (ADR 0003). The viewer shows a run's orbits every N turns (ADR 0004), from the run's folder; `state.json` tells it whether the run goes on.
 - A fast acquisition stream (10 kHz at NSLS-II) for orbit feedback, and kicks, injections and captures at a set turn rather than at the next engine call (a quarter second at most).

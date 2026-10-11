@@ -20,7 +20,13 @@ from eicvibe.machines.ein import (  # noqa: E402
     update_ein_machine,
     write_ein_machine,
 )
-from eicvibe.store import build_machine, check_machine, load_machine, name_ids, read_settings  # noqa: E402
+from eicvibe.store import (  # noqa: E402
+    build_machine,
+    check_machine,
+    load_lattice,
+    load_machine,
+    name_ids,
+)
 
 FOLDER = Path(os.environ.get("EICVIBE_EIN_FOLDER", "/Users/haoyue/Research/EIC/virtual_accelerator/EIN"))
 pytestmark = pytest.mark.skipif(not (FOLDER / "EICVIBE_lattice/madx").exists(), reason="EIN folder not found")
@@ -121,14 +127,6 @@ def test_the_ltr_keeps_its_names_its_bpms_and_its_injection_angle(ein):
     )  # Tao: -3.090030e-2, 4.391291e-3
 
 
-def test_bar_mode_retunes_fifteen_ltr_quadrupoles(ein):
-    lattice = ein.lattice
-    targets = {lattice.placement(s.occurrence).name for s in ein.bar_mode}
-    assert len(ein.bar_mode) == 15 and all(s.parameter == "MagneticMultipoleP.Kn1" for s in ein.bar_mode)
-    assert {"ltr_qua01", "ltr_qua10"} <= targets
-    assert all(lattice.placement(s.occurrence).branch_id == lattice.layout("ltr").id for s in ein.bar_mode)
-
-
 def test_registry_covers_every_branch_and_the_septum_once(ein):
     lattice = ein.lattice
     registry = ein_registry(ein)
@@ -179,7 +177,7 @@ def test_temporary_names_can_change_without_changing_devices(ein):
     assert problems and all("area" not in p for p in problems)  # only signal tokens awaiting approval remain
 
 
-def test_a_new_machine_folder_holds_the_lattice_devices_and_bar_mode(ein, tmp_path):
+def test_a_new_machine_folder_holds_the_lattice_devices_and_routes(ein, tmp_path):
     folder = tmp_path / "machine"
     write_ein_machine(ein, folder)
     machine = load_machine(folder)
@@ -191,11 +189,9 @@ def test_a_new_machine_folder_holds_the_lattice_devices_and_bar_mode(ein, tmp_pa
     assert [c.name for c in machine.registry.channels] == [c.name for c in registry.channels]
     ltr = (folder / "lattice" / "ltr.yaml").read_text()
     assert "{name: ltr_qua01, eic: ltr-q1:1, element: ltr.ltr_qua01, id: occ_" in ltr
-    assert machine.source["madx"].startswith("MAD-X") and len(machine.source["files"]) == 9
-    bar_mode = read_settings(folder, "bar_mode", machine.lattice)
-    assert {(b.occurrence, b.parameter, b.value) for b in bar_mode} == {
-        (b.occurrence, b.parameter, b.value) for b in ein.bar_mode
-    }
+    assert machine.source["madx"].startswith("MAD-X") and len(machine.source["files"]) == 7
+    assert not (folder / "settings").exists() or not list((folder / "settings").iterdir())  # no BAR mode
+    assert {r.name: len(r.stored) for r in machine.routes} == {"direct": 0, "bar": 1}
     assert check_machine(folder) == []
     paths = build_machine(folder)
     assert Lattice.from_json(paths["lattice"].read_text()) == name_ids(ein.lattice)
@@ -278,3 +274,54 @@ def test_ring_magnets_are_strung_by_family_and_line_magnets_powered_alone(ein):
     assert by_branch["ltr"] == by_branch["rte"] == {False} and by_branch["rcs"] == {False, True}
     alone = ein_registry(ein, series={})  # everything on its own supply
     assert not any(c.series for c in alone.circuits)
+
+
+def test_once_matched_the_bar_is_transparent_and_both_routes_land_matched(ein, tmp_path, capsys):
+    pytest.importorskip("scipy")
+    pytest.importorskip("xtrack")
+    from eicvibe.engines import engine, machine_optics, route_optics
+    from eicvibe.machines.ein import main, match_ein
+
+    folder = tmp_path / "machine"
+    write_ein_machine(ein, folder)  # the design files' strengths
+    files = {b: folder / "lattice" / f"{b}.yaml" for b in ("ltr", "itl", "etl")}
+    before = {b: f.read_text().splitlines() for b, f in files.items()}
+    assert main([str(FOLDER), "--machine", str(folder), "--match"]) == 0
+    report = capsys.readouterr().out
+    assert "NOT MATCHED" not in report and "left at BAR injection" in report
+    for branch, path in files.items():
+        changed = [b for b, a in zip(before[branch], path.read_text().splitlines(), strict=True) if a != b]
+        assert changed and all("kind: Quadrupole" in line for line in changed)  # only quadrupoles
+    assert check_machine(folder) == []
+    lattice = load_lattice(folder)
+
+    # Transparent: from P2 on the beam has the same optics through the BAR as past it, and it lands
+    # with the RCS's own optics either way.
+    xsuite = engine("xsuite")
+    routes = {r.name: r for r in load_machine(folder).routes}
+    direct, bar = (route_optics(xsuite, lattice, routes[n]) for n in ("direct", "bar"))
+    merge = lattice.placement("ltr_qua11", branch="ltr").id
+    for key, tolerance in (
+        ("beta_x", 1e-2),
+        ("alpha_x", 1e-2),
+        ("beta_y", 1e-2),
+        ("alpha_y", 1e-2),
+        ("eta_x", 1e-4),
+    ):
+        assert getattr(bar.at(merge), key) == pytest.approx(
+            getattr(direct.at(merge), key), rel=1e-2, abs=tolerance
+        )
+    periodic = machine_optics(xsuite, lattice)[lattice.layout("rcs").id]
+    inside = {p.id for p in lattice.layout("rcs").placements}
+    for optics in (direct, bar):
+        for plane in ("beta_x", "beta_y"):
+            peak = max(
+                b for o, b in zip(optics.occurrences, getattr(optics, plane), strict=True) if o in inside
+            )
+            assert peak == pytest.approx(max(getattr(periodic, plane)), rel=1e-2)  # no beating round the RCS
+
+    # The ITL matches beta and alpha into the BAR; the dispersion it cannot match is reported.
+    again = match_ein(folder)
+    assert again.success and all(m.values == m.start for m in again.steps.values())  # nothing to change
+    assert again.steps["itl"].stretches["itl"].bmag_before == pytest.approx((1.0, 1.0), abs=1e-3)
+    assert again.injection[2] > 0.01  # H: the ITL's bends need beta ~16 m at D1, the bypass gives more

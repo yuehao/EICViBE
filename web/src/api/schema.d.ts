@@ -4,6 +4,66 @@
  */
 
 export interface paths {
+    "/api/v1/ai": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Ai Status
+         * @description The AI features (ADR 0009): whether they are on, which model answers, and whether it does.
+         */
+        get: operations["ai_status_api_v1_ai_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ai/ask": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ask
+         * @description A short answer about what the viewer shows; the server gathers the facts from its own data.
+         */
+        post: operations["ask_api_v1_ai_ask_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ai/explain-check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Explain Check
+         * @description A few sentences on a run's check, from its numbers, written by the local model as it goes.
+         */
+        post: operations["explain_check_api_v1_ai_explain_check_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/engines": {
         parameters: {
             query?: never;
@@ -110,10 +170,11 @@ export interface paths {
         };
         /**
          * Branch Optics
-         * @description Design optics of one branch: beta functions, dispersion, phase advance, orbit, tunes, chromaticity.
+         * @description Optics of one branch: beta functions, dispersion, phase advance, orbit, tunes, chromaticity.
          *
-         *     The first request for a revision computes the whole machine (lines start from the
-         *     optics at their forks), which can take a while: TrackPad starts Julia on first use.
+         *     With the lattice's settings, or an operating mode's. The first request for a revision
+         *     computes the whole machine (lines start from the optics at their forks), which can take
+         *     a while: TrackPad starts Julia on first use.
          */
         get: operations["branch_optics_api_v1_lattices__digest__branches__branch__optics_get"];
         put?: never;
@@ -259,6 +320,50 @@ export interface paths {
         get: operations["actions_api_v1_va_actions_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/va/ai": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Ai
+         * @description The AI features' configuration, for administrators; keys are never sent.
+         */
+        get: operations["get_ai_api_v1_va_ai_get"];
+        /**
+         * Set Ai
+         * @description Choose the AI features' model; logged as an action, without the key.
+         */
+        put: operations["set_ai_api_v1_va_ai_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/va/ai/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test Ai
+         * @description Try a configuration without saving it: does the model answer, and how fast?
+         */
+        post: operations["test_ai_api_v1_va_ai_test_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -674,6 +779,198 @@ export interface components {
             /** User */
             user: string;
         };
+        /** AiChange */
+        AiChange: {
+            /**
+             * Api Key
+             * @description A new key for the provider; empty keeps the stored one
+             */
+            api_key?: string | null;
+            /**
+             * Clear Key
+             * @default false
+             */
+            clear_key: boolean;
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+            /**
+             * Model
+             * @default
+             */
+            model: string;
+            /**
+             * Provider
+             * @default local
+             * @enum {string}
+             */
+            provider: "local" | "openai" | "anthropic";
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
+            /**
+             * Url
+             * @default
+             */
+            url: string;
+        };
+        /** AiProvider */
+        AiProvider: {
+            /**
+             * Key Variable
+             * @description The environment variable a key may come from
+             */
+            key_variable: string | null;
+            /** Label */
+            label: string;
+            /**
+             * Model
+             * @description Its model unless another is chosen; empty: choose one
+             */
+            model: string;
+            /**
+             * Url
+             * @description Its URL unless another is given
+             */
+            url: string;
+        };
+        /**
+         * AiSettings
+         * @description The AI features' configuration (ADR 0009), without the keys.
+         */
+        AiSettings: {
+            /** Enabled */
+            enabled: boolean;
+            /**
+             * Key
+             * @description Where the provider's API key comes from: stored, a variable, or none
+             */
+            key: string | null;
+            /**
+             * Key Hint
+             * @description The stored key's last four characters
+             */
+            key_hint: string | null;
+            /** Model */
+            model: string;
+            /**
+             * Provider
+             * @enum {string}
+             */
+            provider: "local" | "openai" | "anthropic";
+            /** Providers */
+            providers: {
+                [key: string]: components["schemas"]["AiProvider"];
+            };
+            /**
+             * Saved
+             * @description Chosen here; otherwise the server's defaults (its command line)
+             */
+            saved: boolean;
+            /** Url */
+            url: string;
+        };
+        /**
+         * AiStatus
+         * @description The AI features (ADR 0009): whether they are on, which model answers, and whether it does.
+         */
+        AiStatus: {
+            /**
+             * Available
+             * @description The model answers
+             */
+            available: boolean;
+            /**
+             * Enabled
+             * @description On (the default), or turned off by an administrator or --no-ai
+             */
+            enabled: boolean;
+            /** Model */
+            model: string | null;
+            /**
+             * Provider
+             * @description local, openai or anthropic
+             */
+            provider: string | null;
+            /** Reason */
+            reason: string;
+            /**
+             * Where
+             * @description Where the questions go: 'on this server', 'by OpenAI', ...
+             */
+            where: string | null;
+        };
+        /**
+         * AiTest
+         * @description What a configuration gives, tried before saving it.
+         */
+        AiTest: {
+            /**
+             * Answer
+             * @description A few words from the model
+             */
+            answer: string | null;
+            /** Available */
+            available: boolean;
+            /**
+             * Models
+             * @description The models the provider offers, where it says
+             */
+            models: string[];
+            /** Reason */
+            reason: string;
+            /**
+             * Seconds
+             * @description How long those took
+             */
+            seconds: number | null;
+        };
+        /**
+         * AskRequest
+         * @description A question about what the viewer shows; the server gathers the facts itself.
+         */
+        AskRequest: {
+            /**
+             * Branch
+             * @description The branch shown (id or name), or route:<name>
+             */
+            branch: string;
+            /**
+             * Digest
+             * @description The revision shown
+             */
+            digest: string;
+            /**
+             * Engine
+             * @description The Optics tab's engine, for the optics already computed
+             */
+            engine?: string | null;
+            /** Fidelity */
+            fidelity?: string | null;
+            /**
+             * Machine
+             * @description The virtual accelerator's machine chosen
+             */
+            machine?: string | null;
+            /**
+             * Occurrence
+             * @description The selected occurrence's id
+             */
+            occurrence?: string | null;
+            /** Question */
+            question: string;
+            /**
+             * Run
+             * @description The run the Orbit or Check tab shows
+             */
+            run?: string | null;
+            /** Tab */
+            tab?: string | null;
+        };
         /** BeamRequest */
         BeamRequest: {
             /**
@@ -776,6 +1073,11 @@ export interface components {
              * @description How the maps and chromaticity were computed, e.g. TPSA
              */
             method: string | null;
+            /**
+             * Mode
+             * @description The operating mode whose settings they have; none: the lattice's
+             */
+            mode?: string | null;
             /** Momentum Compaction */
             momentum_compaction: number | null;
             /**
@@ -1024,6 +1326,13 @@ export interface components {
              */
             amplitude: number[];
             /**
+             * Expected X
+             * @description The model's tune at the amplitude measured after the kick
+             */
+            expected_x?: number | null;
+            /** Expected Y */
+            expected_y?: number | null;
+            /**
              * Plane
              * @description The plane kicked: the one the beam oscillates in most
              */
@@ -1091,6 +1400,33 @@ export interface components {
              * @description Known once the engine has run, for engines started on demand
              */
             version: string | null;
+        };
+        /**
+         * ExplainCheck
+         * @description The check to explain, as the Check tab asked for it.
+         */
+        ExplainCheck: {
+            /**
+             * Detuning
+             * @default false
+             */
+            detuning: boolean;
+            /** Engine */
+            engine?: string | null;
+            /** First */
+            first?: number | null;
+            /** Run */
+            run: string;
+            /**
+             * Source
+             * @default kick
+             */
+            source: string;
+            /**
+             * Turns
+             * @default 1024
+             */
+            turns: number;
         };
         /**
          * Fidelity
@@ -1213,6 +1549,11 @@ export interface components {
             kinds: {
                 [key: string]: number;
             };
+            /**
+             * Modes
+             * @description Its operating modes (settings/<mode>.yaml), for optics in a mode
+             */
+            modes?: string[];
             /** Name */
             name: string;
             /** Root Branch */
@@ -1600,6 +1941,11 @@ export interface components {
              */
             amplitude: number | null;
             /**
+             * Beam Size
+             * @description The beam's rms size from the model's beta, median over the BPMs, mm
+             */
+            beam_size: number | null;
+            /**
              * Beta Beating
              * @description Relative beta error from the oscillation amplitudes (BPM gain errors included)
              */
@@ -1621,6 +1967,11 @@ export interface components {
              * @description The same over the first 32 turns: before the bunch decoheres, its particles' amplitude
              */
             initial_amplitude: number | null;
+            /**
+             * Kick Sigma
+             * @description initial_amplitude in beam sizes: a pinger kicks a few
+             */
+            kick_sigma: number | null;
             /**
              * Map Tune
              * @description The run's own one-turn map's fractional tune, when it started
@@ -1846,6 +2197,13 @@ export interface components {
              * @description Of the spectra, fractions of the revolution
              */
             frequencies: number[];
+            /**
+             * Kick
+             * @description The kick of a kick's capture: x and y, rad
+             */
+            kick?: {
+                [key: string]: number;
+            } | null;
             /** Notes */
             notes: string[];
             /** Run */
@@ -2235,6 +2593,88 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    ai_status_api_v1_ai_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiStatus"];
+                };
+            };
+        };
+    };
+    ask_api_v1_ai_ask_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AskRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    explain_check_api_v1_ai_explain_check_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExplainCheck"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     engines_api_v1_engines_get: {
         parameters: {
             query?: never;
@@ -2366,6 +2806,8 @@ export interface operations {
                 /** @description Engine name; see /engines */
                 engine?: string;
                 fidelity?: components["schemas"]["Fidelity"];
+                /** @description An operating mode of the machine (see the summary's modes); none: the lattice's */
+                mode?: string | null;
             };
             header?: never;
             path: {
@@ -2613,6 +3055,92 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ActionEntry"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_ai_api_v1_va_ai_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiSettings"];
+                };
+            };
+        };
+    };
+    set_ai_api_v1_va_ai_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiChange"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiSettings"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    test_ai_api_v1_va_ai_test_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiChange"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiTest"];
                 };
             };
             /** @description Validation Error */

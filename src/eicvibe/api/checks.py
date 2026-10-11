@@ -99,7 +99,7 @@ class RunChecks:
                 "a check against the optics needs a ring's turns; a route's run records single passes"
             )
         asked = source
-        tbt, source, start, trigger = _stretch(history, source, first, turns)
+        tbt, source, start, trigger, kick = _stretch(history, source, first, turns)
         if tbt.turns < 64:
             raise ValueError(f"{tbt.turns} turns are too few to measure a tune; 64 at least")
         notes: list[str] = []
@@ -161,13 +161,18 @@ class RunChecks:
                     (integer + k + measured_tune for k in (-1, 0, 1)), key=lambda v: abs(v - model.tune[name])
                 )
             matched = (info.beam.get("matched") or {}).get("tunes") or [None, None]
+            emittance = info.beam.get(f"emittance_{name}") or 0.0
+            size = float(np.nanmedian(np.sqrt(emittance * model.beta[name]))) * 1e3 if emittance > 0 else None
+            initial = float(np.nanmedian(amplitudes(plane.window(0, 32))))
             planes[name] = schemas.PlaneCheck(
                 measured_tune=_value(measured_tune),
                 measured_full=_value(full),
                 model_tune=_value(model.tune[name]),
                 map_tune=_value(matched[0 if name == "x" else 1]),
                 amplitude=_value(amplitude, 5),
-                initial_amplitude=_value(float(np.nanmedian(amplitudes(plane.window(0, 32)))), 5),
+                initial_amplitude=_value(initial, 5),
+                beam_size=_value(size, 4),
+                kick_sigma=None if not size else _value(initial / size, 3),
                 spectrum=_round(power, 4),
                 phase_error=[] if phase is None else _round(phase, 4),
                 phase_rms=None if phase is None else _value(float(np.sqrt(np.nanmean(phase**2))), 4),
@@ -188,6 +193,7 @@ class RunChecks:
             first_turn=start,
             turns=tbt.turns,
             trigger=trigger,
+            kick=kick,
             settings=settings,
             bpms=list(tbt.x.bpms),
             s=_round(tbt.x.s, 9),
@@ -197,7 +203,7 @@ class RunChecks:
             synchrotron_tune=_value((info.beam.get("matched") or {}).get("synchrotron_tune")),
             x=planes["x"],
             y=planes["y"],
-            detuning=model.detuning,
+            detuning=_expected(model.detuning, planes),
             notes=notes,
         )
 
@@ -247,10 +253,26 @@ class RunChecks:
         return model
 
 
+def _expected(detuning: schemas.Detuning | None, planes: dict) -> schemas.Detuning | None:
+    """The model's tunes at the amplitude measured after the kick, within the curve's range."""
+    if detuning is None or len(detuning.amplitude) < 2:
+        return detuning
+    measured = planes[detuning.plane].initial_amplitude
+    if measured is None or not detuning.amplitude[0] <= measured <= detuning.amplitude[-1]:
+        return detuning
+    expected = {
+        f"expected_{k}": _value(
+            float(np.interp(measured, detuning.amplitude, getattr(detuning, f"tune_{k}"))), 6
+        )
+        for k in "xy"
+    }
+    return detuning.model_copy(update=expected)
+
+
 def _stretch(
     history: BpmHistory, source: str, first: int | None, turns: int
-) -> tuple[TurnByTurn, str, int, int | None]:
-    """The readings to check, what they are, their first turn and a capture's trigger."""
+) -> tuple[TurnByTurn, str, int, int | None, dict[str, float] | None]:
+    """The readings to check, what they are, their first turn, a capture's trigger and its kick."""
     captures = history.captures()
     if source == "kick":
         kicks = [c for c in captures if c["kind"] == "kick"]
@@ -263,7 +285,7 @@ def _stretch(
         count = min(turns, end - first_kept)
         start = end - count if first is None else max(first, first_kept)
         count = min(count, end - start)
-        return history.turn_by_turn(start, count), source, start, None
+        return history.turn_by_turn(start, count), source, start, None, None
     entry = next((c for c in captures if c["id"] == source.removeprefix("capture:")), None)
     if entry is None:
         raise ValueError(f"no capture {source.removeprefix('capture:')}")
@@ -273,7 +295,8 @@ def _stretch(
     if not 0 <= offset < entry["turns"]:
         raise ValueError(f"the capture holds turns {entry['first']} to {entry['first'] + entry['turns']}")
     count = min(turns, entry["turns"] - offset)
-    return history.capture(entry["id"]).window(offset, count), source, start, entry["trigger"]
+    kick = {k: float(entry[k]) for k in ("x", "y") if k in entry} if entry["kind"] == "kick" else None
+    return history.capture(entry["id"]).window(offset, count), source, start, entry["trigger"], kick or None
 
 
 def _settings(history: BpmHistory, start: int, end: int, notes: list[str]) -> tuple[dict, str]:

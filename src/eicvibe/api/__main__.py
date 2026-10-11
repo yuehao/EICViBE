@@ -23,6 +23,9 @@ import urllib.request
 import webbrowser
 from pathlib import Path
 
+from eicvibe.ai import AiConfig
+from eicvibe.ai.config import MODEL_VARIABLE, OFF_VARIABLE, URL_VARIABLE
+
 from .app import LATTICES_VARIABLE, RUNS_VARIABLE, VA_SOURCE_VARIABLE, VA_VARIABLE, create_app
 from .catalog import Catalog, discover
 
@@ -50,6 +53,15 @@ def main(argv: list[str] | None = None) -> None:
         help="also run the virtual accelerator (ADR 0008) on the first machine folder given, keeping its "
         "users, machines, settings and log in the folder STATE; the admin page is /admin.html",
     )
+    parser.add_argument(
+        "--ai",
+        metavar="MODEL",
+        default=None,
+        help="the local model (served by Ollama) the AI features use (ADR 0009); default: the first it has. "
+        "With --va, administrators may choose another, or OpenAI or Anthropic, on the admin page",
+    )
+    parser.add_argument("--ai-url", default=None, help="the Ollama server (default http://127.0.0.1:11434)")
+    parser.add_argument("--no-ai", action="store_true", help="turn the AI features off")
     parser.add_argument("--openapi", action="store_true", help="print the OpenAPI document and exit")
     args = parser.parse_args(argv)
 
@@ -86,6 +98,20 @@ def main(argv: list[str] | None = None) -> None:
         os.environ[VA_SOURCE_VARIABLE] = str(sources[0].lattice)
     os.environ[LATTICES_VARIABLE] = os.pathsep.join(str(s.lattice) for s in sources)
     os.environ[RUNS_VARIABLE] = os.pathsep.join(str(Path(p).resolve()) for p in args.runs)
+    for variable, value in (
+        (MODEL_VARIABLE, args.ai),
+        (URL_VARIABLE, args.ai_url),
+        (OFF_VARIABLE, args.no_ai),
+    ):
+        if value:
+            os.environ[variable] = "1" if value is True else value
+    model = AiConfig.from_environment().make()
+    if model is None:
+        print("AI features: off", flush=True)
+    else:
+        available, reason = model.status()
+        note = "" if available else " (the AI buttons say so until it answers)"
+        print(f"AI features: {reason}{note}", flush=True)
     local = "localhost" if args.host in ("127.0.0.1", "0.0.0.0", "") else args.host
     url = f"http://{local}:{args.port}/"
     print(f"Serving {', '.join(s.name for s in sources)} at {url}", flush=True)

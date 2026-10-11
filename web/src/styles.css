@@ -1323,3 +1323,94 @@ button.danger {
 .check-page .chart-plot {
   height: 260px;
 }
+
+/* The optional local model's answers (ADR 0009) */
+.ai-answer {
+  margin: 6px 10px 2px;
+  padding: 5px 9px;
+  border: 1px solid var(--border);
+  border-left: 3px solid #8a5bd6;
+  border-radius: 5px;
+  background: var(--panel);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.ai-answer p {
+  margin: 2px 0 0;
+  white-space: pre-wrap;
+}
+
+.ai-label {
+  display: flex;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.ai-ask {
+  position: relative;
+}
+
+.ai-popover {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 30;
+  width: min(460px, 90vw);
+  padding: 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 6px 24px rgb(0 0 0 / 18%);
+}
+
+.ai-popover textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  color: inherit;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 4px 6px;
+  resize: vertical;
+}
+
+.ai-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 4px 0;
+  font-size: 11px;
+}
+
+.ai-popover .ai-answer {
+  margin: 6px 0 0;
+}
+
+.admin-form.ai-form {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.ai-form fieldset {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+}
+
+.ai-form fieldset input[aria-label="URL"],
+.ai-form fieldset input[aria-label="API key"],
+.ai-form fieldset input[aria-label="Model name"] {
+  width: 28em;
+}
+
+.ai-note {
+  max-width: 52em;
+}

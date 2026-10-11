@@ -14,6 +14,7 @@ import { api, ApiError, SCHEMA_VERSION, type LatticeEntry, type LatticeSummary, 
 import { va, type MachineEntry } from "./api/va";
 import { AccountMenu, useAuth } from "./components/Auth";
 import { BpmView } from "./components/BpmView";
+import { AskAi, useAi } from "./components/Ai";
 import { CheckView, viewerRuns } from "./components/CheckView";
 import { ElementTable } from "./components/ElementTable";
 import { FloorPlan, type FloorPlanHandle } from "./components/FloorPlan";
@@ -78,6 +79,8 @@ export function App() {
   const [machines, setMachines] = useState<MachineEntry[]>([]);
   const [machineId, setMachineId] = useState<string | null>(() => remembered(MACHINE_KEY));
   const { auth, dialog } = useAuth(vaOn);
+  // The optional local model (ADR 0009): its features show only when the server has one that answers.
+  const aiStatus = useAi();
 
   const hover = useMemo(() => createStore<Target | null>(null, sameTarget), []);
   const range = useMemo(() => createStore<SRange | null>(null, sameRange), []);
@@ -444,6 +447,26 @@ export function App() {
         }}
         onBranch={(id) => switchBranch(id)}
         onFind={onFind}
+        assistant={
+          aiStatus && digest && current ? (
+            <AskAi
+              status={aiStatus}
+              context={() => {
+                const shown = parseHash(window.location.hash);
+                return {
+                  digest,
+                  branch: current,
+                  tab,
+                  occurrence: selectedId,
+                  engine: shown.engine ?? "xsuite",
+                  fidelity: shown.fidelity ?? "standard",
+                  run: machine?.run ?? null,
+                  machine: machine?.id ?? null,
+                };
+              }}
+            />
+          ) : null
+        }
         machine={
           vaOn ? (
             <MachineMenu
@@ -497,6 +520,8 @@ export function App() {
                   scheme={scheme}
                   initialEngine={initial.engine}
                   initialFidelity={initial.fidelity}
+                  modes={summary.modes ?? []}
+                  initialMode={initial.mode}
                   onSelect={onLinearSelect}
                   tabs={tabs}
                   strip={tab === "optics" ? strip : null}
@@ -533,6 +558,7 @@ export function App() {
                   preferRun={machine?.run ?? undefined}
                   scheme={scheme}
                   tabs={tabs}
+                  ai={aiStatus}
                 />
               </div>
             </div>

@@ -17,8 +17,9 @@ export default defineConfig({
     viewport: { width: 1440, height: 900 },
   },
   webServer: {
-    // The demo, with a virtual accelerator in a fresh state folder whose first admin's password is known.
-    command: `npm run build && EICVIBE_VA_ADMIN_PASSWORD=${ADMIN_PASSWORD} uv run --project .. eicvibe-web --demo --va "$(mktemp -d)" --port ${port}`,
+    // The demo, with a virtual accelerator in a fresh state folder whose first admin's password is known,
+    // and the AI features on (the default) but no model answering, wherever the tests run.
+    command: `npm run build && EICVIBE_VA_ADMIN_PASSWORD=${ADMIN_PASSWORD} uv run --project .. eicvibe-web --demo --va "$(mktemp -d)" --port ${port} --ai-url http://127.0.0.1:9`,
     url: `http://127.0.0.1:${port}/api/v1/health`,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,

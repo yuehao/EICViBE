@@ -31,7 +31,7 @@ from pydantic import BaseModel
 
 from eicvibe.domain.lattice import Lattice
 from eicvibe.domain.machine import MachineRegistry
-from eicvibe.store import FileError, is_machine, load_machine, source_files
+from eicvibe.store import FileError, is_machine, load_machine, read_settings, source_files
 from eicvibe.store.machine import read_index, read_routes_file
 
 from .schemas import SCHEMA_VERSION, LatticeEntry
@@ -98,6 +98,8 @@ class Revision:
     loaded_at: datetime
     registry_tag: str = "none"
     """Hash of the registry file, or "none": names and devices are part of every response."""
+    modes: dict[str, dict] = field(default_factory=dict)
+    """Operating modes of a machine folder (settings/<mode>.yaml): their values over the lattice's."""
     _cache: dict[str, _Once] = field(default_factory=dict, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
@@ -199,12 +201,24 @@ def _machine_name(folder: Path) -> str:
 def load_revision(source: _Source) -> Revision:
     if source.machine:
         machine = load_machine(source.lattice)
-        tagged = machine.registry.model_dump_json() + "".join(r.model_dump_json() for r in machine.routes)
-        registry_tag = hashlib.sha256(tagged.encode()).hexdigest()[
-            :12
-        ]  # what besides the lattice is in responses
-        views = RevisionViews(machine.lattice, machine.registry, source=source.name, routes=machine.routes)
-        return Revision(source.name, source.lattice, views, datetime.now(UTC), registry_tag)
+        modes = {
+            path.stem: {
+                (s.occurrence, s.parameter): s.value
+                for s in read_settings(source.lattice, path.stem, machine.lattice)
+            }
+            for path in sorted((source.lattice / "settings").glob("*.yaml"))
+        }
+        # What besides the lattice is in responses: a mode's optics are cached with the revision.
+        tagged = (
+            machine.registry.model_dump_json()
+            + "".join(r.model_dump_json() for r in machine.routes)
+            + repr(sorted((mode, sorted(values.items())) for mode, values in modes.items()))
+        )
+        registry_tag = hashlib.sha256(tagged.encode()).hexdigest()[:12]
+        views = RevisionViews(
+            machine.lattice, machine.registry, source=source.name, routes=machine.routes, modes=tuple(modes)
+        )
+        return Revision(source.name, source.lattice, views, datetime.now(UTC), registry_tag, modes=modes)
     lattice = Lattice.from_json(source.lattice.read_text())
     registry, registry_tag = None, "none"
     if source.registry is not None:

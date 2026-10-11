@@ -16,6 +16,11 @@ segments from the forks:
 - a route that ends in a ring it entered part-way goes round once, back to
   where it came in; a route that ends in a line runs to its end.
 
+A ring the beam is *stored* in before it leaves (``stored``, by branch name)
+gives the beam its own periodic optics where it leaves: an accumulator ring
+such as the EIN's BAR damps whatever came in to its equilibrium. Without it a
+route is one pass, and carries the optics it came in with.
+
 The EIN's BAR route, for example, is ``ltr, itl, bar, etl, ltr, rcs``: the LTR
 to its fork to the ITL; the ITL; the BAR from the septum round to its fork to
 the ETL; the ETL; the LTR again, from where the ETL lands to its fork to the
@@ -43,12 +48,29 @@ class Route(DomainModel):
     name: str = Field(min_length=1)
     branches: tuple[str, ...] = Field(description="The branch names it was given, in beam order")
     segments: tuple[Segment, ...]
+    stored: tuple[str, ...] = Field(
+        (),
+        description="Ids of the rings the beam is stored in before it leaves them: it leaves on their optics",
+    )
 
 
-def route_through(lattice: Lattice, name: str, branches: Sequence[str]) -> Route:
-    """The route through ``branches`` (names or ids, in beam order), joined at their forks."""
+def route_through(lattice: Lattice, name: str, branches: Sequence[str], stored: Sequence[str] = ()) -> Route:
+    """The route through ``branches`` (names or ids, in beam order), joined at their forks.
+
+    ``stored`` names the rings the beam is stored in before it leaves them.
+    """
     if not branches:
         raise ValueError(f"route {name}: no branches")
+    kept = []
+    for ring in stored:
+        layout = lattice.layout(ring)
+        if not layout.periodic:
+            raise ValueError(f"route {name}: {layout.branch.name} is a line; only a ring stores a beam")
+        if ring not in branches and layout.id not in branches and layout.branch.name not in branches:
+            raise ValueError(
+                f"route {name}: it does not pass {layout.branch.name}, which it stores the beam in"
+            )
+        kept.append(layout.id)
     segments: list[Segment] = []
     entry = 0
     for k, branch in enumerate(branches):
@@ -91,7 +113,7 @@ def route_through(lattice: Lattice, name: str, branches: Sequence[str]) -> Route
             entry = landed.index(edge.to_occurrence) + (1 if edge.to_side is ForkSide.EXIT else 0)
             if entry >= len(landed):
                 raise ValueError(f"route {name}: {edge.id} lands at the end of {landing.branch.name}")
-    route = Route(name=name, branches=tuple(branches), segments=tuple(segments))
+    route = Route(name=name, branches=tuple(branches), segments=tuple(segments), stored=tuple(kept))
     seen: set[str] = set()
     for placed in route_placements(lattice, route):
         if placed[1].id in seen:

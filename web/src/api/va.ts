@@ -21,6 +21,9 @@ export type UserEntry = Schemas["UserEntry"];
 export type UserCreated = Schemas["UserCreated"];
 export type TokenIssued = Schemas["TokenIssued"];
 export type TokenEntry = Schemas["TokenEntry"];
+export type AiSettings = Schemas["AiSettings"];
+export type AiChange = Schemas["AiChange"];
+export type AiTest = Schemas["AiTest"];
 
 const BASE = "/api/v1/va";
 
@@ -99,6 +102,11 @@ export const va = {
   changeUser: (name: string, change: { role?: string; disabled?: boolean }) =>
     call<UserEntry>("PATCH", `/users/${enc(name)}`, change),
   resetPassword: (name: string) => call<UserCreated>("POST", `/users/${enc(name)}/password`),
+
+  /** The AI features' model (administrators; ADR 0009). Keys go in, never out. */
+  ai: () => call<AiSettings>("GET", "/ai"),
+  setAi: (change: AiChange) => call<AiSettings>("PUT", "/ai", change),
+  testAi: (change: AiChange) => call<AiTest>("POST", "/ai/test", change),
 };
 
 export const ROLES = ["viewer", "physicist", "operator", "admin"] as const;

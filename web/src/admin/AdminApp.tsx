@@ -26,14 +26,16 @@ import {
   type VaOptions,
   type WriteResult,
 } from "../api/va";
+import { AiPanel } from "./AiPanel";
 
-type Tab = "machines" | "settings" | "log" | "users" | "account";
+type Tab = "machines" | "settings" | "log" | "users" | "ai" | "account";
 
 const TABS: { key: Tab; label: string; role?: (typeof ROLES)[number]; login?: boolean }[] = [
   { key: "machines", label: "Machines" },
   { key: "settings", label: "Settings" },
   { key: "log", label: "Log" },
   { key: "users", label: "Users", role: "admin" },
+  { key: "ai", label: "AI", role: "admin" },
   { key: "account", label: "Account", login: true },
 ];
 
@@ -158,6 +160,8 @@ export function AdminApp() {
           <Log machines={machines} machine={hash.machine} onMachine={(id) => setHash({ machine: id })} onError={fail} />
         ) : tab === "users" ? (
           <Users me={me} onError={fail} />
+        ) : tab === "ai" ? (
+          <AiPanel onError={fail} />
         ) : (
           <Account me={me} onError={fail} />
         )}
@@ -681,7 +685,7 @@ function Log(props: { machines: MachineEntry[]; machine?: string; onMachine(id: 
       <div className="admin-row">
         <select aria-label="Log" value={kind} onChange={(e) => setKind(e.target.value as "writes" | "actions")}>
           <option value="writes">setting changes</option>
-          <option value="actions">starts, stops, logins, users…</option>
+          <option value="actions">starts, stops, logins, users, AI…</option>
         </select>
         <select aria-label="Machine filter" value={machine ?? ""} onChange={(e) => onMachine(e.target.value)}>
           <option value="">every machine</option>

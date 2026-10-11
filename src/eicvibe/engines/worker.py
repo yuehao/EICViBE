@@ -48,10 +48,17 @@ class EngineWorker:
         self._lock = threading.Lock()
 
     def machine_optics(
-        self, lattice: Lattice, options: Options, *, inside: bool = False
+        self, lattice: Lattice, options: Options, *, inside: bool = False, values: dict | None = None
     ) -> Future[MachineOptics]:
         """The optics of every branch (:func:`.model.machine_optics`), computed in the worker."""
-        raw = self._submit(_machine_optics, self.name, lattice.to_json(), options.model_dump_json(), inside)
+        raw = self._submit(
+            _machine_optics,
+            self.name,
+            lattice.to_json(),
+            options.model_dump_json(),
+            inside,
+            dict(values or {}),
+        )
         result: Future[MachineOptics] = Future()
 
         def done(future: Future[str]) -> None:
@@ -272,7 +279,9 @@ def _route_start(
     return start.model_dump_json(), origin
 
 
-def _machine_optics(name: str, lattice_json: str, options_json: str, inside: bool = False) -> str:
+def _machine_optics(
+    name: str, lattice_json: str, options_json: str, inside: bool = False, values: dict | None = None
+) -> str:
     """In the worker: machine optics of a lattice, with notes, as JSON."""
     from . import engine
     from .model import machine_optics
@@ -281,7 +290,9 @@ def _machine_optics(name: str, lattice_json: str, options_json: str, inside: boo
     lattice = Lattice.from_json(lattice_json)
     options = Options.model_validate_json(options_json)
     notes: dict[str, str] = {}
-    results = machine_optics(chosen, lattice, options=options, notes=notes, inside=inside)
+    results = machine_optics(
+        chosen, lattice, values=values or {}, options=options, notes=notes, inside=inside
+    )
     return MachineOptics(
         engine=name,
         version=chosen.capabilities().version,

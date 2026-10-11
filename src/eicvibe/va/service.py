@@ -22,6 +22,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from eicvibe.ai import AiConfig, load_config, save_config
 from eicvibe.domain.lattice import Lattice, Route
 from eicvibe.domain.machine import MachineRegistry
 from eicvibe.engines.contracts import Fidelity
@@ -47,7 +48,7 @@ class MachineSpec(BaseModel):
     target: str = Field(description="The ring's branch name, or the route's name")
     engine: str | None = Field(None, description="xsuite or trackpad; None: TrackPad when installed")
     fidelity: str = "standard"
-    mode: str | None = Field(None, description="An operating mode of the machine files, e.g. bar_mode")
+    mode: str | None = Field(None, description="An operating mode of the machine files: settings/<mode>.yaml")
     shared: bool = True
     owner: str
     parent: str | None = Field(None, description="The machine a sandbox was copied from")
@@ -164,6 +165,61 @@ class VirtualAccelerator:
         self._lock = threading.RLock()
         self._settings: dict[str | None, MachineSettings] = {}
         self._instances = {m["id"]: Instance(MachineSpec(**_spec_fields(m))) for m in self.store.machines()}
+
+    # -- the AI features (ADR 0009) -----------------------------------------------------------
+
+    #: The server's own AI configuration (its command line), until an administrator saves one.
+    ai_default: AiConfig = AiConfig()
+
+    @property
+    def _ai_file(self) -> Path:
+        return self.state / "ai.json"
+
+    def ai_config(self) -> AiConfig:
+        """The AI configuration in force: the one saved here, or the server's default."""
+        return load_config(self._ai_file) or self.ai_default
+
+    def ai_saved(self) -> bool:
+        return self._ai_file.is_file()
+
+    def set_ai(
+        self,
+        user: User,
+        *,
+        enabled: bool,
+        provider: str,
+        model: str = "",
+        url: str = "",
+        api_key: str | None = None,
+        clear_key: bool = False,
+        reason: str = "",
+    ) -> AiConfig:
+        """Choose the AI features' model (administrators); a new key replaces the provider's, unlogged."""
+        self._require(user, Role.ADMIN)
+        current = self.ai_config()
+        keys = dict(current.keys)
+        if clear_key:
+            keys.pop(provider, None)
+            key = "cleared"
+        elif api_key:
+            keys[provider] = api_key.strip()
+            key = "changed"
+        else:
+            key = "kept" if provider in keys else "none stored"
+        config = AiConfig(enabled=enabled, provider=provider, model=model.strip(), url=url.strip(), keys=keys)
+        save_config(self._ai_file, config)
+        self.store.act(
+            user.name,
+            "ai settings",
+            None,
+            reason,
+            enabled=enabled,
+            provider=provider,
+            model=model,
+            url=url,
+            key=key,
+        )
+        return config
 
     # -- life ---------------------------------------------------------------------------------
 

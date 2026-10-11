@@ -108,6 +108,34 @@ test("the optics panel follows the branch, with a ring's tunes and chromaticitie
   await expect(summary).toHaveText(/^from initial conditions/, { timeout: 20_000 });
 });
 
+test("the optics may have an operating mode's settings instead of the lattice's", async ({ page }) => {
+  // The demo is a lattice file, which has no modes; a machine folder's settings/<mode>.yaml is stood in
+  // for here, checking what the page asks for and shows (the server's side has its own tests).
+  await page.route(
+    (url) => /\/api\/v1\/lattices\/[^/]+$/.test(url.pathname),
+    async (route) => {
+      const summary = await (await route.fetch()).json();
+      await route.fulfill({ json: { ...summary, modes: ["matched"] } });
+    },
+  );
+  await page.route(/\/optics\?.*mode=matched/, async (route) => {
+    const url = new URL(route.request().url());
+    url.searchParams.delete("mode");
+    const optics = await (await route.fetch({ url: url.toString() })).json();
+    await route.fulfill({ json: { ...optics, mode: "matched", tune_x: 0.4321 } });
+  });
+  await open(page);
+  const summary = page.getByTestId("optics-summary");
+  await expect(summary).toHaveText(/^Q \d+\.\d+/, { timeout: 20_000 });
+  const settings = page.getByLabel("Optics settings");
+  await expect(settings.locator("option")).toHaveText(["design settings", "mode matched"]);
+  await settings.selectOption("matched");
+  await expect(page).toHaveURL(/mode=matched/);
+  await expect(summary).toHaveText(/^Q 0\.4321,/);
+  await settings.selectOption("");
+  await expect(summary).not.toHaveText(/^Q 0\.4321,/);
+});
+
 test("hovering the optics names the element and reads the optics there", async ({ page }) => {
   await open(page);
   await expect(page.getByTestId("optics-summary")).toHaveText(/^Q /, { timeout: 20_000 });
@@ -192,6 +220,7 @@ test("the Orbit tab follows the demo ring's run, orbits every N turns, and pause
 });
 
 test("the Check tab measures the demo ring's tunes after a kick and finds the model's", async ({ page }) => {
+  test.setTimeout(90_000); // it waits for a kick of the demo ring to be captured
   await open(page);
   await page.getByRole("tab", { name: "Check" }).click();
   await expect(page).toHaveURL(/tab=check/);
@@ -211,6 +240,11 @@ test("the Check tab measures the demo ring's tunes after a kick and finds the mo
   expect(Number(model)).toBeGreaterThan(0);
   expect(Math.abs(Number(difference))).toBeLessThan(2e-3); // the tracking gives the model's tune
   await expect(x.locator("td").nth(3)).toHaveClass(/check-good/);
+  // The AI features are on by default; with no model answering, they say so and do nothing.
+  await expect(page.getByRole("button", { name: "✦ Explain" })).toBeDisabled();
+  await page.getByRole("button", { name: "✦ Ask" }).click();
+  await expect(page.getByRole("dialog", { name: "Ask the model" })).toContainText("No model answers now");
+  await page.getByRole("button", { name: "✦ Ask" }).click();
   for (const chart of ["check-spectrum", "check-drift", "check-phase", "check-beta", "check-orbit"])
     await expect(page.getByTestId(chart)).toBeVisible();
 
@@ -227,6 +261,42 @@ test("the Check tab measures the demo ring's tunes after a kick and finds the mo
   await page.goto(`/${href}`);
   await expect(page.getByTestId("check-x")).toBeVisible({ timeout: 60_000 });
   await expect(page.getByLabel("Data checked")).toHaveValue("kick");
+});
+
+test("with a local model the viewer offers Ask and Explain, labelled as the model's", async ({ page }) => {
+  // The model server is stood in for: this checks what the page sends and shows, not the model.
+  const asked: Record<string, unknown>[] = [];
+  await page.route("**/api/v1/ai", (route) =>
+    route.fulfill({
+      json: { enabled: true, available: true, provider: "local", model: "fake:27b", where: "on this server", reason: "fake:27b at a test server" },
+    }),
+  );
+  await page.route("**/api/v1/ai/ask", (route) => {
+    asked.push(route.request().postDataJSON() as Record<string, unknown>);
+    return route.fulfill({ contentType: "text/plain", body: "QF_1 is a focusing quadrupole of the ring." });
+  });
+  await page.route("**/api/v1/ai/explain-check", (route) => {
+    asked.push(route.request().postDataJSON() as Record<string, unknown>);
+    return route.fulfill({ contentType: "text/plain", body: "The tracking agrees with the model." });
+  });
+  await open(page);
+  await find(page, "QF_1");
+  await page.getByRole("button", { name: "✦ Ask" }).click();
+  await page.getByLabel("Question").fill("What is this element?");
+  await page.getByRole("dialog", { name: "Ask the model" }).getByRole("button", { name: "Ask", exact: true }).click();
+  const answer = page.getByTestId("ai-ask-answer");
+  await expect(answer).toContainText("QF_1 is a focusing quadrupole of the ring.");
+  await expect(answer).toContainText("fake:27b, on this server: may be wrong");
+  expect(asked[0]).toMatchObject({ question: "What is this element?", tab: "optics" });
+  expect(asked[0]!.occurrence).toBeTruthy();
+  expect(String(asked[0]!.branch)).toMatch(/^br_/);
+
+  await page.getByRole("button", { name: "✦ Ask" }).click(); // closes it
+  await page.getByRole("tab", { name: "Check" }).click();
+  await expect(page.getByTestId("check-x")).toBeVisible({ timeout: 60_000 });
+  await page.getByRole("button", { name: "✦ Explain" }).click();
+  await expect(page.getByTestId("check-explanation")).toContainText("The tracking agrees with the model.");
+  expect(asked[1]).toMatchObject({ source: "kick", turns: 1024, detuning: false });
 });
 
 test("a route joins its branches: one strip, its optics, and its shots' trajectories", async ({ page }) => {

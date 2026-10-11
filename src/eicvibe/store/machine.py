@@ -10,7 +10,7 @@
     devices/transfer/*.csv    measured transfer functions
     devices/diagnostics.yaml  BPMs and tune monitors
     devices/rf.yaml           RF stations
-  routes.yaml               the beam's paths through several branches, by branch name
+    routes.yaml               the beam's paths through several branches, by branch name
     settings/*.yaml           operating settings, e.g. a mode's magnet strengths
     measurements/             reserved: the magnetic measurement database
     ramps/                    reserved: synchrotron ramp profiles
@@ -22,12 +22,13 @@ files, every time, so an edit counts as soon as it is saved.
 
 import hashlib
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from importlib.metadata import version
 from pathlib import Path
 from typing import Any
 
-from eicvibe.domain.lattice import ElementKind, Lattice, Route, route_through
+from eicvibe.domain.lattice import ElementKind, Lattice, Route, design_values, route_through
 from eicvibe.domain.machine import MachineDescription, MachineRegistry, assemble_registry
 
 from .device_files import References, read_devices, write_devices
@@ -88,7 +89,9 @@ ROUTES_HEADER = """\
 Routes: the beam's paths through several branches, by branch name in beam order.
 A route enters a branch where the previous branch's fork lands and leaves it at its fork
 to the next branch, going round a ring when that fork lies behind; a route that ends in a
-ring it entered part-way goes round once.
+ring it entered part-way goes round once. A route whose beam is stored in a ring before it
+leaves it (an accumulator) says so: {branches: [...], stored: [ring]}; it leaves on the
+ring's own periodic optics.
 """
 
 
@@ -98,7 +101,11 @@ def read_routes(folder: Path, lattice: Lattice) -> tuple[Route, ...]:
 
 
 def read_routes_file(path: Path, lattice: Lattice) -> tuple[Route, ...]:
-    """The routes in a routes file (``routes: {name: [branch, ...]}``); none without the file."""
+    """The routes in a routes file; none without the file.
+
+    A route is ``name: [branch, ...]``, or ``name: {branches: [...], stored: [ring, ...]}`` for one
+    whose beam is stored in rings it leaves (an accumulator).
+    """
     path = Path(path)
     if not path.is_file():
         return ()
@@ -107,17 +114,26 @@ def read_routes_file(path: Path, lattice: Lattice) -> tuple[Route, ...]:
     if not isinstance(entries, dict):
         raise FileError(path, "needs a mapping 'routes' of route names to lists of branch names")
     routes = []
-    for name, branches in entries.items():
+    for name, entry in entries.items():
+        stored = []
+        if isinstance(entry, dict):
+            branches, stored = entry.get("branches"), entry.get("stored") or []
+            if not isinstance(stored, list):
+                raise FileError(path, f"route {name}: give the rings it stores the beam in as a list")
+        else:
+            branches = entry
         if not isinstance(branches, list) or not branches:
             raise FileError(path, f"route {name}: give its branches as a list of names")
         try:
-            routes.append(route_through(lattice, str(name), [str(b) for b in branches]))
+            routes.append(
+                route_through(lattice, str(name), [str(b) for b in branches], [str(r) for r in stored])
+            )
         except (KeyError, ValueError) as error:
             raise FileError(path, f"route {name}: {error}") from None
     return tuple(routes)
 
 
-def write_routes(folder: Path, routes: dict[str, list[str]]) -> Path | None:
+def write_routes(folder: Path, routes: dict[str, list[str] | dict]) -> Path | None:
     """Write ``routes.yaml`` if there is none: people edit it, so a tool never rewrites it."""
     path = Path(folder) / ROUTES_FILE
     if path.exists():
@@ -125,9 +141,15 @@ def write_routes(folder: Path, routes: dict[str, list[str]]) -> Path | None:
     return write_routes_file(path, routes)
 
 
-def write_routes_file(path: Path, routes: dict[str, list[str]]) -> Path:
-    """Write a routes file, ``routes: {name: [branch, ...]}``."""
-    body = mapping([("routes", mapping((name, flow(list(branches))) for name, branches in routes.items()))])
+def write_routes_file(path: Path, routes: dict[str, list[str] | dict]) -> Path:
+    """Write a routes file: ``name: [branch, ...]``, or ``{branches: [...], stored: [...]}``."""
+
+    def entry(route):
+        if isinstance(route, dict):
+            return flow({"branches": list(route["branches"]), "stored": list(route.get("stored", ()))})
+        return flow(list(route))
+
+    body = mapping([("routes", mapping((name, entry(route)) for name, route in routes.items()))])
     return write_yaml(path, body, ROUTES_HEADER)
 
 
@@ -213,6 +235,49 @@ def write_settings(
     return write_yaml(
         Path(folder) / SETTINGS_DIR / f"{name}.yaml", data, _SETTINGS_HEADER.format(description=description)
     )
+
+
+def set_design(
+    folder: Path, values: Mapping[tuple[str, str], float], lattice: Lattice | None = None
+) -> list[str]:
+    """Make ``values`` (occurrence id, ``Group.name``) the lattice's design, in its files.
+
+    Each value goes into the element definition its occurrence places, edited in place so the
+    file keeps its comments and layout. A definition placed more than once is refused, as the
+    value would change every occurrence of it (an operating mode can set one alone). Returns
+    what changed: ``<branch>/<occurrence> <parameter>: old -> new``.
+    """
+    folder = Path(folder)
+    lattice = lattice or load_lattice(folder)
+    directory = folder / LATTICE_DIR
+    files = {branch: read_yaml(directory / f"{branch}.yaml") for branch in read_index(folder)["branches"]}
+    edited: set[str] = set()
+    changes = []
+    for definition, groups in design_values(lattice, values).items():
+        element = lattice.element(definition)
+        where = ", ".join(
+            f"{lattice.branch(b.id).name}/{o.name}"
+            for b in lattice.branches
+            for o in b.occurrences
+            if o.element == definition
+        )
+        branch = next((b for b, data in files.items() if element.name in (data.get("elements") or {})), None)
+        if branch is None:
+            raise ValueError(f"{where}: no lattice file defines {element.name}")
+        entry = files[branch]["elements"][element.name]
+        for group, named in groups.items():
+            if entry.get(group) is None:
+                entry[group] = flow({})
+            for name, value in named.items():
+                old = entry[group].get(name)
+                if old == value:
+                    continue
+                entry[group][name] = float(value)
+                edited.add(branch)
+                changes.append(f"{where} {group}.{name}: {old} -> {value}")
+    for branch in edited:
+        write_yaml(directory / f"{branch}.yaml", files[branch])
+    return changes
 
 
 def read_settings(folder: Path, name: str, lattice: Lattice) -> list[Setting]:

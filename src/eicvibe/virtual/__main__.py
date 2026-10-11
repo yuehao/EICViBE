@@ -2,7 +2,7 @@
 
     eicvibe-virtual ring MACHINE --branch bar --out runs/bar1 [--turns N] [--kick-x RAD] [--kick-every N]
                     [--set rfc:RFP.phase=3.14159] [--engine trackpad] [--fidelity standard] [--particles 100]
-    eicvibe-virtual route MACHINE --route bar --mode bar_mode --out runs/bar-route [--shots N] [--rate 2]
+    eicvibe-virtual route MACHINE --route bar --out runs/bar-route [--mode MODE] [--shots N] [--rate 2]
     eicvibe-virtual route LATTICE --through ltr,rcs --out runs/direct
     eicvibe-virtual show runs/bar1 [--turns 1024]
     eicvibe-virtual export runs/bar1 acquisition.sdds [--start TURN] [--turns 1024]
@@ -319,7 +319,7 @@ def main(argv: list[str] | None = None) -> None:
     o.add_argument(
         "--shots", type=int, default=None, help="stop after this many shots; default: until Ctrl-C"
     )
-    o.add_argument("--mode", default=None, help="an operating mode's settings, e.g. bar_mode")
+    o.add_argument("--mode", default=None, help="an operating mode's settings: settings/<mode>.yaml")
     o.add_argument("--set", action="append", default=[], help="OCCURRENCE:Group.parameter=value")
     o.set_defaults(handler=route)
     s = commands.add_parser("show", help="what a run has recorded")

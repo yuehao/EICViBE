@@ -10,7 +10,7 @@ Units, signs and reference conventions are in
 :mod:`eicvibe.domain.lattice.conventions`.
 """
 
-from .builder import LatticeBuilder
+from .builder import LatticeBuilder, design_values, with_design
 from .conventions import SPECIES, Species
 from .diagnostics import Diagnostic, diagnose
 from .diff import Change, ChangeKind, adopt_ids, diff
@@ -120,6 +120,8 @@ __all__ = [
     "InitialConditions",
     "Lattice",
     "LatticeBuilder",
+    "design_values",
+    "with_design",
     "MAX_MULTIPOLE_ORDER",
     "MagneticMultipoleP",
     "MetaP",

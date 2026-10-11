@@ -60,6 +60,9 @@ interface Props {
   scheme: string;
   initialEngine?: string;
   initialFidelity?: string;
+  /** The machine's operating modes, whose settings the optics may have instead of the lattice's. */
+  modes?: string[];
+  initialMode?: string;
   /** The lattice strip, drawn between the controls and the plot. */
   strip?: ReactNode;
   /** The panel's tabs, first in the controls. */
@@ -114,6 +117,9 @@ export function OpticsView(props: Props) {
   const [engines, setEngines] = useState<EngineInfo[] | null>(null);
   const [engine, setEngine] = useState(props.initialEngine ?? "xsuite");
   const [fidelity, setFidelity] = useState(props.initialFidelity ?? "standard");
+  const modes = props.modes ?? [];
+  const [chosenMode, setMode] = useState(props.initialMode ?? "");
+  const mode = modes.includes(chosenMode) ? chosenMode : "";
   const [shown, setShown] = useState<Record<string, boolean>>({ beta_x: true, beta_y: true, eta_x: true, eta_y: false });
   const [status, setStatus] = useState<Status>({ key: "", model: null, loading: false, error: null });
   const [elapsed, setElapsed] = useState(0);
@@ -126,19 +132,19 @@ export function OpticsView(props: Props) {
   useEffect(() => {
     api.engines().then(setEngines, () => setEngines([]));
   }, []);
-  useEffect(() => updateHash({ engine, fidelity }), [engine, fidelity]);
+  useEffect(() => updateHash({ engine, fidelity, mode: mode || undefined }), [engine, fidelity, mode]);
 
   const branchId = branch?.id ?? null;
   useEffect(() => {
     if (!branchId) return;
     let stop = false;
-    const key = `${digest}/${branchId}/${engine}/${fidelity}`;
+    const key = `${digest}/${branchId}/${engine}/${fidelity}/${mode}`;
     setStatus((s) => ({ key, model: s.model, loading: true, error: null }));
     setElapsed(0);
     const started = performance.now();
     const timer = window.setInterval(() => setElapsed(Math.round((performance.now() - started) / 1000)), 1000);
     api
-      .optics(digest, branchId, engine, fidelity)
+      .optics(digest, branchId, engine, fidelity, mode)
       .then(
         (data) => {
           if (stop) return;
@@ -155,7 +161,7 @@ export function OpticsView(props: Props) {
       stop = true;
       window.clearInterval(timer);
     };
-  }, [digest, branchId, engine, fidelity]);
+  }, [digest, branchId, engine, fidelity, mode]);
 
   const draw = useCallback(
     (ctx: CanvasRenderingContext2D, { width, height }: { width: number; height: number }) => {
@@ -494,6 +500,21 @@ export function OpticsView(props: Props) {
               </option>
             ))}
           </select>
+          {modes.length ? (
+            <select
+              aria-label="Optics settings"
+              value={mode}
+              title="Whose settings the optics have: the lattice's (the design), or an operating mode's (settings/<mode>.yaml)"
+              onChange={(e) => setMode(e.target.value)}
+            >
+              <option value="">design settings</option>
+              {modes.map((m) => (
+                <option key={m} value={m}>
+                  mode {m}
+                </option>
+              ))}
+            </select>
+          ) : null}
           <span
             className="muted optics-method"
             title={`${info?.method ?? ""}${model?.version ? `, ${engineName(model.engine)} ${model.version}` : ""}${model?.sampled ? "; sampled inside magnets at the integrator steps" : "; values at element exits"}`}

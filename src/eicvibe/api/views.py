@@ -170,7 +170,9 @@ class RevisionViews:
         *,
         source: str = "",
         routes: tuple[Route, ...] = (),
+        modes: tuple[str, ...] = (),
     ) -> None:
+        self.modes = modes
         self.lattice = lattice
         self.registry = registry
         self.routes = {route.name: route for route in routes}
@@ -282,6 +284,7 @@ class RevisionViews:
             ],
             kinds=dict(sorted(kinds.items())),
             routes=[self._route(route) for route in self.routes.values()],
+            modes=list(self.modes),
             devices=len(self.registry.devices) if self.registry else 0,
             channels=len(self.registry.channels) if self.registry else 0,
             circuits=len(self.registry.circuits) if self.registry else 0,

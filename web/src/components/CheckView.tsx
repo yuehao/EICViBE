@@ -18,6 +18,8 @@ import { agrees, decades, lineOf, measuredPoint, tuneDifference, tuneText } from
 import { formatNumber } from "../model/format";
 import { CURVES } from "../model/optics";
 import { runsFor } from "../model/orbits";
+import type { AiStatus } from "../api/ai";
+import { AiAnswer, aiName, useAnswer } from "./Ai";
 import { Chart, type Marker, type Series } from "./Chart";
 
 interface Props {
@@ -33,6 +35,8 @@ interface Props {
   tabs?: ReactNode;
   /** A link to the check page, for room to read it (in the viewer's panel). */
   pageLink?: boolean;
+  /** The optional local model (ADR 0009), to explain the check in a few sentences. */
+  ai?: AiStatus | null;
 }
 
 /** The ring runs the viewer's Check tab offers for its ring, and what to say when there are none. */
@@ -97,6 +101,7 @@ export function CheckView(props: Props) {
   const [check, setCheck] = useState<RunCheck | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const explanation = useAnswer();
 
   const run = candidates.find((r) => r.id === chosen) ?? candidates.find((r) => r.id === props.preferRun) ?? candidates[0] ?? null;
   const runId = run?.id ?? null;
@@ -114,6 +119,7 @@ export function CheckView(props: Props) {
   useEffect(() => {
     if (!active || !runId) return;
     const controller = new AbortController();
+    explanation.clear(); // it explained other numbers (clear is stable)
     setBusy(true);
     setError(null);
     api.check(runId, { source, turns, first, engine: engine || undefined, detuning }, controller.signal).then(
@@ -128,7 +134,7 @@ export function CheckView(props: Props) {
       },
     );
     return () => controller.abort();
-  }, [active, runId, source, turns, first, engine, detuning, again]);
+  }, [active, runId, source, turns, first, engine, detuning, again, explanation.clear]);
 
   const commit = () => {
     const n = whole(turnsText);
@@ -222,6 +228,22 @@ export function CheckView(props: Props) {
         <button type="button" disabled={!run || busy} onClick={() => setAgain((n) => n + 1)} title="Check the run again (its buffer moves on)">
           {busy ? "Checking…" : "Check again"}
         </button>
+        {props.ai && run ? (
+          <button
+            type="button"
+            disabled={!check || busy || explanation.busy || !props.ai.available}
+            title={
+              props.ai.available
+                ? `${aiName(props.ai)} reads these numbers and writes a few sentences (seconds; it can be wrong)`
+                : `No model answers now: ${props.ai.reason}`
+            }
+            onClick={() =>
+              explanation.start("explain-check", { run: run.id, source, turns, first: first ?? null, engine: engine || null, detuning })
+            }
+          >
+            ✦ Explain
+          </button>
+        ) : null}
         {props.pageLink && run ? (
           <a className="button" href={`check.html#run=${encodeURIComponent(run.id)}`} target="_blank" rel="noreferrer" title="The check on a page of its own, with room for its charts">
             Full page ↗
@@ -234,7 +256,12 @@ export function CheckView(props: Props) {
             <p>{message}</p>
           </div>
         ) : check ? (
-          <CheckResult check={check} scheme={scheme} />
+          <>
+            {props.ai ? (
+              <AiAnswer status={props.ai} {...explanation} onStop={explanation.stop} testId="check-explanation" />
+            ) : null}
+            <CheckResult check={check} scheme={scheme} />
+          </>
         ) : null}
       </div>
     </div>

@@ -709,3 +709,42 @@ def _effective(
         return definition.with_overrides(overrides)
     except (ValueError, KeyError) as error:
         raise ValueError(f"{label}: overrides do not apply to {definition.name!r}: {error}") from error
+
+
+def design_values(
+    lattice: Lattice, values: Mapping[tuple[str, str], Any]
+) -> dict[str, dict[str, dict[str, Any]]]:
+    """``values`` by (occurrence id, ``Group.name``) as values of the definitions they place:
+    definition id -> group -> name -> value.
+
+    A definition placed more than once is refused, as its value would change every occurrence
+    of it (a setting can change one alone), and so is a parameter its occurrence overrides.
+    """
+    uses: dict[str, int] = {}
+    for branch in lattice.branches:
+        for occurrence in branch.occurrences:
+            uses[occurrence.element] = uses.get(occurrence.element, 0) + 1
+    out: dict[str, dict[str, dict[str, Any]]] = {}
+    for (occurrence, parameter), value in values.items():
+        placed = lattice.placement(occurrence)
+        definition = placed.definition
+        where = f"{lattice.branch(placed.branch_id).name}/{placed.name}"
+        group, name = parameter.split(".", 1)
+        if any((o.group, o.parameter) == (group, name) for o in placed.occurrence.overrides):
+            raise ValueError(f"{where}: the occurrence overrides {parameter}; edit it there")
+        if uses[definition.id] > 1:
+            raise ValueError(
+                f"{where}: its definition {definition.name} is placed {uses[definition.id]} times; "
+                "setting it would change them all"
+            )
+        out.setdefault(definition.id, {}).setdefault(group, {})[name] = value
+    return out
+
+
+def with_design(lattice: Lattice, values: Mapping[tuple[str, str], Any]) -> Lattice:
+    """``lattice`` with ``values`` (occurrence id, ``Group.name``) as its design: in the definitions
+    their occurrences place (:func:`design_values`), every id kept."""
+    builder = LatticeBuilder.from_lattice(lattice)
+    for definition, groups in design_values(lattice, values).items():
+        builder.update_element(definition, **groups)
+    return builder.build()

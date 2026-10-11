@@ -10,16 +10,61 @@ for operators and administrators. A server without a virtual accelerator
 answers 404 here, except ``/va/status``.
 """
 
+import time
 from collections.abc import Callable
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
+from eicvibe.ai import PROVIDERS, AiConfig, AiUnavailable
+
 from .service import Conflict, Forbidden, VirtualAccelerator
 from .store import ANONYMOUS, SESSION_HOURS, Role, User
 
 COOKIE = "eicvibe_session"
+
+
+class AiProvider(BaseModel):
+    label: str
+    url: str = Field(description="Its URL unless another is given")
+    key_variable: str | None = Field(description="The environment variable a key may come from")
+    model: str = Field(description="Its model unless another is chosen; empty: choose one")
+
+
+class AiSettings(BaseModel):
+    """The AI features' configuration (ADR 0009), without the keys."""
+
+    enabled: bool
+    provider: Literal["local", "openai", "anthropic"]
+    model: str
+    url: str
+    key: str | None = Field(
+        description="Where the provider's API key comes from: stored, a variable, or none"
+    )
+    key_hint: str | None = Field(description="The stored key's last four characters")
+    saved: bool = Field(description="Chosen here; otherwise the server's defaults (its command line)")
+    providers: dict[str, AiProvider]
+
+
+class AiChange(BaseModel):
+    enabled: bool = True
+    provider: Literal["local", "openai", "anthropic"] = "local"
+    model: str = ""
+    url: str = ""
+    api_key: str | None = Field(None, description="A new key for the provider; empty keeps the stored one")
+    clear_key: bool = False
+    reason: str = ""
+
+
+class AiTest(BaseModel):
+    """What a configuration gives, tried before saving it."""
+
+    available: bool
+    reason: str
+    models: list[str] = Field(description="The models the provider offers, where it says")
+    answer: str | None = Field(description="A few words from the model")
+    seconds: float | None = Field(description="How long those took")
 
 
 class VaStatus(BaseModel):
@@ -519,5 +564,65 @@ def va_router(get: Callable[[], VirtualAccelerator | None]) -> APIRouter:
         va.store.act(me.name, "reset password", name=name)
         role = next(u["role"] for u in va.store.users() if u["name"] == name)
         return UserCreated(name=name, role=role, password=password)
+
+    # -- the AI features (ADR 0009) ------------------------------------------------------------
+
+    def ai_settings(va: VirtualAccelerator) -> AiSettings:
+        config = va.ai_config()
+        key, source = config.key()
+        return AiSettings(
+            enabled=config.enabled,
+            provider=config.provider,
+            model=config.model,
+            url=config.url,
+            key=source,
+            key_hint=f"…{key[-4:]}" if source == "stored" and len(key) >= 8 else None,
+            saved=va.ai_saved(),
+            providers={name: AiProvider(**info) for name, info in PROVIDERS.items()},
+        )
+
+    @router.get("/ai", response_model=AiSettings)
+    def get_ai(me: Caller) -> AiSettings:
+        """The AI features' configuration, for administrators; keys are never sent."""
+        va = service()
+        admin(me)
+        return ai_settings(va)
+
+    @router.put("/ai", response_model=AiSettings)
+    def set_ai(me: Caller, body: AiChange) -> AiSettings:
+        """Choose the AI features' model; logged as an action, without the key."""
+        va = service()
+        admin(me)
+        call(lambda: va.set_ai(me, **body.model_dump()))
+        return ai_settings(va)
+
+    @router.post("/ai/test", response_model=AiTest)
+    def test_ai(me: Caller, body: AiChange) -> AiTest:
+        """Try a configuration without saving it: does the model answer, and how fast?"""
+        va = service()
+        admin(me)
+        keys = dict(va.ai_config().keys)
+        if body.api_key:
+            keys[body.provider] = body.api_key.strip()
+        config = AiConfig(provider=body.provider, model=body.model.strip(), url=body.url.strip(), keys=keys)
+        model = config.make()
+        available, reason = model.status()
+        try:
+            models = model.models()
+        except AiUnavailable:
+            models = []
+        answer = seconds = None
+        if available:
+            start = time.monotonic()
+            messages = [
+                {"role": "system", "content": "Answer with one word."},
+                {"role": "user", "content": "Say: ready"},
+            ]
+            try:
+                answer = "".join(model.stream(messages, max_tokens=16)).strip()
+                seconds = round(time.monotonic() - start, 2)
+            except AiUnavailable as error:
+                available, reason = False, str(error)
+        return AiTest(available=available, reason=reason, models=models, answer=answer, seconds=seconds)
 
     return router

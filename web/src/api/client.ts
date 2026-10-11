@@ -103,8 +103,10 @@ export const api = {
         (options.detuning ? "&detuning=true" : ""),
       signal,
     ),
-  optics: (digest: string, branch: string, engine: string, fidelity: string) =>
+  /** A branch's optics, with the lattice's settings or an operating mode's. */
+  optics: (digest: string, branch: string, engine: string, fidelity: string, mode = "") =>
     once<BranchOptics>(
-      `/lattices/${enc(digest)}/branches/${enc(branch)}/optics?engine=${enc(engine)}&fidelity=${enc(fidelity)}`,
+      `/lattices/${enc(digest)}/branches/${enc(branch)}/optics?engine=${enc(engine)}&fidelity=${enc(fidelity)}` +
+        (mode ? `&mode=${enc(mode)}` : ""),
     ),
 };

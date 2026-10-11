@@ -9,11 +9,11 @@ magnets and BPMs keep their names, and its injection patch its sign. The
 Elegant BAR and the MAD-X lines were staged by ``EIN_connection.ipynb``. They are the LTR, the BAR with its
 injection and extraction lines (ITL, ETL), the 40-cell 9 GeV RCS
 (RCS9GeV40CellV1) and the 10 GeV RTE, connected as in the legacy route
-notebooks, with one difference. LTR_P1 and LTR_P2 are not separate
-beamlines: they have the same elements as the start and the P2 section of
-LTR_main and differ only in quadrupole strengths. They become the BAR-mode
-settings of one LTR branch, so that each magnet exists once, as the virtual
-accelerator needs one set of PVs per magnet.
+notebooks, with one difference: there is one LTR and one setting of it for
+both paths. The designers' LTR_P1 and LTR_P2 (the LTR retuned for the BAR)
+are not imported; the ITL and ETL are matched instead (:func:`match_ein`), so
+that the beam reaches P2 with the same optics through the BAR or past it, and
+each magnet exists once with one strength.
 
 Branches and connections, in beam order:
 
@@ -56,7 +56,7 @@ import re
 import tempfile
 from collections import Counter
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from importlib.metadata import version
 from pathlib import Path
 from types import MappingProxyType
@@ -71,6 +71,8 @@ from eicvibe.domain.lattice import (
     adopt_ids,
     derived_id,
     diff,
+    route_through,
+    with_design,
 )
 from eicvibe.domain.machine import (
     MachineDescription,
@@ -83,17 +85,17 @@ from eicvibe.domain.machine import (
     default_repository,
     describe_machine,
 )
+from eicvibe.engines.match import Matched
 from eicvibe.importers.bmad import BmadConversion, BmadTools, bmad_to_madx
 from eicvibe.importers.madx import ImportNote, import_madx
 from eicvibe.store import (
     FileError,
-    Setting,
     check_machine,
     is_machine,
     load_lattice,
+    set_design,
     update_names,
     write_machine,
-    write_settings,
 )
 from eicvibe.store.device_files import add_bpms, rename_references
 from eicvibe.store.lattice_files import write_lattice
@@ -107,8 +109,6 @@ class EinSources:
     """EIN source files, relative to the EIN folder, and the elements the RCS connection points follow."""
 
     ltr: str = f"{_STAGED}/LTR_main.madx"
-    ltr_p1: str = f"{_STAGED}/LTR_P1.madx"
-    ltr_p2: str = f"{_STAGED}/LTR_P2.madx"
     ltr_beam: str = "einlattices/LTR/beam_pre_inj.bmad"
     itl: str = f"{_STAGED}/ITL.madx"
     bar: str = f"{_STAGED}/BAR.madx"
@@ -125,8 +125,6 @@ class EinSources:
 EIN_BMAD: Mapping[str, str] = MappingProxyType(
     {
         "einlattices/LTR/LTR_main.bmad": f"{_STAGED}/LTR_main.madx",
-        "einlattices/LTR/LTR_P1.bmad": f"{_STAGED}/LTR_P1.madx",
-        "einlattices/LTR/LTR_P2.bmad": f"{_STAGED}/LTR_P2.madx",
         "einlattices/RTE/RTE_10GeV.bmad": f"{_STAGED}/RTE_10GeV.madx",
     }
 )
@@ -161,24 +159,32 @@ _BRANCHES = ("ltr", "itl", "bar", "etl", "rcs", "rte")
 EIN_ROUTES: Mapping[str, tuple[str, ...]] = MappingProxyType(
     {"direct": ("ltr", "rcs"), "bar": ("ltr", "itl", "bar", "etl", "ltr", "rcs")}
 )
+#: Rings each route stores its beam in: the BAR accumulates and damps, so its beam leaves on the
+#: BAR's own optics.
+EIN_STORED: Mapping[str, tuple[str, ...]] = MappingProxyType({"bar": ("bar",)})
+#: Where the two routes meet: the merge after the ETL's D2 dipole, where the LTR's last part, to
+#: the RCS, begins; its quadrupoles match the beam, whichever way it came, to the RCS.
+EIN_MERGE = "ltr_mark_p2"
+#: The LTR's quadrupoles between its last bend and P1, where the ITL leaves: they set the optics
+#: at P1, and across the bypass at P2, without touching the dispersion, for both routes alike.
+EIN_P1_QUADS = ("ltr_qua07", "ltr_qua08", "ltr_qua09", "ltr_qua10")
 
 
-@dataclass(frozen=True)
-class SettingValue:
-    """One setting of an operating mode: a parameter value on an occurrence."""
-
-    occurrence: str
-    parameter: str
-    value: float
+def _routes() -> dict[str, list[str] | dict]:
+    """The routes as routes.yaml writes them."""
+    return {
+        name: {"branches": list(branches), "stored": list(EIN_STORED[name])}
+        if name in EIN_STORED
+        else list(branches)
+        for name, branches in EIN_ROUTES.items()
+    }
 
 
 @dataclass(frozen=True)
 class Ein:
-    """The assembled EIN lattice, its BAR-mode settings, and how it was made."""
+    """The assembled EIN lattice and how it was made."""
 
     lattice: Lattice
-    bar_mode: tuple[SettingValue, ...]
-    """Values that switch the LTR from direct to BAR operation; the lattice holds the direct ones."""
     notes: tuple[ImportNote, ...]
     sources: Mapping[str, Path]
     """Every file read, by role."""
@@ -211,7 +217,6 @@ def build_ein(
             return import_madx(folder / getattr(sources, key), kind=kind, name=key, workdir=run_in)
 
         imports = {key: load(key) for key in _BRANCHES}
-        modes = {key: load(key).lattice for key in ("ltr_p1", "ltr_p2")}
 
     counter = itertools.count()
     builder = LatticeBuilder(
@@ -259,14 +264,10 @@ def build_ein(
             )
     lattice = builder.build()
 
-    bar_mode = (
-        *_mode_settings(lattice, "ltr", modes["ltr_p1"], None, "ltr_mark_p1"),
-        *_mode_settings(lattice, "ltr", modes["ltr_p2"], "ltr_mark_p2", "mar.inj"),
-    )
     notes = tuple(note for result in imports.values() for note in result.notes)
-    roles = (*_BRANCHES, "ltr_p1", "ltr_p2", "ltr_beam")
+    roles = (*_BRANCHES, "ltr_beam")
     read = {role: (folder / getattr(sources, role)).resolve() for role in roles}
-    return Ein(lattice, bar_mode, notes, read, imports["ltr"].madx_version)
+    return Ein(lattice, notes, read, imports["ltr"].madx_version)
 
 
 def convert_ein_bmad(folder: str | Path, *, tools: BmadTools | None = None) -> dict[str, BmadConversion]:
@@ -371,15 +372,14 @@ def ein_source(ein: Ein) -> dict:
 def write_ein_machine(
     ein: Ein, folder: str | Path, description: MachineDescription | None = None
 ) -> list[Path]:
-    """Write a new EIN machine folder: lattice and device files, and the BAR-mode settings.
+    """Write a new EIN machine folder: lattice and device files, and the routes.
 
     The device files start from :func:`ein_description`; from then on people
     edit them, and :func:`update_ein_machine` never touches them.
     """
     folder = Path(folder)
     written = write_machine(folder, ein.lattice, description or ein_description(ein), source=ein_source(ein))
-    written.append(_write_bar_mode(folder, ein, ein.lattice))
-    if routes := write_routes(folder, {name: list(b) for name, b in EIN_ROUTES.items()}):
+    if routes := write_routes(folder, _routes()):
         written.append(routes)
     return written
 
@@ -391,9 +391,9 @@ def update_ein_machine(
 
     The import keeps the ids of every element, occurrence and branch whose
     name it keeps, or that it only renamed (:func:`renamed_occurrences`), so
-    devices stay attached. Writing replaces the lattice files, the provenance
-    in machine.yaml and the BAR-mode settings; naming, device and other
-    settings files are left as people edited them, unless ``devices``: then
+    devices stay attached. Writing replaces the lattice files and the provenance
+    in machine.yaml; naming, device and settings files are left as people
+    edited them, unless ``devices``: then
     their references follow the renamed occurrences, and instruments the
     import adds become BPMs (:func:`update_ein_devices`).
     """
@@ -407,8 +407,7 @@ def update_ein_machine(
     if write:
         write_index(folder, new, ein_source(ein))
         write_lattice(new, folder)
-        _write_bar_mode(folder, ein, new)
-        write_routes(folder, {name: list(b) for name, b in EIN_ROUTES.items()})  # only if there is none
+        write_routes(folder, _routes())  # only if there is none
         update_names(folder)  # the EIC names, by the naming files people keep
     return changes
 
@@ -468,27 +467,184 @@ def update_ein_devices(
     return changed
 
 
-def _write_bar_mode(folder: Path, ein: Ein, lattice: Lattice) -> Path:
-    """The BAR-mode settings, on ``lattice`` (which may carry adopted ids)."""
-    settings = []
-    for value in ein.bar_mode:
-        placed = ein.lattice.placement(value.occurrence)
-        target = lattice.placement(placed.name, branch=ein.lattice.branch(placed.branch_id).name)
-        settings.append(Setting(target.id, value.parameter, value.value))
-    description = (
-        "BAR mode: the LTR quadrupole strengths for the route through the BAR (from LTR_P1 and LTR_P2).\n"
-        "The lattice holds the direct-mode strengths. Rewritten when the lattice is imported again."
+@dataclass(frozen=True)
+class EinMatch:
+    """The EIN's design matched (:func:`match_ein_lattice`): its steps, and what is left at BAR injection."""
+
+    steps: dict[str, Matched]
+    """``p2``, ``itl`` and ``rcs``, in order."""
+    injection: tuple[float, float, float]
+    """The dispersion the beam enters the BAR with less the BAR's own there, and its slope's
+    (m, rad), and their invariant H (m): what the ITL cannot match (see :func:`match_ein_lattice`)."""
+
+    @property
+    def values(self) -> dict[tuple[str, str], float]:
+        """Every value found, the later steps last."""
+        return {k: v for m in self.steps.values() for k, v in m.values.items()}
+
+    @property
+    def success(self) -> bool:
+        return all(m.success for m in self.steps.values())
+
+
+def match_ein_lattice(lattice: Lattice, *, engine: str = "xsuite", fidelity: str = "standard") -> EinMatch:
+    """The EIN's design matched so that the BAR is transparent: one LTR setting for both routes.
+
+    In order: ``p2``, the ETL brings the BAR's beam (stored, so on the BAR's periodic optics where
+    it leaves) to P2 with the optics the beam has there past the BAR, all of them (beta, alpha,
+    dispersion and its slope), with the ETL's quadrupoles and the LTR's before P1
+    (:data:`EIN_P1_QUADS`, which choose the optics at P1 and P2 for both routes); ``itl``, the
+    ITL's quadrupoles bring the beam from P1 to the BAR's periodic beta and alpha where it lands;
+    ``rcs``, the LTR's quadrupoles after the merge (:data:`EIN_MERGE`) bring the beam, which is
+    the same whichever way it came, to the RCS's periodic optics where it lands.
+
+    The ITL cannot match the dispersion as well. Between its bends (D1 after P1, the septum at the
+    BAR) the dispersion invariant H is kept by the quadrupoles, and the septum undoes D1 only
+    for a beam with the BAR's beta at D1 (about 16 m); the ETL needs the same at D2, before P2.
+    The beam past the BAR crosses about 23 m of drift between D1 and D2, so it cannot have that
+    beta at both: the dispersion error goes where the BAR damps it, at injection, and
+    :attr:`EinMatch.injection` says how large it is. Every quadrupole keeps its polarity, and beta
+    in each stretch stays below 1.2 times its design peak (or 120 m). The values are for the
+    design (:func:`~eicvibe.store.set_design`, :func:`~eicvibe.domain.lattice.with_design`).
+    """
+    from eicvibe.engines import engine as find_engine
+    from eicvibe.engines import machine_optics, route_optics
+    from eicvibe.engines.contracts import Fidelity, Options
+    from eicvibe.engines.match import At, Stretch, match_lines
+    from eicvibe.engines.model import route_start
+
+    model, options = find_engine(engine), Options(fidelity=Fidelity(fidelity))
+    routes = {n: route_through(lattice, n, b, EIN_STORED.get(n, ())) for n, b in EIN_ROUTES.items()}
+    whole = machine_optics(model, lattice, options=options)
+    ltr = lattice.layout("ltr")
+    ids = {b: [p.id for p in lattice.layout(b).placements] for b in _BRANCHES}
+
+    def name(branch_id: str) -> str:
+        return lattice.branch(branch_id).name
+
+    def entering(branch: str, occurrence: str):
+        """A ring's periodic optics at an occurrence's entrance."""
+        at = ids[branch].index(occurrence)
+        optics = whole[lattice.layout(branch).id]
+        return optics.start if at == 0 else optics.at(ids[branch][at - 1])
+
+    def quads(branch: str, chosen=None) -> list[tuple[str, str]]:
+        return [
+            (p.id, "MagneticMultipoleP.Kn1")
+            for p in lattice.layout(branch).placements
+            if p.kind is ElementKind.QUADRUPOLE and (chosen is None or p.name in chosen)
+        ]
+
+    def limit(route, inside: set[str]) -> float:
+        optics = route_optics(model, lattice, route, options=options)
+        betas = [b for o, b in zip(optics.occurrences, optics.beta_x, strict=True) if o in inside]
+        betas += [b for o, b in zip(optics.occurrences, optics.beta_y, strict=True) if o in inside]
+        return 1.2 * max(max(betas), 100.0)
+
+    def segments(route, branch: str):
+        return [s for s in route.segments if name(s.branch) == branch]
+
+    bar, direct = routes["bar"], routes["direct"]
+    [itl], [etl] = segments(bar, "itl"), segments(bar, "etl")
+    to_itl, merge = segments(bar, "ltr")  # the LTR to P1, and after P2
+    stored = segments(bar, "bar")
+    p1, p2 = to_itl.end, ids["ltr"][ids["ltr"].index(merge.start) - 1]  # P2: where the ETL's beam joins
+    start, _ = route_start(model, lattice, direct, options=options)
+    first = ids["ltr"][0]
+    to_p2 = Stretch(
+        "ltr", ltr.id, first, p2, start, beta_limit=limit(direct, set(ids["ltr"][: ids["ltr"].index(p2) + 1]))
     )
-    return write_settings(folder, "bar_mode", settings, lattice, description)
+    landing = entering("bar", stored[0].start)
+    steps = {
+        "p2": match_lines(
+            model, lattice,
+            [to_p2, Stretch(
+                "etl", etl.branch, etl.start, etl.end, _init(whole[stored[-1].branch].at(stored[-1].end)),
+                At("ltr", p2), beta_limit=limit(bar, set(ids["etl"])),
+            )],
+            quads("ltr", EIN_P1_QUADS) + quads("etl"), options=options, keep_signs=True,
+        )
+    }  # fmt: skip
+    steps["itl"] = match_lines(
+        model, lattice,
+        [Stretch("ltr", ltr.id, first, p1, start), Stretch(
+            "itl", itl.branch, itl.start, itl.end, At("ltr", p1),
+            {k: getattr(landing, k) for k in ("beta_x", "alpha_x", "beta_y", "alpha_y")},
+            beta_limit=limit(bar, set(ids["itl"])),
+        )],
+        quads("itl"), values=steps["p2"].values, options=options, keep_signs=True, beta_limit=None,
+    )  # fmt: skip
+    after = set(ids["ltr"][ids["ltr"].index(merge.start) :])
+    rcs = segments(direct, "rcs")[0]
+    steps["rcs"] = match_lines(
+        model, lattice,
+        [to_p2, Stretch(
+            "merge", ltr.id, merge.start, merge.end, At("ltr", p2),
+            _optics(entering("rcs", rcs.start)), beta_limit=limit(direct, after),
+        )],
+        [v for v in quads("ltr") if v[0] in after], values=steps["p2"].values, options=options,
+        keep_signs=True, beta_limit=None,
+    )  # fmt: skip
+    injected = steps["itl"].stretches["itl"].after
+    d_eta, d_etap = injected.eta_x - landing.eta_x, injected.etap_x - landing.etap_x
+    gamma = (1 + landing.alpha_x**2) / landing.beta_x
+    h = gamma * d_eta**2 + 2 * landing.alpha_x * d_eta * d_etap + landing.beta_x * d_etap**2
+    return EinMatch(steps, (d_eta, d_etap, h))
+
+
+def match_ein(folder: str | Path, *, engine: str = "xsuite", fidelity: str = "standard") -> EinMatch:
+    """:func:`match_ein_lattice` of a machine folder's lattice; nothing is written."""
+    return match_ein_lattice(load_lattice(Path(folder)), engine=engine, fidelity=fidelity)
+
+
+def matched_ein(ein: Ein, *, engine: str = "xsuite", fidelity: str = "standard") -> tuple[Ein, EinMatch]:
+    """``ein`` with its design matched (:func:`match_ein_lattice`), and the match."""
+    found = match_ein_lattice(ein.lattice, engine=engine, fidelity=fidelity)
+    return replace(ein, lattice=with_design(ein.lattice, found.values)), found
+
+
+def _optics(at) -> dict[str, float]:
+    return {k: getattr(at, k) for k in ("beta_x", "alpha_x", "beta_y", "alpha_y", "eta_x", "etap_x")}
+
+
+def _init(at):
+    from eicvibe.engines.contracts import TwissInit
+
+    return TwissInit(**(at.model_dump() | {"x": 0.0, "px": 0.0, "y": 0.0, "py": 0.0}))
+
+
+def _match_report(found: EinMatch, lattice: Lattice) -> list[str]:
+    lines = []
+    for key, m in found.steps.items():
+        for stretch, s in m.stretches.items():
+            if not s.targets:
+                continue
+            lines.append(
+                f"{key}, {stretch}: Bmag x {s.bmag_before[0]:.4g} -> {s.bmag_after[0]:.6g}, "
+                f"y {s.bmag_before[1]:.4g} -> {s.bmag_after[1]:.6g}; peak beta {s.beta_max[0]:.4g} m, "
+                f"{s.beta_max[1]:.4g} m" + ("" if m.success else "  NOT MATCHED within tolerance")
+            )
+        for (occurrence, parameter), value in m.values.items():
+            start = m.start[(occurrence, parameter)]
+            if value != start:
+                lines.append(f"  {lattice.placement(occurrence).name:12s} Kn1 {start:+.6g} -> {value:+.6g}")
+    d_eta, d_etap, h = found.injection
+    lines.append(
+        f"left at BAR injection (the BAR damps it): dispersion {1e3 * d_eta:+.1f} mm, "
+        f"its slope {1e3 * d_etap:+.1f} mrad, H {h:.3g} m"
+    )
+    return lines
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Import the EIN from its design files into its machine folder.
+    """Import the EIN from its design files into its machine folder, matched.
 
     ``python -m eicvibe.machines.ein FOLDER`` writes FOLDER/machine the first
     time. Later it shows how the design files differ from the lattice files,
     and ``--write`` replaces the lattice files (devices, naming and settings
-    people edited are kept).
+    people edited are kept). The import is matched first (match_ein_lattice:
+    the BAR transparent, both routes into the RCS) unless --no-match;
+    ``--match`` matches the machine folder's own lattice files in place.
     """
     parser = argparse.ArgumentParser(
         description=main.__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -511,8 +667,30 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--bmad-bin", type=Path, help="the folder of Bmad's programs (tao, bmad_to_mad_sad_elegant)"
     )
+    parser.add_argument(
+        "--match",
+        action="store_true",
+        help="match the machine folder's lattice files in place (the ITL, ETL and LTR quadrupoles)",
+    )
+    parser.add_argument(
+        "--no-match", action="store_true", help="import the design files' strengths as they are"
+    )
+    parser.add_argument("--engine", default="xsuite", help="the engine that matches: xsuite or trackpad")
     args = parser.parse_args(argv)
     machine = args.machine or args.folder / MACHINE_DIR
+    if args.match:
+        if not is_machine(machine):
+            parser.error(f"{machine} is not a machine folder yet: import the EIN first")
+        lattice = load_lattice(machine)
+        found = match_ein_lattice(lattice, engine=args.engine)
+        print("\n".join(_match_report(found, lattice)))
+        changes = set_design(machine, found.values, lattice)
+        print(
+            f"set {len(changes)} strengths in the lattice files"
+            if changes
+            else "already matched: nothing written"
+        )
+        return 0 if found.success else 1
     if args.convert_bmad:
         from eicvibe.importers.bmad import bmad_tools
 
@@ -521,6 +699,10 @@ def main(argv: list[str] | None = None) -> int:
             for note in conversion.notes:
                 print(f"  {note}")
     ein = build_ein(args.folder)
+    if not args.no_match:
+        ein, found = matched_ein(ein, engine=args.engine)
+        print("matched the design (--no-match imports it as it is):")
+        print("\n".join(_match_report(found, ein.lattice)))
     if not is_machine(machine):
         written = write_ein_machine(ein, machine)
         print(f"wrote a new machine folder, {machine} ({len(written)} files)")
@@ -600,37 +782,6 @@ def _bmad_beginning(path: Path) -> dict:
     floor_keys = (("x_position", "x"), ("y_position", "y"), ("z_position", "z"), ("theta_position", "theta"))
     floor = {target: values[source] for source, target in floor_keys if source in values}
     return {"TwissP": twiss, **({"FloorP": floor} if floor else {})}
-
-
-def _mode_settings(
-    lattice: Lattice, branch: str, mode: Lattice, start: str | None, stop: str
-) -> list[SettingValue]:
-    """Magnet strengths of ``mode`` that differ from ``branch``, matched element by element.
-
-    Both are compared from the occurrence named ``start`` (from the beginning
-    if None) through the one named ``stop``; forks are skipped. The elements
-    in that stretch must have the same kinds and lengths.
-    """
-
-    def stretch(layout) -> list:
-        placements = [p for p in layout.placements[1:] if p.kind is not ElementKind.FORK]
-        names = [p.name for p in placements]
-        first = 0 if start is None else names.index(start)
-        return placements[first : names.index(stop) + 1]
-
-    ours, theirs = stretch(lattice.layout(branch)), stretch(mode.layout(mode.root_branch))
-    settings = []
-    for a, b in zip(ours, theirs, strict=True):
-        if a.kind != b.kind or not math.isclose(a.length, b.length, rel_tol=1e-9, abs_tol=1e-9):
-            raise ValueError(f"{mode.name}: {b.name} does not match {a.name} of {branch}")
-        if a.kind in (ElementKind.QUADRUPOLE, ElementKind.SEXTUPOLE, ElementKind.KICKER):
-            ours_m, theirs_m = a.element.MagneticMultipoleP, b.element.MagneticMultipoleP
-            a_values = ours_m.model_dump() if ours_m else {}
-            b_values = theirs_m.model_dump() if theirs_m else {}
-            for key, value in b_values.items():
-                if value != a_values.get(key, 0.0):
-                    settings.append(SettingValue(a.id, f"MagneticMultipoleP.{key}", value))
-    return settings
 
 
 if __name__ == "__main__":

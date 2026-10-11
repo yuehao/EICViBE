@@ -16,9 +16,10 @@ export interface UrlState {
   range?: SRange;
   /** Element table filter text. */
   q?: string;
-  /** Optics engine and fidelity. */
+  /** Optics engine and fidelity, and the operating mode whose settings they have (absent: the lattice's). */
   engine?: string;
   fidelity?: string;
+  mode?: string;
   /** The lower panel's tab: optics (absent), orbit or check. */
   tab?: string;
   /** The run the Orbit tab shows first (a link from the admin page); read once. */
@@ -34,7 +35,7 @@ const numbers = (text: string | null, count: number): number[] | null => {
 export function parseHash(hash: string): UrlState {
   const params = new URLSearchParams(hash.replace(/^#/, ""));
   const state: UrlState = {};
-  for (const key of ["source", "rev", "branch", "sel", "q", "engine", "fidelity", "tab", "run"] as const) {
+  for (const key of ["source", "rev", "branch", "sel", "q", "engine", "fidelity", "mode", "tab", "run"] as const) {
     const value = params.get(key);
     if (value) state[key] = value;
   }
@@ -61,6 +62,7 @@ export function formatHash(state: UrlState): string {
   if (state.q) params.set("q", state.q);
   if (state.engine) params.set("engine", state.engine);
   if (state.fidelity) params.set("fidelity", state.fidelity);
+  if (state.mode) params.set("mode", state.mode);
   if (state.tab) params.set("tab", state.tab);
   return "#" + params.toString().replaceAll("%2C", ",");
 }

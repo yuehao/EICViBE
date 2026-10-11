@@ -52,6 +52,387 @@
     "title": "ActionEntry",
     "type": "object"
    },
+   "AiChange": {
+    "properties": {
+     "api_key": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "A new key for the provider; empty keeps the stored one",
+      "title": "Api Key"
+     },
+     "clear_key": {
+      "default": false,
+      "title": "Clear Key",
+      "type": "boolean"
+     },
+     "enabled": {
+      "default": true,
+      "title": "Enabled",
+      "type": "boolean"
+     },
+     "model": {
+      "default": "",
+      "title": "Model",
+      "type": "string"
+     },
+     "provider": {
+      "default": "local",
+      "enum": [
+       "local",
+       "openai",
+       "anthropic"
+      ],
+      "title": "Provider",
+      "type": "string"
+     },
+     "reason": {
+      "default": "",
+      "title": "Reason",
+      "type": "string"
+     },
+     "url": {
+      "default": "",
+      "title": "Url",
+      "type": "string"
+     }
+    },
+    "title": "AiChange",
+    "type": "object"
+   },
+   "AiProvider": {
+    "properties": {
+     "key_variable": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "The environment variable a key may come from",
+      "title": "Key Variable"
+     },
+     "label": {
+      "title": "Label",
+      "type": "string"
+     },
+     "model": {
+      "description": "Its model unless another is chosen; empty: choose one",
+      "title": "Model",
+      "type": "string"
+     },
+     "url": {
+      "description": "Its URL unless another is given",
+      "title": "Url",
+      "type": "string"
+     }
+    },
+    "required": [
+     "label",
+     "url",
+     "key_variable",
+     "model"
+    ],
+    "title": "AiProvider",
+    "type": "object"
+   },
+   "AiSettings": {
+    "description": "The AI features' configuration (ADR 0009), without the keys.",
+    "properties": {
+     "enabled": {
+      "title": "Enabled",
+      "type": "boolean"
+     },
+     "key": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Where the provider's API key comes from: stored, a variable, or none",
+      "title": "Key"
+     },
+     "key_hint": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "The stored key's last four characters",
+      "title": "Key Hint"
+     },
+     "model": {
+      "title": "Model",
+      "type": "string"
+     },
+     "provider": {
+      "enum": [
+       "local",
+       "openai",
+       "anthropic"
+      ],
+      "title": "Provider",
+      "type": "string"
+     },
+     "providers": {
+      "additionalProperties": {
+       "$ref": "#/components/schemas/AiProvider"
+      },
+      "title": "Providers",
+      "type": "object"
+     },
+     "saved": {
+      "description": "Chosen here; otherwise the server's defaults (its command line)",
+      "title": "Saved",
+      "type": "boolean"
+     },
+     "url": {
+      "title": "Url",
+      "type": "string"
+     }
+    },
+    "required": [
+     "enabled",
+     "provider",
+     "model",
+     "url",
+     "key",
+     "key_hint",
+     "saved",
+     "providers"
+    ],
+    "title": "AiSettings",
+    "type": "object"
+   },
+   "AiStatus": {
+    "description": "The AI features (ADR 0009): whether they are on, which model answers, and whether it does.",
+    "properties": {
+     "available": {
+      "description": "The model answers",
+      "title": "Available",
+      "type": "boolean"
+     },
+     "enabled": {
+      "description": "On (the default), or turned off by an administrator or --no-ai",
+      "title": "Enabled",
+      "type": "boolean"
+     },
+     "model": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Model"
+     },
+     "provider": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "local, openai or anthropic",
+      "title": "Provider"
+     },
+     "reason": {
+      "title": "Reason",
+      "type": "string"
+     },
+     "where": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Where the questions go: 'on this server', 'by OpenAI', ...",
+      "title": "Where"
+     }
+    },
+    "required": [
+     "enabled",
+     "available",
+     "provider",
+     "model",
+     "where",
+     "reason"
+    ],
+    "title": "AiStatus",
+    "type": "object"
+   },
+   "AiTest": {
+    "description": "What a configuration gives, tried before saving it.",
+    "properties": {
+     "answer": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "A few words from the model",
+      "title": "Answer"
+     },
+     "available": {
+      "title": "Available",
+      "type": "boolean"
+     },
+     "models": {
+      "description": "The models the provider offers, where it says",
+      "items": {
+       "type": "string"
+      },
+      "title": "Models",
+      "type": "array"
+     },
+     "reason": {
+      "title": "Reason",
+      "type": "string"
+     },
+     "seconds": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "How long those took",
+      "title": "Seconds"
+     }
+    },
+    "required": [
+     "available",
+     "reason",
+     "models",
+     "answer",
+     "seconds"
+    ],
+    "title": "AiTest",
+    "type": "object"
+   },
+   "AskRequest": {
+    "description": "A question about what the viewer shows; the server gathers the facts itself.",
+    "properties": {
+     "branch": {
+      "description": "The branch shown (id or name), or route:<name>",
+      "title": "Branch",
+      "type": "string"
+     },
+     "digest": {
+      "description": "The revision shown",
+      "title": "Digest",
+      "type": "string"
+     },
+     "engine": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "The Optics tab's engine, for the optics already computed",
+      "title": "Engine"
+     },
+     "fidelity": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Fidelity"
+     },
+     "machine": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "The virtual accelerator's machine chosen",
+      "title": "Machine"
+     },
+     "occurrence": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "The selected occurrence's id",
+      "title": "Occurrence"
+     },
+     "question": {
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Question",
+      "type": "string"
+     },
+     "run": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "The run the Orbit or Check tab shows",
+      "title": "Run"
+     },
+     "tab": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Tab"
+     }
+    },
+    "required": [
+     "question",
+     "digest",
+     "branch"
+    ],
+    "title": "AskRequest",
+    "type": "object"
+   },
    "BeamRequest": {
     "properties": {
      "action": {
@@ -251,6 +632,18 @@
       ],
       "description": "How the maps and chromaticity were computed, e.g. TPSA",
       "title": "Method"
+     },
+     "mode": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "The operating mode whose settings they have; none: the lattice's",
+      "title": "Mode"
      },
      "momentum_compaction": {
       "anyOf": [
@@ -825,6 +1218,29 @@
       "title": "Amplitude",
       "type": "array"
      },
+     "expected_x": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "The model's tune at the amplitude measured after the kick",
+      "title": "Expected X"
+     },
+     "expected_y": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Expected Y"
+     },
      "plane": {
       "description": "The plane kicked: the one the beam oscillates in most",
       "title": "Plane",
@@ -985,6 +1401,59 @@
      "method"
     ],
     "title": "EngineInfo",
+    "type": "object"
+   },
+   "ExplainCheck": {
+    "description": "The check to explain, as the Check tab asked for it.",
+    "properties": {
+     "detuning": {
+      "default": false,
+      "title": "Detuning",
+      "type": "boolean"
+     },
+     "engine": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Engine"
+     },
+     "first": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "First"
+     },
+     "run": {
+      "title": "Run",
+      "type": "string"
+     },
+     "source": {
+      "default": "kick",
+      "title": "Source",
+      "type": "string"
+     },
+     "turns": {
+      "default": 1024,
+      "maximum": 8192.0,
+      "minimum": 64.0,
+      "title": "Turns",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "run"
+    ],
+    "title": "ExplainCheck",
     "type": "object"
    },
    "Fidelity": {
@@ -1242,6 +1711,14 @@
       "description": "Occurrence count by element kind",
       "title": "Kinds",
       "type": "object"
+     },
+     "modes": {
+      "description": "Its operating modes (settings/<mode>.yaml), for optics in a mode",
+      "items": {
+       "type": "string"
+      },
+      "title": "Modes",
+      "type": "array"
      },
      "name": {
       "title": "Name",
@@ -2179,6 +2656,18 @@
       "description": "Oscillation amplitude, median over the BPMs, mm",
       "title": "Amplitude"
      },
+     "beam_size": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "The beam's rms size from the model's beta, median over the BPMs, mm",
+      "title": "Beam Size"
+     },
      "beta_beating": {
       "description": "Relative beta error from the oscillation amplitudes (BPM gain errors included)",
       "items": {
@@ -2246,6 +2735,18 @@
       ],
       "description": "The same over the first 32 turns: before the bunch decoheres, its particles' amplitude",
       "title": "Initial Amplitude"
+     },
+     "kick_sigma": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "initial_amplitude in beam sizes: a pinger kicks a few",
+      "title": "Kick Sigma"
      },
      "map_tune": {
       "anyOf": [
@@ -2368,6 +2869,8 @@
      "map_tune",
      "amplitude",
      "initial_amplitude",
+     "beam_size",
+     "kick_sigma",
      "spectrum",
      "phase_error",
      "phase_rms",
@@ -2746,6 +3249,21 @@
       },
       "title": "Frequencies",
       "type": "array"
+     },
+     "kick": {
+      "anyOf": [
+       {
+        "additionalProperties": {
+         "type": "number"
+        },
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "The kick of a kick's capture: x and y, rad",
+      "title": "Kick"
      },
      "notes": {
       "items": {
@@ -3619,6 +4137,89 @@
  },
  "openapi": "3.1.0",
  "paths": {
+  "/api/v1/ai": {
+   "get": {
+    "description": "The AI features (ADR 0009): whether they are on, which model answers, and whether it does.",
+    "operationId": "ai_status_api_v1_ai_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/AiStatus"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "Ai Status"
+   }
+  },
+  "/api/v1/ai/ask": {
+   "post": {
+    "description": "A short answer about what the viewer shows; the server gathers the facts from its own data.",
+    "operationId": "ask_api_v1_ai_ask_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/AskRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Ask"
+   }
+  },
+  "/api/v1/ai/explain-check": {
+   "post": {
+    "description": "A few sentences on a run's check, from its numbers, written by the local model as it goes.",
+    "operationId": "explain_check_api_v1_ai_explain_check_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ExplainCheck"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Explain Check"
+   }
+  },
   "/api/v1/engines": {
    "get": {
     "description": "Physics engines that can compute optics here.",
@@ -3778,7 +4379,7 @@
   },
   "/api/v1/lattices/{digest}/branches/{branch}/optics": {
    "get": {
-    "description": "Design optics of one branch: beta functions, dispersion, phase advance, orbit, tunes, chromaticity.\n\nThe first request for a revision computes the whole machine (lines start from the\noptics at their forks), which can take a while: TrackPad starts Julia on first use.",
+    "description": "Optics of one branch: beta functions, dispersion, phase advance, orbit, tunes, chromaticity.\n\nWith the lattice's settings, or an operating mode's. The first request for a revision\ncomputes the whole machine (lines start from the optics at their forks), which can take\na while: TrackPad starts Julia on first use.",
     "operationId": "branch_optics_api_v1_lattices__digest__branches__branch__optics_get",
     "parameters": [
      {
@@ -3818,6 +4419,24 @@
       "schema": {
        "$ref": "#/components/schemas/Fidelity",
        "default": "standard"
+      }
+     },
+     {
+      "description": "An operating mode of the machine (see the summary's modes); none: the lattice's",
+      "in": "query",
+      "name": "mode",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "description": "An operating mode of the machine (see the summary's modes); none: the lattice's",
+       "title": "Mode"
       }
      }
     ],
@@ -4309,6 +4928,110 @@
      }
     },
     "summary": "Actions",
+    "tags": [
+     "virtual accelerator"
+    ]
+   }
+  },
+  "/api/v1/va/ai": {
+   "get": {
+    "description": "The AI features' configuration, for administrators; keys are never sent.",
+    "operationId": "get_ai_api_v1_va_ai_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/AiSettings"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "Get Ai",
+    "tags": [
+     "virtual accelerator"
+    ]
+   },
+   "put": {
+    "description": "Choose the AI features' model; logged as an action, without the key.",
+    "operationId": "set_ai_api_v1_va_ai_put",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/AiChange"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/AiSettings"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Set Ai",
+    "tags": [
+     "virtual accelerator"
+    ]
+   }
+  },
+  "/api/v1/va/ai/test": {
+   "post": {
+    "description": "Try a configuration without saving it: does the model answer, and how fast?",
+    "operationId": "test_ai_api_v1_va_ai_test_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/AiChange"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/AiTest"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Test Ai",
     "tags": [
      "virtual accelerator"
     ]

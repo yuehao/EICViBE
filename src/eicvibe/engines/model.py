@@ -325,10 +325,12 @@ def route_optics(
     A route starts from its first branch's own initial conditions when it starts where that
     branch does, else from the optics of the whole machine there (a ring's periodic solution,
     a line's from its fork). In a ring the route carries the beam's own optics, not the ring's
-    periodic ones: what an injected beam sees. Each segment starts on its branch's design orbit:
-    an offset where a fork lands (an injection's) is the beam's trajectory, which tracking shows,
-    not part of the optics. A route whose reference momentum changes at a join (an acceleration)
-    is refused. Positions ``s`` are along the route; ``branch`` is ``route:<name>``.
+    periodic ones: what an injected beam sees. In a ring the beam is stored in (the route's
+    ``stored``, an accumulator) the beam has the ring's periodic optics, and leaves on them.
+    Each segment starts on its branch's design orbit: an offset where a fork lands (an
+    injection's) is the beam's trajectory, which tracking shows, not part of the optics. A
+    route whose reference momentum changes at a join (an acceleration) is refused. Positions
+    ``s`` are along the route; ``branch`` is ``route:<name>``.
     """
     values = values or {}
     options = options or Options()
@@ -336,12 +338,17 @@ def route_optics(
         raise UnsupportedRequest(engine.name, problems)
     start, origin = route_start(engine, lattice, route, values=values, options=options)
     sessions: dict[str, Session] = {}
+    periodic: dict[str, OpticsResult] = {}
     parts: list[tuple[Segment, OpticsResult]] = []
     try:
         current = start
         for segment in route.segments:
             if segment.branch not in sessions:
                 sessions[segment.branch] = engine.open(lattice, segment.branch, options, values)
+            if segment.branch in route.stored:  # the stored beam: the ring's own optics
+                if segment.branch not in periodic:
+                    periodic[segment.branch] = sessions[segment.branch].optics(OpticsRequest(options=options))
+                current = _entrance(lattice, periodic[segment.branch], segment)
             request = OpticsRequest(
                 options=options, initial=current, start=segment.start, end=segment.end, inside=inside
             )
@@ -353,8 +360,20 @@ def route_optics(
         for session in sessions.values():
             session.close()
     if notes is not None:
-        notes[f"route:{route.name}"] = origin  # read as "from <origin>", as a branch's notes are
+        stored = ", ".join(lattice.branch(b).name for b in route.stored)
+        # read as "from <origin>", as a branch's notes are
+        notes[f"route:{route.name}"] = origin + (
+            f"; in {stored}, its periodic optics (the beam stored)" if stored else ""
+        )
     return _joined(lattice, route, parts)
+
+
+def _entrance(lattice: Lattice, ring: OpticsResult, segment: Segment) -> TwissInit:
+    """A ring's periodic optics at the entrance of a segment's first occurrence, on the axis."""
+    ids = [p.id for p in lattice.layout(segment.branch).placements]
+    at = ids.index(segment.start)
+    optics = ring.start if at == 0 else ring.at(ids[at - 1])
+    return TwissInit(**(optics.model_dump() | {"x": 0.0, "px": 0.0, "y": 0.0, "py": 0.0}))
 
 
 _COLUMNS = (

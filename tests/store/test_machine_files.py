@@ -248,3 +248,72 @@ def test_bpms_are_added_after_their_branchs(folder):
     assert lines[0] == original.splitlines()[0]  # the header comment stays
     assert add_bpms(folder, ["ring/BPM_3"], branches) is None  # listed already
     assert check_machine(folder) == []
+
+
+def test_a_route_may_store_its_beam_in_a_ring(folder):
+    from eicvibe.store.machine import ROUTES_FILE, write_routes
+
+    stored = {"branches": ["injection", "ring", "extraction"], "stored": ["ring"]}
+    write_routes(folder, {"transfer": stored, "fill": ["injection", "ring"]})
+    assert (
+        "transfer: {branches: [injection, ring, extraction], stored: [ring]}"
+        in (folder / ROUTES_FILE).read_text()
+    )
+    routes = {r.name: r for r in load_machine(folder).routes}
+    ring = load_machine(folder).lattice.layout("ring").id
+    assert routes["transfer"].stored == (ring,) and routes["fill"].stored == ()
+    (folder / ROUTES_FILE).write_text(
+        "routes:\n  transfer: {branches: [injection, ring, extraction], stored: [injection]}\n"
+    )
+    with pytest.raises(FileError, match="injection is a line; only a ring stores a beam"):
+        load_machine(folder)
+
+
+def test_values_become_the_design_in_place(tmp_path):
+    from eicvibe.store import set_design
+
+    b = LatticeBuilder("small", ids=SequentialIds())
+    b.define("BEG", "BeginningEle", ReferenceP={"species_ref": "electron", "pc_ref": 1e9})
+    b.define("Q", "Quadrupole", length=0.5, MagneticMultipoleP={"Kn1": 0.5})
+    b.define("QM", "Quadrupole", length=0.3, MagneticMultipoleP={"Kn1": -0.8})
+    b.define("D", "Drift", length=1.0)
+    b.add_branch("a", "linac", ["BEG", "Q", "D", "QM", "D", "Q"])
+    b.set_overrides(("a", "Q_2"), MagneticMultipoleP={"Kn1": 0.55})
+    write_machine(tmp_path, b.build())
+    lattice = load_lattice(tmp_path)
+    path = tmp_path / "lattice" / "a.yaml"
+    path.write_text(path.read_text() + "# a note someone wrote\n")
+    before = path.read_text().splitlines()
+    qm = lattice.placement("QM_1", branch="a")
+    assert set_design(tmp_path, {(qm.id, "MagneticMultipoleP.Kn1"): -1.25}, lattice) == [
+        "a/QM_1 MagneticMultipoleP.Kn1: -0.8 -> -1.25"
+    ]
+    after = path.read_text().splitlines()
+    changed = [line for line, old in zip(after, before, strict=True) if line != old]
+    assert changed == [
+        "  QM: {kind: Quadrupole, length: 0.3, MagneticMultipoleP: {Kn1: -1.25}}"
+    ]  # the note kept
+    assert load_lattice(tmp_path).placement(qm.id).element.MagneticMultipoleP.Kn1 == -1.25
+    assert set_design(tmp_path, {(qm.id, "MagneticMultipoleP.Kn1"): -1.25}) == []  # nothing to change
+    q1, q2 = (lattice.placement(n, branch="a").id for n in ("Q_1", "Q_2"))
+    with pytest.raises(ValueError, match="Q is placed 2 times; setting it would change them all"):
+        set_design(tmp_path, {(q1, "MagneticMultipoleP.Kn1"): 1.0})
+    with pytest.raises(ValueError, match="overrides MagneticMultipoleP.Kn1"):
+        set_design(tmp_path, {(q2, "MagneticMultipoleP.Kn1"): 1.0})
+
+
+def test_values_become_the_design_in_memory_too():
+    from eicvibe.domain.lattice import with_design
+
+    b = LatticeBuilder("small", ids=SequentialIds())
+    b.define("BEG", "BeginningEle", ReferenceP={"species_ref": "electron", "pc_ref": 1e9})
+    b.define("Q", "Quadrupole", length=0.5, MagneticMultipoleP={"Kn1": 0.5})
+    b.define("QM", "Quadrupole", length=0.3, MagneticMultipoleP={"Kn1": -0.8})
+    b.add_branch("a", "linac", ["BEG", "Q", "QM", "Q"])
+    lattice = b.build()
+    qm, q1 = (lattice.placement(n, branch="a") for n in ("QM_1", "Q_1"))
+    designed = with_design(lattice, {(qm.id, "MagneticMultipoleP.Kn1"): -1.25})
+    assert designed.placement(qm.id).element.MagneticMultipoleP.Kn1 == -1.25
+    assert [p.id for p in designed.layout("a").placements] == [p.id for p in lattice.layout("a").placements]
+    with pytest.raises(ValueError, match="placed 2 times"):
+        with_design(lattice, {(q1.id, "MagneticMultipoleP.Kn1"): 1.0})

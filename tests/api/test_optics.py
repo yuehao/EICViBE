@@ -109,3 +109,39 @@ def test_a_route_beside_a_lattice_file_has_its_optics(tmp_path):
         body = client.get(url, params={"engine": "xsuite"}).json()
         assert body["s"][-1] == pytest.approx(transfer["length"]) and not body["periodic"]
         assert client.get(f"/api/v1/lattices/{digest}/branches/route:nowhere/optics").status_code == 404
+
+
+def test_optics_in_an_operating_mode_of_a_machine_folder(tmp_path):
+    from eicvibe.api.demo import demo_lattice
+    from eicvibe.domain.lattice import ElementKind
+    from eicvibe.domain.machine import describe_machine
+    from eicvibe.store import Setting, write_machine, write_settings
+
+    lattice = demo_lattice()
+    folder = tmp_path / "demo"
+    description = describe_machine(lattice, {"ring": None, "injection": None, "extraction": None})
+    write_machine(folder, lattice, description, source={"importer": "test"})
+    quads = [p for p in lattice.layout("ring").placements if p.kind is ElementKind.QUADRUPOLE]
+    stronger = [
+        Setting(p.id, "MagneticMultipoleP.Kn1", 1.02 * p.element.MagneticMultipoleP.Kn1) for p in quads
+    ]
+    write_settings(folder, "stronger", stronger, lattice, "every ring quadrupole 2 % stronger")
+    http = TestClient(create_app(Catalog([folder], refresh_interval=0.0), static_dir=None))
+    digest = http.get("/api/v1/lattices").json()[0]["digest"]
+    summary = http.get(f"/api/v1/lattices/{digest}").json()
+    assert summary["modes"] == ["stronger"]
+    ring = next(b["id"] for b in summary["branches"] if b["name"] == "ring")  # the folder's own ids
+    path = f"/api/v1/lattices/{digest}/branches/{ring}/optics"
+    design = http.get(path).json()
+    mode = http.get(path, params={"mode": "stronger"}).json()
+    assert (design.get("mode"), mode["mode"]) == (None, "stronger")
+    assert abs(mode["tune_x"] - design["tune_x"]) > 1e-3  # the mode's settings, not the lattice's
+    assert http.get(path, params={"mode": "nope"}).status_code == 404
+    # A mode's file edited, then removed, with the lattice as it was: served at once.
+    stronger = [Setting(s.occurrence, s.parameter, 1.02 * s.value) for s in stronger]
+    write_settings(folder, "stronger", stronger, lattice, "every ring quadrupole 4 % stronger")
+    edited = http.get(path, params={"mode": "stronger"}).json()
+    assert abs(edited["tune_x"] - mode["tune_x"]) > 1e-3
+    (folder / "settings" / "stronger.yaml").unlink()
+    assert http.get(f"/api/v1/lattices/{digest}").json()["modes"] == []
+    assert http.get(path, params={"mode": "stronger"}).status_code == 404
