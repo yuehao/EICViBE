@@ -31,6 +31,7 @@ from typing import Any
 import numpy as np
 from pydantic import Field
 
+from eicvibe.diagnostics.analysis import averaged_tune
 from eicvibe.diagnostics.bpm import NO_BEAM, VALID
 from eicvibe.domain.lattice import ElementKind, Lattice
 from eicvibe.domain.lattice._base import DomainModel
@@ -250,6 +251,15 @@ class RingRun:
         self.warnings: list[str] = []
         """What the run found wrong: RF that holds no bunch (checked at the start and when RF changes)."""
         self._compaction: float | None = None
+        self.tune_turns = 1024
+        """Turns the tune monitor's spectrum takes."""
+        self.tunes: dict[str, Any] | None = None
+        """The tune monitor's reading, once it has ``tune_turns`` turns of beam: fractional tunes (between
+        0 and 0.5, as one pickup cannot tell q from 1 - q), the turn, and whether settings were still
+        ramping in those turns."""
+        self._centroids = np.zeros((2, 0, 0))
+        self._synchrotron = 0.0
+        self._changed = -(10**9)
 
     # -- life --------------------------------------------------------------------------
 
@@ -410,6 +420,7 @@ class RingRun:
 
         def update() -> None:
             now = self._turn
+            self._changed = now
             begin = {key: self._value(key, now) for key in values}
             for active in self._ramps:  # a newer change of a setting takes over from where it is
                 for key in values:
@@ -481,6 +492,9 @@ class RingRun:
     def _inject(self, matching: Matching | None = None) -> None:
         matching = matching or self._matching()
         self._coordinates = matching.bunch(self._bunches, self.beam)
+        qs = abs(matching.tunes[2]) % 1.0 if len(matching.tunes) > 2 else 0.0
+        self._synchrotron = min(qs, 1.0 - qs)  # the tune of the line a spectrum shows
+        self._centroids = np.zeros((2, 0, 0))  # a new bunch: the tune monitor starts again
         self._writer.event(
             self._turn,
             "inject",
@@ -547,6 +561,7 @@ class RingRun:
             self._writer.append(
                 first, nothing, nothing, np.zeros((n_bpm, turns)), status, (started, time.time())
             )
+            self._centroids, self.tunes = np.zeros((2, 0, 0)), None
             self._turn += turns
             self._advance(self._turn)
             self._save_captures()
@@ -560,6 +575,7 @@ class RingRun:
             self._writer.event(first, "engine restarted")
             return
         x, y, intensity, status = self._bpms.read(track.x, track.y, track.count)
+        self._tune_monitor(np.asarray(track.x), np.asarray(track.y), first + turns)
         lost = int(np.count_nonzero(track.lost))
         remaining = np.asarray(track.final)[~np.asarray(track.lost)]
         if lost and len(remaining) == 0:  # the beam is gone: the post-mortem buffer freezes at once
@@ -584,6 +600,27 @@ class RingRun:
         if lost:
             self._writer.event(self._turn, "loss", particles=lost, remaining=len(self._coordinates))
         self._save_captures()
+
+    def _tune_monitor(self, x: np.ndarray, y: np.ndarray, end: int) -> None:
+        """The tune monitor: the spectrum of the beam's own centroid motion, as a BBQ reads it.
+
+        A bunch of finitely many particles moves as a whole a little (the sum of its particles'
+        oscillations does not cancel), so a sensitive pickup sees the betatron tunes without a
+        kick. The centroid at every BPM over the last :attr:`tune_turns` turns, their power spectra
+        summed (a Hann window, the peak refined between bins), gives the reading; lines below 1.5
+        synchrotron tunes are ignored, as the monitor's window does.
+        """
+        block = np.stack([x, y])
+        if self._centroids.shape[1] != block.shape[1]:
+            self._centroids = block
+        else:
+            self._centroids = np.concatenate([self._centroids, block], axis=2)[:, :, -self.tune_turns :]
+        if self._centroids.shape[2] < self.tune_turns:
+            return
+        low = 1.5 * self._synchrotron
+        reading = {plane: averaged_tune(self._centroids[k], low) for k, plane in enumerate(("x", "y"))}
+        settled = end - self.tune_turns >= self._changed + self.ramp_turns
+        self.tunes = reading | {"turn": end, "turns": self.tune_turns, "settled": bool(settled)}
 
 
 def _shape(u):

@@ -47,6 +47,24 @@ def tune_of(signal: np.ndarray, low: float = 0.0) -> float:
     return float(k / n)
 
 
+def averaged_tune(signals: np.ndarray, low: float = 0.0) -> float:
+    """The fractional tune of many pickups' readings ``[pickup, turn]`` together: the strongest line
+    of their power spectra summed, as a tune monitor averages to see a weak signal over noise and
+    sidebands. Otherwise as :func:`tune_of`."""
+    rows = [v for row in np.asarray(signals, dtype=float) if (v := _prepared(row)) is not None]
+    if not rows:
+        return float("nan")
+    n = len(rows[0])
+    window = np.hanning(n)
+    power = np.sum([np.abs(np.fft.rfft(v * window)) ** 2 for v in rows], axis=0)
+    power[: max(1, int(np.ceil(low * n)))] = 0.0
+    k = int(np.argmax(power))
+    if 0 < k < len(power) - 1:
+        a, b, c = 0.5 * np.log(power[k - 1 : k + 2] + 1e-300)  # log magnitude, as tune_of fits
+        k += 0.5 * (a - c) / (a - 2 * b + c)
+    return float(k / n)
+
+
 def tunes(plane: PlaneData, low: float = 0.0) -> np.ndarray:
     """The fractional tune every BPM of a plane sees."""
     return np.array([tune_of(row, low) for row in plane.position])

@@ -172,7 +172,7 @@ export function Inspector({ digest, occurrence, branchName, describe, onGo, onGo
         </section>
       ))}
 
-      {machine && auth ? <Setpoints occurrence={detail.id} machine={machine} auth={auth} /> : null}
+      {machine && auth ? <Setpoints occurrence={detail.id} machine={machine} auth={auth} describe={describe} /> : null}
 
       {detail.devices.length ? (
         <section>

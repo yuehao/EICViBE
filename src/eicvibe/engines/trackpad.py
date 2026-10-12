@@ -35,6 +35,7 @@ from typing import Any
 
 from eicvibe.domain.lattice import ElementKind, Lattice, PlacedElement
 
+from .adapter import Changes, EngineAdapter, EngineSession
 from .contracts import (
     BeamTrack,
     Capabilities,
@@ -70,7 +71,7 @@ from .convert import (
     rf_frequency,
     rf_phase,
 )
-from .model import SETTINGS, Values, effective, require, span
+from .model import SETTINGS, Values, effective
 
 try:
     import numpy as np
@@ -224,8 +225,9 @@ def _version() -> str | None:
     return str(jl.seval("string(pkgversion(TrackPad))"))
 
 
-class TrackPadEngine:
+class TrackPadEngine(EngineAdapter):
     name = NAME
+    unavailable = "juliacall is not installed: pip install 'eicvibe[trackpad]'"
 
     def available(self) -> bool:
         return np is not None and find_spec("juliacall") is not None
@@ -249,26 +251,22 @@ class TrackPadEngine:
             notes=NOTES,
         )
 
-    def open(
-        self, lattice: Lattice, branch: str, options: Options | None = None, values: Values | None = None
+    def _open(
+        self, capabilities: Capabilities, lattice: Lattice, branch: str, options: Options, values: Values
     ) -> TrackPadSession:
-        options = options or Options()
-        require(self.capabilities(), lattice, branch, options)
-        return TrackPadSession(_julia(), lattice, branch, options, values or {})
+        return TrackPadSession(_julia(), capabilities, lattice, branch, options, values)
 
 
-class TrackPadSession:
+class TrackPadSession(EngineSession):
     """One branch as a TrackPad lattice; settings replace its elements in place."""
 
     engine = NAME
 
-    def __init__(self, jl, lattice: Lattice, branch: str, options: Options, values: Values) -> None:
+    def __init__(
+        self, jl, capabilities: Capabilities, lattice: Lattice, branch: str, options: Options, values: Values
+    ) -> None:
         self.jl = jl
-        self.lattice = lattice
-        self.layout = lattice.layout(branch)
-        self.branch = self.layout.id
-        self.options = options
-        self.values: dict[tuple[str, str], float] = dict(values)
+        super().__init__(capabilities, lattice, branch, options, values)
         particle = reference(NAME, lattice, self.branch)
         self._beta0 = particle["beta0"]
         self._revolution = self._beta0 * C_LIGHT / self.layout.length if self.layout.length else 0.0
@@ -281,7 +279,6 @@ class TrackPadSession:
             self._first[placed.id] = len(pieces)
             self._kinds[placed.id] = [kind for _, kind, _ in mine]
             pieces += mine
-        self._occurrence_ids = [p.id for p in self.layout.placements]
         # Index of every occurrence's exit in TrackPad's arrays, which start at the entrance.
         self._exits = [self._first[o] + len(self._kinds[o]) for o in self._occurrence_ids]
         # The occurrence (by position) of every TrackPad element.
@@ -296,17 +293,10 @@ class TrackPadSession:
 
     # -- settings ----------------------------------------------------------------
 
-    def update(self, values: Values) -> None:
+    def _update(self, changes: Changes) -> None:
         """Change parameter values in place; a change of the elements' structure is refused."""
-        changed = defaultdict(dict)
-        for (occurrence, path), value in values.items():
-            if path not in SETTINGS:
-                raise UnsupportedRequest(NAME, [f"{path} cannot change in place; open a new session"])
-            changed[occurrence][path] = value
-        for occurrence, paths in changed.items():
+        for occurrence, paths in changes.items():
             placed = self.lattice.placement(occurrence)
-            if placed.branch_id != self.branch:
-                raise UnsupportedRequest(NAME, [f"occurrence {occurrence} is not in this branch"])
             self.values.update({(occurrence, p): v for p, v in paths.items()})
             pieces = self._pieces(placed)
             if [kind for _, kind, _ in pieces] != self._kinds[occurrence]:
@@ -331,12 +321,8 @@ class TrackPadSession:
         longitudinal = Effect.LONGITUDINAL in options.effects
         moving: dict[str, list[tuple[int, str, float, float]]] = defaultdict(list)
         for k, ramp in enumerate(ramps):
-            for (occurrence, path), value in ramp.start.items():
-                if path not in SETTINGS:
-                    raise UnsupportedRequest(NAME, [f"{path} cannot change in place; open a new session"])
+            for (occurrence, path), value in ramp.start.items():  # checked already (checked_ramps)
                 placed = self.lattice.placement(occurrence)
-                if placed.branch_id != self.branch:
-                    raise UnsupportedRequest(NAME, [f"occurrence {occurrence} is not in this branch"])
                 if placed.kind is ElementKind.RFCAVITY and not longitudinal:
                     continue  # a drift here: the RF does not act
                 moving[occurrence].append((k, path, value, ramp.end[(occurrence, path)]))
@@ -417,16 +403,15 @@ class TrackPadSession:
         """The lattice, with RF cavities as drifts unless the longitudinal motion is wanted."""
         return self.model if Effect.LONGITUDINAL in options.effects else self.jl.transverse(self.model)
 
-    def _part(self, options: Options, start: str | None, end: str | None):
+    def _part(self, options: Options, occurrences: list[str], partial: bool):
         """What to compute on: the lattice or part of it (as a line), its occurrences, and where they end.
 
         Returns the TrackPad lattice, the occurrence ids, every occurrence's exit index in its arrays
         (which start at the entrance), the occurrence (by position) of each of its elements, and whether
         it is a part.
         """
-        occurrences = span(self._occurrence_ids, start, end, NAME)
         model = self._model(options)
-        if start is None and end is None:
+        if not partial:
             return model, occurrences, self._exits, self._occurrence_of, False
         first = self._first[occurrences[0]]
         stop = self._first[occurrences[-1]] + len(self._kinds[occurrences[-1]])
@@ -436,17 +421,14 @@ class TrackPadSession:
 
     # -- computations --------------------------------------------------------------
 
-    def optics(self, request: OpticsRequest) -> OpticsResult:
+    def _optics(self, request: OpticsRequest, occurrences: list[str], partial: bool) -> OpticsResult:
         options = request.options
-        require(TrackPadEngine().capabilities(), self.lattice, self.branch, options, Computation.OPTICS)
-        model, occurrences, orbit_exits, owners, partial = self._part(options, request.start, request.end)
+        model, occurrences, orbit_exits, owners, partial = self._part(options, occurrences, partial)
         periodic = self.layout.periodic and not partial
         if periodic:
             start = self.jl.closed_orbit(model, self.beam, 0.0, False)
             entrance = None
         else:
-            if request.initial is None:
-                raise UnsupportedRequest(NAME, ["a line's optics need initial conditions"])
             i = request.initial
             start = self._to_trackpad(i.x, i.px, i.y, i.py, i.zeta, i.delta)
             entrance = self.jl.entrance(
@@ -543,10 +525,9 @@ class TrackPadSession:
             profile=profile,
         )
 
-    def orbit(self, request: OrbitRequest) -> OrbitResult:
+    def _orbit(self, request: OrbitRequest, occurrences: list[str], partial: bool) -> OrbitResult:
         options = request.options
-        require(TrackPadEngine().capabilities(), self.lattice, self.branch, options, Computation.ORBIT)
-        model, occurrences, exits, _, partial = self._part(options, request.start, request.end)
+        model, occurrences, exits, _, partial = self._part(options, occurrences, partial)
         if self.layout.periodic and not partial:
             six = Effect.LONGITUDINAL in options.effects
             start = self.jl.closed_orbit(model, self.beam, request.delta, six)
@@ -570,23 +551,8 @@ class TrackPadSession:
             delta=tuple(self._delta(float(orbit[5][i])) for i in exits),
         )
 
-    def track(self, request: TrackRequest) -> TrackResult:
+    def _track(self, request: TrackRequest) -> TrackResult:
         options = request.options
-        if request.turns > 1 and not self.layout.periodic:
-            raise UnsupportedRequest(NAME, ["a line is passed once; turns > 1 needs a ring"])
-        time_scale = (
-            TimeScale.TURNS
-            if request.turns > 1
-            else (TimeScale.EQUILIBRIUM if self.layout.periodic else TimeScale.SINGLE_PASS)
-        )
-        require(
-            TrackPadEngine().capabilities(),
-            self.lattice,
-            self.branch,
-            options,
-            Computation.TRACKING,
-            time_scale,
-        )
         index = dict(zip(self._occurrence_ids, self._exits, strict=True))
         cuts = sorted({index[o] for o in request.observe})
         coords = np.array([self._to_trackpad(*p) for p in request.particles], dtype=float)
@@ -620,39 +586,20 @@ class TrackPadSession:
             lost=tuple(bool(flag) for flag in np.asarray(lost)),
         )
 
-    def track_beam(
+    def _track_beam(
         self,
-        coordinates,
+        coordinates: np.ndarray,
         turns: int,
-        observe,
+        observe: list[str],
         options: Options,
-        start: str | None = None,
-        end: str | None = None,
-        ramps: Sequence[Ramp] = (),
+        occurrences: list[str],
+        once: bool,
+        ramps: tuple[Ramp, ...],
     ) -> BeamTrack:
-        """Track a bunch for ``turns`` turns of the ring, or once through a line or part of a branch.
-
-        Julia averages it at every observation point, every turn, and with ``ramps`` rebuilds the
-        elements whose settings move before each turn they change.
-        """
-        partial = start is not None or end is not None or not self.layout.periodic
-        if partial and turns != 1:
-            raise UnsupportedRequest(NAME, ["a line, or part of a branch, is passed once: turns = 1"])
-        if partial and ramps:
-            raise UnsupportedRequest(NAME, ["settings ramp while a ring turns, not in one pass"])
-        time_scale = TimeScale.SINGLE_PASS if partial else TimeScale.TURNS
-        require(
-            TrackPadEngine().capabilities(),
-            self.lattice,
-            self.branch,
-            options,
-            Computation.TRACKING,
-            time_scale,
-        )
-        model, occurrences, exits, _, _ = self._part(options, start, end)
-        if missing := [o for o in observe if o not in occurrences]:
-            raise UnsupportedRequest(NAME, [f"observation points outside the part tracked: {missing[:3]}"])
-        coordinates = np.asarray(coordinates, dtype=float).reshape(-1, 6)
+        """Julia averages the bunch at every observation point, every turn, and with ``ramps`` rebuilds
+        the elements whose settings move before each turn they change."""
+        part = len(occurrences) < len(self._occurrence_ids)
+        model, occurrences, exits, _, _ = self._part(options, occurrences, part)
         index = dict(zip(occurrences, exits, strict=True))
         cuts = sorted({index[o] for o in observe})
         initial = coordinates.copy()

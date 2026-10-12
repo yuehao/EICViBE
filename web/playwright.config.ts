@@ -11,6 +11,12 @@ export default defineConfig({
   timeout: 30_000,
   fullyParallel: true,
   reporter: [["list"]],
+  projects: [
+    { name: "viewer", testMatch: /viewer\.spec\.ts/ },
+    // The virtual accelerator's tests make machines, and the viewer shows a running one by default: they go
+    // after the viewer's, whose Orbit and Check tests read the demo's own runs.
+    { name: "va", testMatch: /(admin|operate)\.spec\.ts/, dependencies: ["viewer"] },
+  ],
   use: {
     baseURL: `http://127.0.0.1:${port}/`,
     channel: process.env.PW_CHANNEL ?? "chrome",

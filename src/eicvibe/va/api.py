@@ -76,6 +76,7 @@ class Me(BaseModel):
     name: str
     role: str = Field(description="viewer, physicist, operator or admin")
     logged_in: bool
+    agent: bool = Field(False, description="Calling with an agent's token")
 
 
 class Login(BaseModel):
@@ -269,6 +270,11 @@ class PasswordChange(BaseModel):
 
 class TokenRequest(BaseModel):
     label: str = Field(min_length=1, max_length=80)
+    kind: Literal["api", "agent"] = Field(
+        "api",
+        description="api: a notebook's, with its user's rights; agent: a model's harness, which on shared "
+        "machines only proposes (a person applies)",
+    )
 
 
 class TokenIssued(BaseModel):
@@ -279,6 +285,87 @@ class TokenIssued(BaseModel):
 class TokenEntry(BaseModel):
     label: str
     created: str
+    kind: str = "api"
+
+
+class ProposalRequest(BaseModel):
+    """An operation to compute on a machine as it is set (ADR 0010); nothing is written."""
+
+    operation: Literal["orbit_correction", "local_bump", "tune_move"]
+    plane: Literal["x", "y"] = "x"
+    source: Literal["measured", "model"] = Field(
+        "measured", description="Orbit correction: the BPMs' latest slow orbit, or the model's own"
+    )
+    method: Literal["svd", "micado"] = "svd"
+    damping: float = Field(0.01, gt=0, description="SVD: Tikhonov damping, of the largest singular value")
+    count: int = Field(3, ge=1, le=50, description="MICADO: correctors to use")
+    at: str | None = Field(None, description="Bump: a BPM's name (or an element's)")
+    amplitude_mm: float | None = Field(None, description="Bump: the offset there, mm")
+    angle_mrad: float | None = Field(None, description="Bump: the angle there, mrad (four correctors)")
+    dqx: float = Field(0.0, description="Tune move: the change of the horizontal tune")
+    dqy: float = Field(0.0, description="Tune move: the change of the vertical tune")
+    correctors: list[str] | None = Field(None, description="Only these corrector channels")
+    quadrupoles: list[str] | None = Field(None, description="Tune move: only these quadrupole channels")
+    reason: str = ""
+
+
+class ProposalChange(BaseModel):
+    channel: str
+    device: str
+    unit: str
+    before: float
+    after: float
+    limits: list[float] | None = None
+
+
+class ProposalCheck(BaseModel):
+    name: str
+    ok: bool
+    value: float | None = None
+    limit: float | None = None
+    note: str = ""
+
+
+class ProposalBody(BaseModel):
+    operation: str
+    machine: str
+    summary: str
+    changes: list[ProposalChange]
+    predicted: dict[str, Any]
+    checks: list[ProposalCheck]
+    method: str
+    parameters: dict[str, Any]
+    engine: str
+    references: list[str]
+    context: dict[str, Any] = Field(default_factory=dict, description="What was measured when proposed")
+
+
+class ProposalEntry(BaseModel):
+    id: str
+    machine: str
+    created: str
+    user: str
+    agent: bool = Field(description="Proposed through an agent's token")
+    operation: str
+    request: dict[str, Any]
+    proposal: ProposalBody
+    state: str = Field(description="proposed, applied, verified, discarded or stale")
+    turn: int | None
+    decided: str | None
+    decided_by: str | None
+    applied_turn: int | None
+    correlation: str | None
+    verification: dict[str, Any] | None
+
+
+class TuneReading(BaseModel):
+    """A ring's tune monitor: fractional tunes folded into 0 to 0.5, as one pickup sees them."""
+
+    x: float
+    y: float
+    turn: int
+    turns: int = Field(description="Turns the spectrum took")
+    settled: bool = Field(description="No setting ramped during those turns")
 
 
 def va_router(get: Callable[[], VirtualAccelerator | None]) -> APIRouter:
@@ -328,6 +415,8 @@ def va_router(get: Callable[[], VirtualAccelerator | None]) -> APIRouter:
 
     def admin(me: User) -> None:
         needs(me, Role.ADMIN)
+        if me.agent:
+            raise HTTPException(403, "an agent's token cannot administer; a person does")
 
     # -- who --------------------------------------------------------------------------------
 
@@ -339,7 +428,7 @@ def va_router(get: Callable[[], VirtualAccelerator | None]) -> APIRouter:
     @router.get("/me", response_model=Me)
     def whoami(me: Caller) -> Me:
         service()
-        return Me(name=me.name, role=me.role.label, logged_in=me is not ANONYMOUS)
+        return Me(name=me.name, role=me.role.label, logged_in=me is not ANONYMOUS, agent=me.agent)
 
     @router.post("/login", response_model=Me)
     def login(body: Login, response: Response) -> Me:
@@ -386,8 +475,10 @@ def va_router(get: Callable[[], VirtualAccelerator | None]) -> APIRouter:
         va = service()
         if me is ANONYMOUS:
             raise HTTPException(401, "log in first")
-        token = va.store.issue_token(me.name, "api", body.label)
-        va.store.act(me.name, "issue token", label=body.label)
+        if me.agent:
+            raise HTTPException(403, "an agent's token cannot make tokens")
+        token = va.store.issue_token(me.name, body.kind, body.label)
+        va.store.act(me.name, "issue token", label=body.label, kind=body.kind)
         return TokenIssued(token=token, label=body.label)
 
     # -- machines -------------------------------------------------------------------------------
@@ -457,6 +548,51 @@ def va_router(get: Callable[[], VirtualAccelerator | None]) -> APIRouter:
         va = service()
         changes = {c.channel: c.value for c in body.changes}
         return WriteResult(**call(lambda: va.write(me, machine, changes, body.reason, atomic=body.atomic)))
+
+    @router.get("/machines/{machine}/tunes", response_model=TuneReading)
+    def tunes(machine: str) -> TuneReading:
+        """The ring's tune monitor now."""
+        reading = call(lambda: service().tunes(machine))
+        if reading is None:
+            raise HTTPException(
+                404, f"{machine} has no tune reading yet: a running ring has one after 1024 turns"
+            )
+        return TuneReading(**reading)
+
+    @router.post("/machines/{machine}/proposals", response_model=ProposalEntry, status_code=201)
+    def propose(me: Caller, machine: str, body: ProposalRequest) -> ProposalEntry:
+        """Compute an operation (orbit correction, a closed bump, a tune move) on the machine as it is set
+        and as its BPMs read; nothing is written. A large ring's first orbit correction takes a while
+        (its response matrix)."""
+        va = service()
+        return ProposalEntry(**call(lambda: va.propose(me, machine, body.model_dump())))
+
+    @router.get("/machines/{machine}/proposals", response_model=list[ProposalEntry])
+    def proposals(machine: str) -> list[ProposalEntry]:
+        va = service()
+        return [ProposalEntry(**p) for p in call(lambda: va.proposals(machine))]
+
+    @router.get("/proposals/{proposal}", response_model=ProposalEntry)
+    def proposal(proposal: str) -> ProposalEntry:
+        va = service()
+        return ProposalEntry(**call(lambda: va.proposal(proposal)))
+
+    @router.post("/proposals/{proposal}/apply", response_model=ProposalEntry)
+    def apply(me: Caller, proposal: str, body: Reason | None = None) -> ProposalEntry:
+        """Write a proposal's changes: on a shared machine by a person (an agent's token cannot)."""
+        va = service()
+        return ProposalEntry(**call(lambda: va.apply(me, proposal, (body or Reason()).reason)))
+
+    @router.post("/proposals/{proposal}/verify", response_model=ProposalEntry)
+    def verify(me: Caller, proposal: str) -> ProposalEntry:
+        """What the BPMs or the tune monitor show since it was applied, against the prediction."""
+        va = service()
+        return ProposalEntry(**call(lambda: va.verify(me, proposal)))
+
+    @router.post("/proposals/{proposal}/discard", response_model=ProposalEntry)
+    def discard(me: Caller, proposal: str, body: Reason | None = None) -> ProposalEntry:
+        va = service()
+        return ProposalEntry(**call(lambda: va.discard(me, proposal, (body or Reason()).reason)))
 
     @router.post("/machines/{machine}/reset", response_model=WriteResult)
     def reset(me: Caller, machine: str, body: ResetRequest) -> WriteResult:

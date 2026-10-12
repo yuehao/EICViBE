@@ -41,7 +41,7 @@ test("a selection is linked across views and survives a reload of its URL", asyn
   await expect(inspector.getByText("QD_3", { exact: true })).toBeVisible(); // and its lattice name
   await expect(inspector.getByText("dr-")).not.toHaveCount(0); // device names from the registry
   await expect(inspector.getByText("string QD")).toBeVisible(); // a quadrupole family on one supply
-  await expect(inspector.getByText(/magnets in series/)).toBeVisible();
+  await expect(inspector.getByText(/^· \d+ magnets in series$/)).toBeVisible(); // the supply's circuit, under Devices
   await expect(inspector.getByText(/field = 0\.1 T\/m\/A × I/)).toBeVisible(); // its transfer function
   await expect(page).toHaveURL(/sel=occ_/);
   const url = page.url();

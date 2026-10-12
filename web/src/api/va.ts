@@ -24,6 +24,9 @@ export type TokenEntry = Schemas["TokenEntry"];
 export type AiSettings = Schemas["AiSettings"];
 export type AiChange = Schemas["AiChange"];
 export type AiTest = Schemas["AiTest"];
+export type ProposalRequest = Schemas["ProposalRequest"];
+export type ProposalEntry = Schemas["ProposalEntry"];
+export type TuneReading = Schemas["TuneReading"];
 
 const BASE = "/api/v1/va";
 
@@ -67,7 +70,7 @@ export const va = {
   logout: () => call<void>("POST", "/logout"),
   changePassword: (old: string, next: string) => call<void>("POST", "/me/password", { old, new: next }),
   tokens: () => call<TokenEntry[]>("GET", "/me/tokens"),
-  newToken: (label: string) => call<TokenIssued>("POST", "/me/tokens", { label }),
+  newToken: (label: string, kind: "api" | "agent" = "api") => call<TokenIssued>("POST", "/me/tokens", { label, kind }),
 
   options: () => call<VaOptions>("GET", "/options"),
   machines: () => call<MachineEntry[]>("GET", "/machines"),
@@ -91,6 +94,15 @@ export const va = {
   snapshot: (id: string, name: string) => call<SnapshotEntry>("POST", `/machines/${enc(id)}/snapshots`, { name }),
   restore: (id: string, snapshot: number, reason = "") =>
     call<WriteResult>("POST", `/machines/${enc(id)}/snapshots/${snapshot}/restore`, { reason }),
+
+  /** Operations (ADR 0010): proposals computed on a machine as set, applied by a person, verified. */
+  propose: (id: string, request: Partial<ProposalRequest> & Pick<ProposalRequest, "operation">) =>
+    call<ProposalEntry>("POST", `/machines/${enc(id)}/proposals`, request),
+  proposals: (id: string) => call<ProposalEntry[]>("GET", `/machines/${enc(id)}/proposals`),
+  apply: (proposal: string, reason = "") => call<ProposalEntry>("POST", `/proposals/${enc(proposal)}/apply`, { reason }),
+  verify: (proposal: string) => call<ProposalEntry>("POST", `/proposals/${enc(proposal)}/verify`),
+  discard: (proposal: string, reason = "") => call<ProposalEntry>("POST", `/proposals/${enc(proposal)}/discard`, { reason }),
+  tunes: (id: string) => call<TuneReading>("GET", `/machines/${enc(id)}/tunes`),
 
   log: (filters: { machine?: string; user?: string; correlation?: string; before?: number; limit?: number }) =>
     call<LogEntry[]>("GET", "/log", undefined, filters),

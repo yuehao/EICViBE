@@ -75,7 +75,12 @@ def corrector(client, machine) -> dict:
 def test_anyone_reads_but_changing_needs_a_login_and_a_role(server, people, ring):
     client, *_ = server
     assert client.get("/api/v1/va/status").json()["enabled"]
-    assert client.get("/api/v1/va/me").json() == {"name": "anonymous", "role": "viewer", "logged_in": False}
+    assert client.get("/api/v1/va/me").json() == {
+        "name": "anonymous",
+        "role": "viewer",
+        "logged_in": False,
+        "agent": False,
+    }
     assert client.post("/api/v1/va/login", json={"name": "ann", "password": "nope"}).status_code == 401
     assert client.get("/api/v1/va/machines").json()[0]["id"] == "main-ring"
     assert (

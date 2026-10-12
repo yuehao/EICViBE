@@ -8,6 +8,7 @@ importing this package needs neither Xsuite nor Julia.
 
 from importlib import import_module
 
+from .adapter import EngineAdapter, EngineSession
 from .contracts import (
     Capabilities,
     Computation,
@@ -52,9 +53,12 @@ def engine(name: str) -> Engine:
         raise KeyError(f"no engine {name!r}; there are {', '.join(ENGINES)}")
     module, _, cls = ENGINES[name].partition(":")
     try:
-        return getattr(import_module(module), cls)()
+        adapter = getattr(import_module(module), cls)()
     except ImportError as error:
         raise EngineUnavailable(f"engine {name} cannot load: {error}") from None
+    if not isinstance(adapter, EngineAdapter):  # what every engine is (ADR 0006): its checks are shared
+        raise TypeError(f"engine {name}: {type(adapter).__name__} is not an EngineAdapter")
+    return adapter
 
 
 def select(
@@ -77,6 +81,8 @@ def select(
 
 __all__ = [
     "ENGINES",
+    "EngineAdapter",
+    "EngineSession",
     "Capabilities",
     "Computation",
     "Effect",

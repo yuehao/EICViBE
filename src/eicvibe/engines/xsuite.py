@@ -25,12 +25,12 @@ from typing import Any
 
 from eicvibe.domain.lattice import ElementKind, Lattice, PlacedElement
 
+from .adapter import Changes, EngineAdapter, EngineSession
 from .contracts import (
     BeamTrack,
     Capabilities,
     Computation,
     Effect,
-    EngineUnavailable,
     Fidelity,
     OpticsRequest,
     OpticsResult,
@@ -60,7 +60,7 @@ from .convert import (
     rf_frequency,
     rf_phase,
 )
-from .model import SETTINGS, Values, effective, require, span
+from .model import SETTINGS, Values, effective
 
 try:
     import numpy as np
@@ -97,8 +97,9 @@ def _version() -> str | None:
         return None
 
 
-class XsuiteEngine:
+class XsuiteEngine(EngineAdapter):
     name = NAME
+    unavailable = "Xsuite is not installed: pip install 'eicvibe[xsuite]'"
 
     def available(self) -> bool:
         return xt is not None
@@ -134,34 +135,27 @@ class XsuiteEngine:
             },
         )
 
-    def open(
-        self, lattice: Lattice, branch: str, options: Options | None = None, values: Values | None = None
+    def _open(
+        self, capabilities: Capabilities, lattice: Lattice, branch: str, options: Options, values: Values
     ) -> XsuiteSession:
-        if xt is None:
-            raise EngineUnavailable("Xsuite is not installed: pip install 'eicvibe[xsuite]'")
-        options = options or Options()
-        require(self.capabilities(), lattice, branch, options)
-        return XsuiteSession(lattice, branch, options, values or {})
+        return XsuiteSession(capabilities, lattice, branch, options, values)
 
 
-class XsuiteSession:
+class XsuiteSession(EngineSession):
     """One branch as an Xsuite line; settings change it in place."""
 
     engine = NAME
 
-    def __init__(self, lattice: Lattice, branch: str, options: Options, values: Values) -> None:
-        self.lattice = lattice
-        self.layout = lattice.layout(branch)
-        self.branch = self.layout.id
-        self.options = options
-        self.values: dict[tuple[str, str], float] = dict(values)
+    def __init__(
+        self, capabilities: Capabilities, lattice: Lattice, branch: str, options: Options, values: Values
+    ) -> None:
+        super().__init__(capabilities, lattice, branch, options, values)
         self._particle = reference(NAME, lattice, self.branch)
         self._revolution = (
             self._particle["beta0"] * C_LIGHT / self.layout.length if self.layout.length else 0.0
         )
         self._exit: dict[str, str] = {}
         self._pieces: dict[str, list[str]] = {}
-        self._occurrence_ids = [p.id for p in self.layout.placements]
         self.line = self._line(options)
 
     def _line(self, options: Options, monitors: dict[str, Any] | None = None):
@@ -186,17 +180,10 @@ class XsuiteSession:
 
     # -- settings ----------------------------------------------------------------
 
-    def update(self, values: Values) -> None:
+    def _update(self, changes: Changes) -> None:
         """Change parameter values in place; a parameter that would change the line's structure is refused."""
-        changed = defaultdict(dict)
-        for (occurrence, path), value in values.items():
-            if path not in SETTINGS:
-                raise UnsupportedRequest(NAME, [f"{path} cannot change in place; open a new session"])
-            changed[occurrence][path] = value
-        for occurrence, paths in changed.items():
+        for occurrence, paths in changes.items():
             placed = self.lattice.placement(occurrence)
-            if placed.branch_id != self.branch:
-                raise UnsupportedRequest(NAME, [f"occurrence {occurrence} is not in this branch"])
             self.values.update({(occurrence, p): v for p, v in paths.items()})
             pieces = _pieces(placed, effective(placed, self.values), self._revolution)
             if [n for n, _ in pieces] != self._pieces[occurrence]:
@@ -210,16 +197,10 @@ class XsuiteSession:
 
     def _set(self, line, values: Values, longitudinal: bool = True) -> None:
         """Set the elements of ``line`` (a tracking call's) to ``values`` on top of the session's."""
-        changed = defaultdict(dict)
-        for (occurrence, path), value in values.items():
-            if path not in SETTINGS:
-                raise UnsupportedRequest(NAME, [f"{path} cannot change in place; open a new session"])
-            changed[occurrence][path] = value
+        changes = self.checked(values)
         merged = dict(self.values) | dict(values)
-        for occurrence in changed:
+        for occurrence in changes:
             placed = self.lattice.placement(occurrence)
-            if placed.branch_id != self.branch:
-                raise UnsupportedRequest(NAME, [f"occurrence {occurrence} is not in this branch"])
             if placed.kind is ElementKind.RFCAVITY and not longitudinal:
                 continue  # its voltage stays 0: the RF does not act
             pieces = _pieces(placed, effective(placed, merged), self._revolution)
@@ -240,15 +221,11 @@ class XsuiteSession:
         """
         owner = {key: r for r, ramp in enumerate(ramps) for key in ramp.start}  # the last ramp wins
         by_occurrence = defaultdict(list)
-        for key in owner:
-            if key[1] not in SETTINGS:
-                raise UnsupportedRequest(NAME, [f"{key[1]} cannot change in place; open a new session"])
+        for key in owner:  # checked already (EngineSession.checked_ramps)
             by_occurrence[key[0]].append(key)
         fields, rebuilt = [], set()
         for occurrence, keys in by_occurrence.items():
             placed = self.lattice.placement(occurrence)
-            if placed.branch_id != self.branch:
-                raise UnsupportedRequest(NAME, [f"occurrence {occurrence} is not in this branch"])
             if placed.kind is ElementKind.RFCAVITY and not longitudinal:
                 continue  # its voltage stays 0: the RF does not act
 
@@ -286,18 +263,13 @@ class XsuiteSession:
     def _method(self, options: Options) -> str:
         return "6d" if Effect.LONGITUDINAL in options.effects else "4d"
 
-    def optics(self, request: OpticsRequest) -> OpticsResult:
+    def _optics(self, request: OpticsRequest, occurrences: list[str], partial: bool) -> OpticsResult:
         options = request.options
-        require(XsuiteEngine().capabilities(), self.lattice, self.branch, options, Computation.OPTICS)
         _radiation(self.line, options)
         method = self._method(options)
-        partial = request.start is not None or request.end is not None
-        occurrences = span(self._occurrence_ids, request.start, request.end, NAME)
         if self.layout.periodic and not partial:
             table = self.line.twiss(method=method)
         else:
-            if request.initial is None:
-                raise UnsupportedRequest(NAME, ["a line's optics need initial conditions"])
             first = self._pieces[occurrences[0]][0]
             init = _twiss_init(self.line, request.initial, first)
             table = self.line.twiss(start=first, end=self._exit[occurrences[-1]], init=init, method=method)
@@ -356,14 +328,11 @@ class XsuiteSession:
             method="tracking with finite differences",
         )
 
-    def orbit(self, request: OrbitRequest) -> OrbitResult:
+    def _orbit(self, request: OrbitRequest, occurrences: list[str], partial: bool) -> OrbitResult:
         options = request.options
-        require(XsuiteEngine().capabilities(), self.lattice, self.branch, options, Computation.ORBIT)
         _radiation(self.line, options)
         longitudinal = Effect.LONGITUDINAL in options.effects
         names = ("x", "px", "y", "py", "zeta", "delta")
-        partial = request.start is not None or request.end is not None
-        occurrences = span(self._occurrence_ids, request.start, request.end, NAME)
         if self.layout.periodic and not longitudinal and not partial:
             # The closed orbit at fixed momentum with the RF frozen: the 4D Twiss's.
             table = self.line.twiss(method="4d", delta0=request.delta)
@@ -407,23 +376,8 @@ class XsuiteSession:
             **columns,
         )
 
-    def track(self, request: TrackRequest) -> TrackResult:
+    def _track(self, request: TrackRequest) -> TrackResult:
         options = request.options
-        time_scale = (
-            TimeScale.TURNS
-            if request.turns > 1
-            else (TimeScale.EQUILIBRIUM if self.layout.periodic else TimeScale.SINGLE_PASS)
-        )
-        require(
-            XsuiteEngine().capabilities(),
-            self.lattice,
-            self.branch,
-            options,
-            Computation.TRACKING,
-            time_scale,
-        )
-        if request.turns > 1 and not self.layout.periodic:
-            raise UnsupportedRequest(NAME, ["a line is passed once; turns > 1 needs a ring"])
         n = len(request.particles)
         monitors = {
             occurrence: xt.ParticlesMonitor(start_at_turn=0, stop_at_turn=request.turns, num_particles=n)
@@ -465,39 +419,18 @@ class XsuiteSession:
             lost=tuple(bool(particles.state[i] <= 0) for i in order),
         )
 
-    def track_beam(
+    def _track_beam(
         self,
-        coordinates,
+        coordinates: np.ndarray,
         turns: int,
-        observe,
+        observe: list[str],
         options: Options,
-        start: str | None = None,
-        end: str | None = None,
-        ramps: Sequence[Ramp] = (),
+        occurrences: list[str],
+        once: bool,
+        ramps: tuple[Ramp, ...],
     ) -> BeamTrack:
-        """Track a bunch for ``turns`` turns of the ring, or once through a line or part of a branch.
-
-        Xsuite's beam monitors average it at every observation point, every turn. With ``ramps`` the
-        line is tracked a turn at a time while settings move, its elements set before each turn.
-        """
-        partial = start is not None or end is not None or not self.layout.periodic
-        if partial and turns != 1:
-            raise UnsupportedRequest(NAME, ["a line, or part of a branch, is passed once: turns = 1"])
-        if partial and ramps:
-            raise UnsupportedRequest(NAME, ["settings ramp while a ring turns, not in one pass"])
-        occurrences = span(self._occurrence_ids, start, end, NAME)
-        if missing := [o for o in observe if o not in occurrences]:
-            raise UnsupportedRequest(NAME, [f"observation points outside the part tracked: {missing[:3]}"])
-        time_scale = TimeScale.SINGLE_PASS if partial else TimeScale.TURNS
-        require(
-            XsuiteEngine().capabilities(),
-            self.lattice,
-            self.branch,
-            options,
-            Computation.TRACKING,
-            time_scale,
-        )
-        coordinates = np.asarray(coordinates, dtype=float).reshape(-1, 6)
+        """Xsuite's beam monitors average the bunch at every observation point, every turn. With ``ramps``
+        the line is tracked a turn at a time while settings move, its elements set before each turn."""
         n = len(coordinates)
         monitors = {
             occurrence: xt.BeamStatsMonitor(
@@ -516,7 +449,7 @@ class XsuiteSession:
                     element.voltage = 0.0
         c = coordinates.T
         particles = line.build_particles(x=c[0], px=c[1], y=c[2], py=c[3], zeta=c[4], delta=c[5])
-        if partial:
+        if once:
             positions = {name: i for i, name in enumerate(line.element_names)}
             last = self._exit[occurrences[-1]]
             after = f"{occurrences[-1]}.monitor" if f"{occurrences[-1]}.monitor" in positions else last

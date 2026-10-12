@@ -96,7 +96,7 @@ function LoginDialog({ why, onDone, onCancel }: { why: string; onDone(me: Me): v
     va.login(name, password).then(onDone, (err: Error) => setError(err.message));
   };
   return (
-    <div className="dialog-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onCancel()}>
+    <div className="dialog-backdrop login-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onCancel()}>
       <form className="dialog" role="dialog" aria-label="Log in" onSubmit={submit} onKeyDown={(e) => e.key === "Escape" && onCancel()}>
         <h3>Log in</h3>
         <p className="muted">{why} Changes to the machine are logged with who made them.</p>
@@ -126,6 +126,7 @@ export function AccountMenu({ auth }: { auth: Auth }) {
   const [open, setOpen] = useState(false);
   const [token, setToken] = useState<string | null>(null);
   const [label, setLabel] = useState("");
+  const [kind, setKind] = useState<"api" | "agent">("api");
   const [old, setOld] = useState("");
   const [next, setNext] = useState("");
   const [message, setMessage] = useState<string | null>(null);
@@ -141,24 +142,37 @@ export function AccountMenu({ auth }: { auth: Auth }) {
           <p>
             <strong>{me.name}</strong> <span className="muted">{me.role}</span>
           </p>
-          <h3>Token for a notebook</h3>
+          <h3>Token for a notebook or an agent</h3>
           <form
             className="admin-row"
             onSubmit={(e) => {
               e.preventDefault();
-              va.newToken(label).then((t) => {
+              va.newToken(label, kind).then((t) => {
                 setToken(t.token);
                 setLabel("");
               }, (err: Error) => setMessage(err.message));
             }}
           >
             <input placeholder="what for" aria-label="Token label" value={label} onChange={(e) => setLabel(e.target.value)} />
+            <select
+              aria-label="Token kind"
+              value={kind}
+              onChange={(e) => setKind(e.target.value as "api" | "agent")}
+              title="A notebook's token has your rights; an agent's (a model's harness) only proposes on shared machines, and a person applies"
+            >
+              <option value="api">notebook</option>
+              <option value="agent">agent</option>
+            </select>
             <button type="submit" disabled={!label}>
               Make
             </button>
           </form>
           {token ? (
-            <pre className="token">{`from eicvibe.va.client import Client\nva = Client("${window.location.origin}", token="${token}")`}</pre>
+            kind === "agent" ? (
+              <pre className="token">{`Authorization: Bearer ${token}\n(an agent's token: it proposes on shared machines; a person applies)`}</pre>
+            ) : (
+              <pre className="token">{`from eicvibe.va.client import Client\nva = Client("${window.location.origin}", token="${token}")`}</pre>
+            )
           ) : null}
           <h3>Password</h3>
           <form

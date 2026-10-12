@@ -1133,6 +1133,11 @@ button.danger {
   background: rgba(0, 0, 0, 0.35);
 }
 
+/* A login asked for by another window (a power supply's) comes above it. */
+.login-backdrop {
+  z-index: 60;
+}
+
 .dialog {
   display: flex;
   flex-direction: column;
@@ -1413,4 +1418,114 @@ button.danger {
 
 .ai-note {
   max-width: 52em;
+}
+
+/* The Operate tab (ADR 0010): proposals a person applies. */
+.operate-body {
+  overflow: auto;
+}
+.operate-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  padding: 6px 0;
+}
+.operate-form input[type="number"] {
+  width: 5.5em;
+}
+.proposals {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.proposal {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  margin: 6px 0;
+  background: var(--panel);
+}
+.proposal.state-discarded,
+.proposal.state-stale {
+  opacity: 0.6;
+}
+.proposal-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.proposal-head .spacer {
+  flex: 1;
+}
+.proposal-summary {
+  font-weight: 500;
+}
+.proposal-state {
+  font-size: 0.85em;
+  padding: 1px 6px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+.proposal-state.bad,
+.proposal-checks .bad,
+.verified.bad {
+  color: var(--danger);
+}
+.proposal-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  font-size: 0.9em;
+}
+.proposal-checks .ok,
+.verified.ok {
+  color: var(--ok, #2e7d32);
+}
+.proposal-detail {
+  margin-top: 6px;
+}
+.proposal-changes {
+  border-collapse: collapse;
+  font-size: 0.9em;
+  margin: 6px 0;
+}
+.proposal-changes th,
+.proposal-changes td {
+  padding: 2px 8px;
+  border-bottom: 1px solid var(--border);
+  text-align: right;
+}
+.proposal-changes th:nth-child(-n + 2),
+.proposal-changes td:nth-child(-n + 2) {
+  text-align: left;
+}
+button.link {
+  background: none;
+  border: none;
+  padding: 0 2px;
+  cursor: pointer;
+  color: inherit;
+}
+
+/* A setting shared by several magnets: changed in its power supply's window, not an element's. */
+.setpoint-shared {
+  margin-top: 2px;
+  font-size: 0.9em;
+}
+.supply-window {
+  max-width: 560px;
+}
+.supply-magnets {
+  max-height: 120px;
+  overflow: auto;
+  font-size: 0.85em;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  margin-bottom: 8px;
 }

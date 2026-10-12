@@ -14,7 +14,7 @@ import secrets
 import sqlite3
 import threading
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from enum import IntEnum
 from pathlib import Path
@@ -49,6 +49,13 @@ CREATE TABLE IF NOT EXISTS actions (
     id INTEGER PRIMARY KEY AUTOINCREMENT, time TEXT NOT NULL, user TEXT NOT NULL, machine TEXT,
     action TEXT NOT NULL, detail TEXT NOT NULL, reason TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS proposals (
+    id TEXT PRIMARY KEY, machine TEXT NOT NULL, created TEXT NOT NULL, user TEXT NOT NULL,
+    agent INTEGER NOT NULL, operation TEXT NOT NULL, request TEXT NOT NULL, proposal TEXT NOT NULL,
+    state TEXT NOT NULL, turn INTEGER, decided TEXT, decided_by TEXT, applied_turn INTEGER,
+    correlation TEXT, verification TEXT
+);
+CREATE INDEX IF NOT EXISTS proposals_by_machine ON proposals (machine, created);
 CREATE INDEX IF NOT EXISTS writes_by_machine ON writes (machine, id);
 CREATE INDEX IF NOT EXISTS writes_by_correlation ON writes (correlation);
 CREATE TRIGGER IF NOT EXISTS writes_no_update BEFORE UPDATE ON writes
@@ -93,6 +100,8 @@ class Role(IntEnum):
 class User:
     name: str
     role: Role
+    agent: bool = False
+    """Calling with an agent's token: it may propose on shared machines, and act only in its sandboxes."""
 
     def can(self, role: Role) -> bool:
         return self.role >= role
@@ -200,7 +209,8 @@ class Store:
         return None
 
     def issue_token(self, user: str, kind: str, label: str = "", hours: float | None = None) -> str:
-        """A new token: ``session`` (a browser's login) or ``api`` (a notebook's, until revoked)."""
+        """A new token: ``session`` (a browser's login), ``api`` (a notebook's, until revoked) or
+        ``agent`` (a model's harness: its user's rights, but on shared machines it only proposes)."""
         token = secrets.token_urlsafe(32)
         expires = (datetime.now(UTC) + timedelta(hours=hours)).isoformat() if hours else None
         self._run(
@@ -216,16 +226,17 @@ class Store:
         if rows[0]["expires"] and datetime.fromisoformat(rows[0]["expires"]) < datetime.now(UTC):
             self.revoke_token(token)
             return None
-        return self.user(rows[0]["user"])
+        found = self.user(rows[0]["user"])
+        return replace(found, agent=True) if found and rows[0]["kind"] == "agent" else found
 
     def revoke_token(self, token: str) -> None:
         self._run("DELETE FROM tokens WHERE hash = ?", (_token_hash(token),))
 
     def tokens(self, user: str) -> list[dict[str, Any]]:
         return [
-            {"label": r["label"], "created": r["created"]}
+            {"label": r["label"], "created": r["created"], "kind": r["kind"]}
             for r in self._rows(
-                "SELECT * FROM tokens WHERE user = ? AND kind = 'api' ORDER BY created", (user,)
+                "SELECT * FROM tokens WHERE user = ? AND kind IN ('api', 'agent') ORDER BY created", (user,)
             )
         ]
 
@@ -360,6 +371,39 @@ class Store:
 
     # -- the logs ------------------------------------------------------------------------
 
+    # -- proposals ------------------------------------------------------------------------------
+
+    def add_proposal(
+        self, ident: str, machine: str, user: User, operation: str, request: Mapping[str, Any],
+        proposal: Mapping[str, Any], turn: int | None,
+    ) -> None:  # fmt: skip
+        self._run(
+            "INSERT INTO proposals (id, machine, created, user, agent, operation, request, proposal, state,"
+            " turn) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'proposed', ?)",
+            (ident, machine, now(), user.name, int(user.agent), operation, json.dumps(request),
+             json.dumps(proposal), turn),
+        )  # fmt: skip
+
+    def update_proposal(self, ident: str, **fields: Any) -> None:
+        names = ("state", "decided", "decided_by", "applied_turn", "correlation", "verification")
+        sets = [(k, json.dumps(v) if k == "verification" else v) for k, v in fields.items() if k in names]
+        self._run(
+            f"UPDATE proposals SET {', '.join(f'{k} = ?' for k, _ in sets)} WHERE id = ?",
+            [v for _, v in sets] + [ident],
+        )
+
+    def proposal(self, ident: str) -> dict[str, Any]:
+        rows = self._rows("SELECT * FROM proposals WHERE id = ?", (ident,))
+        if not rows:
+            raise KeyError(f"no proposal {ident}")
+        return _proposal_row(rows[0])
+
+    def proposals(self, machine: str, limit: int = 50) -> list[dict[str, Any]]:
+        rows = self._rows(
+            "SELECT * FROM proposals WHERE machine = ? ORDER BY created DESC LIMIT ?", (machine, limit)
+        )
+        return [_proposal_row(r) for r in rows]
+
     def act(
         self, user: str, action: str, machine: str | None = None, reason: str = "", **detail: Any
     ) -> None:
@@ -413,3 +457,11 @@ class Store:
                 where.append(f"{key} = ?")
                 args.append(value)
         return where, args
+
+
+def _proposal_row(row: sqlite3.Row) -> dict[str, Any]:
+    out = dict(row)
+    out["agent"] = bool(out["agent"])
+    for key in ("request", "proposal", "verification"):
+        out[key] = json.loads(out[key]) if out[key] else None
+    return out

@@ -169,3 +169,43 @@ test("an administrator chooses the AI's model: local by default, or a provider w
   await section.getByRole("button", { name: "Save" }).click();
   await expect(page.getByTestId("ai-now")).toContainText("no model server at http://127.0.0.1:9");
 });
+
+test("a magnet on a string shows its supply's setting, which only the supply's own window changes", async ({ page, request }) => {
+  await asAdmin(request);
+  const made = await request.post("/api/v1/va/machines", {
+    data: { name: "String ring", kind: "ring", target: "ring", engine: "xsuite", fidelity: "fast", particles: 8 },
+  });
+  expect(made.ok()).toBeTruthy();
+  const machine = (await made.json()) as { id: string };
+  const password = await addUser(request, "e2e-string-physicist", "physicist");
+
+  await page.goto("/#branch=ring");
+  await page.getByRole("banner").getByLabel("Machine").selectOption(machine.id);
+  await page.getByLabel("Find element").fill("QF_1");
+  await page.getByRole("option", { name: /\bQF_1\b/ }).first().click();
+  const setpoints = page.getByTestId("setpoints");
+  await expect(setpoints).toContainText("dr-q4-ps:sp");
+  // The string's setting drives eleven quadrupoles: shown here, not set from one of them.
+  await expect(setpoints.getByTestId("setpoint-shared")).toContainText("drives 11 magnets in series");
+  await expect(setpoints.getByRole("button", { name: "Set dr-q4-ps:sp" })).toHaveCount(0);
+  await expect(setpoints.getByLabel("New value of dr-q4-ps:sp")).toHaveCount(0);
+
+  await setpoints.getByRole("button", { name: "Power supply dr-q4-ps" }).click();
+  const supply = page.getByRole("dialog", { name: "Power supply dr-q4-ps" });
+  await expect(supply).toContainText("It drives 11 magnets in series; a change moves them all");
+  await expect(supply.getByTestId("supply-magnets")).toContainText("QF_1");
+  await supply.getByLabel("New value of dr-q4-ps:sp").fill("27");
+  await supply.getByRole("button", { name: "Set all 11" }).click();
+  const login = page.getByRole("dialog", { name: "Log in" });
+  await login.getByLabel("User name").fill("e2e-string-physicist");
+  await login.getByLabel("Password").fill(password);
+  await login.getByRole("button", { name: "Log in" }).click();
+  await expect(supply.getByTestId("setpoint-outcome")).toContainText("Set, logged as change");
+  await supply.getByRole("button", { name: "Close" }).click();
+
+  // Every magnet of the string has the new value.
+  await page.getByLabel("Find element").fill("QF_2");
+  await page.getByRole("option", { name: /\bQF_2\b/ }).first().click();
+  await expect(setpoints).toContainText("27 A");
+  await expect(setpoints).toContainText("set by e2e-string-physicist");
+});

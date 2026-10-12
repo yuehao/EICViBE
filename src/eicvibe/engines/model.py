@@ -69,6 +69,10 @@ SETTINGS = frozenset(
 
 
 class Session(Protocol):
+    """What callers see of an engine's session on a branch. Adapters implement it by subclassing
+    :class:`~.adapter.EngineSession`, which makes the contract's checks; proxies (the worker's
+    ``RemoteSession``) only match it."""
+
     engine: str
     branch: str
 
@@ -102,6 +106,9 @@ class Session(Protocol):
 
 
 class Engine(Protocol):
+    """What callers see of an engine. Adapters subclass :class:`~.adapter.EngineAdapter`, and every
+    registered engine passes ``tests/engines/test_conformance.py`` (ADR 0006)."""
+
     name: str
 
     def available(self) -> bool:

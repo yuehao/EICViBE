@@ -2091,6 +2091,12 @@
    },
    "Me": {
     "properties": {
+     "agent": {
+      "default": false,
+      "description": "Calling with an agent's token",
+      "title": "Agent",
+      "type": "boolean"
+     },
      "logged_in": {
       "title": "Logged In",
       "type": "boolean"
@@ -3026,6 +3032,446 @@
     "title": "Power",
     "type": "object"
    },
+   "ProposalBody": {
+    "properties": {
+     "changes": {
+      "items": {
+       "$ref": "#/components/schemas/ProposalChange"
+      },
+      "title": "Changes",
+      "type": "array"
+     },
+     "checks": {
+      "items": {
+       "$ref": "#/components/schemas/ProposalCheck"
+      },
+      "title": "Checks",
+      "type": "array"
+     },
+     "context": {
+      "additionalProperties": true,
+      "description": "What was measured when proposed",
+      "title": "Context",
+      "type": "object"
+     },
+     "engine": {
+      "title": "Engine",
+      "type": "string"
+     },
+     "machine": {
+      "title": "Machine",
+      "type": "string"
+     },
+     "method": {
+      "title": "Method",
+      "type": "string"
+     },
+     "operation": {
+      "title": "Operation",
+      "type": "string"
+     },
+     "parameters": {
+      "additionalProperties": true,
+      "title": "Parameters",
+      "type": "object"
+     },
+     "predicted": {
+      "additionalProperties": true,
+      "title": "Predicted",
+      "type": "object"
+     },
+     "references": {
+      "items": {
+       "type": "string"
+      },
+      "title": "References",
+      "type": "array"
+     },
+     "summary": {
+      "title": "Summary",
+      "type": "string"
+     }
+    },
+    "required": [
+     "operation",
+     "machine",
+     "summary",
+     "changes",
+     "predicted",
+     "checks",
+     "method",
+     "parameters",
+     "engine",
+     "references"
+    ],
+    "title": "ProposalBody",
+    "type": "object"
+   },
+   "ProposalChange": {
+    "properties": {
+     "after": {
+      "title": "After",
+      "type": "number"
+     },
+     "before": {
+      "title": "Before",
+      "type": "number"
+     },
+     "channel": {
+      "title": "Channel",
+      "type": "string"
+     },
+     "device": {
+      "title": "Device",
+      "type": "string"
+     },
+     "limits": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "number"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Limits"
+     },
+     "unit": {
+      "title": "Unit",
+      "type": "string"
+     }
+    },
+    "required": [
+     "channel",
+     "device",
+     "unit",
+     "before",
+     "after"
+    ],
+    "title": "ProposalChange",
+    "type": "object"
+   },
+   "ProposalCheck": {
+    "properties": {
+     "limit": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Limit"
+     },
+     "name": {
+      "title": "Name",
+      "type": "string"
+     },
+     "note": {
+      "default": "",
+      "title": "Note",
+      "type": "string"
+     },
+     "ok": {
+      "title": "Ok",
+      "type": "boolean"
+     },
+     "value": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Value"
+     }
+    },
+    "required": [
+     "name",
+     "ok"
+    ],
+    "title": "ProposalCheck",
+    "type": "object"
+   },
+   "ProposalEntry": {
+    "properties": {
+     "agent": {
+      "description": "Proposed through an agent's token",
+      "title": "Agent",
+      "type": "boolean"
+     },
+     "applied_turn": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Applied Turn"
+     },
+     "correlation": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Correlation"
+     },
+     "created": {
+      "title": "Created",
+      "type": "string"
+     },
+     "decided": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Decided"
+     },
+     "decided_by": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Decided By"
+     },
+     "id": {
+      "title": "Id",
+      "type": "string"
+     },
+     "machine": {
+      "title": "Machine",
+      "type": "string"
+     },
+     "operation": {
+      "title": "Operation",
+      "type": "string"
+     },
+     "proposal": {
+      "$ref": "#/components/schemas/ProposalBody"
+     },
+     "request": {
+      "additionalProperties": true,
+      "title": "Request",
+      "type": "object"
+     },
+     "state": {
+      "description": "proposed, applied, verified, discarded or stale",
+      "title": "State",
+      "type": "string"
+     },
+     "turn": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Turn"
+     },
+     "user": {
+      "title": "User",
+      "type": "string"
+     },
+     "verification": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Verification"
+     }
+    },
+    "required": [
+     "id",
+     "machine",
+     "created",
+     "user",
+     "agent",
+     "operation",
+     "request",
+     "proposal",
+     "state",
+     "turn",
+     "decided",
+     "decided_by",
+     "applied_turn",
+     "correlation",
+     "verification"
+    ],
+    "title": "ProposalEntry",
+    "type": "object"
+   },
+   "ProposalRequest": {
+    "description": "An operation to compute on a machine as it is set (ADR 0010); nothing is written.",
+    "properties": {
+     "amplitude_mm": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Bump: the offset there, mm",
+      "title": "Amplitude Mm"
+     },
+     "angle_mrad": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Bump: the angle there, mrad (four correctors)",
+      "title": "Angle Mrad"
+     },
+     "at": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Bump: a BPM's name (or an element's)",
+      "title": "At"
+     },
+     "correctors": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Only these corrector channels",
+      "title": "Correctors"
+     },
+     "count": {
+      "default": 3,
+      "description": "MICADO: correctors to use",
+      "maximum": 50.0,
+      "minimum": 1.0,
+      "title": "Count",
+      "type": "integer"
+     },
+     "damping": {
+      "default": 0.01,
+      "description": "SVD: Tikhonov damping, of the largest singular value",
+      "exclusiveMinimum": 0.0,
+      "title": "Damping",
+      "type": "number"
+     },
+     "dqx": {
+      "default": 0.0,
+      "description": "Tune move: the change of the horizontal tune",
+      "title": "Dqx",
+      "type": "number"
+     },
+     "dqy": {
+      "default": 0.0,
+      "description": "Tune move: the change of the vertical tune",
+      "title": "Dqy",
+      "type": "number"
+     },
+     "method": {
+      "default": "svd",
+      "enum": [
+       "svd",
+       "micado"
+      ],
+      "title": "Method",
+      "type": "string"
+     },
+     "operation": {
+      "enum": [
+       "orbit_correction",
+       "local_bump",
+       "tune_move"
+      ],
+      "title": "Operation",
+      "type": "string"
+     },
+     "plane": {
+      "default": "x",
+      "enum": [
+       "x",
+       "y"
+      ],
+      "title": "Plane",
+      "type": "string"
+     },
+     "quadrupoles": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Tune move: only these quadrupole channels",
+      "title": "Quadrupoles"
+     },
+     "reason": {
+      "default": "",
+      "title": "Reason",
+      "type": "string"
+     },
+     "source": {
+      "default": "measured",
+      "description": "Orbit correction: the BPMs' latest slow orbit, or the model's own",
+      "enum": [
+       "measured",
+       "model"
+      ],
+      "title": "Source",
+      "type": "string"
+     }
+    },
+    "required": [
+     "operation"
+    ],
+    "title": "ProposalRequest",
+    "type": "object"
+   },
    "Reason": {
     "properties": {
      "reason": {
@@ -3699,6 +4145,11 @@
       "title": "Created",
       "type": "string"
      },
+     "kind": {
+      "default": "api",
+      "title": "Kind",
+      "type": "string"
+     },
      "label": {
       "title": "Label",
       "type": "string"
@@ -3732,6 +4183,16 @@
    },
    "TokenRequest": {
     "properties": {
+     "kind": {
+      "default": "api",
+      "description": "api: a notebook's, with its user's rights; agent: a model's harness, which on shared machines only proposes (a person applies)",
+      "enum": [
+       "api",
+       "agent"
+      ],
+      "title": "Kind",
+      "type": "string"
+     },
      "label": {
       "maxLength": 80,
       "minLength": 1,
@@ -3809,6 +4270,42 @@
      "branch"
     ],
     "title": "Traversal",
+    "type": "object"
+   },
+   "TuneReading": {
+    "description": "A ring's tune monitor: fractional tunes folded into 0 to 0.5, as one pickup sees them.",
+    "properties": {
+     "settled": {
+      "description": "No setting ramped during those turns",
+      "title": "Settled",
+      "type": "boolean"
+     },
+     "turn": {
+      "title": "Turn",
+      "type": "integer"
+     },
+     "turns": {
+      "description": "Turns the spectrum took",
+      "title": "Turns",
+      "type": "integer"
+     },
+     "x": {
+      "title": "X",
+      "type": "number"
+     },
+     "y": {
+      "title": "Y",
+      "type": "number"
+     }
+    },
+    "required": [
+     "x",
+     "y",
+     "turn",
+     "turns",
+     "settled"
+    ],
+    "title": "TuneReading",
     "type": "object"
    },
    "UserChange": {
@@ -5528,6 +6025,103 @@
     ]
    }
   },
+  "/api/v1/va/machines/{machine}/proposals": {
+   "get": {
+    "operationId": "proposals_api_v1_va_machines__machine__proposals_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "machine",
+      "required": true,
+      "schema": {
+       "title": "Machine",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "items": {
+          "$ref": "#/components/schemas/ProposalEntry"
+         },
+         "title": "Response Proposals Api V1 Va Machines  Machine  Proposals Get",
+         "type": "array"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Proposals",
+    "tags": [
+     "virtual accelerator"
+    ]
+   },
+   "post": {
+    "description": "Compute an operation (orbit correction, a closed bump, a tune move) on the machine as it is set\nand as its BPMs read; nothing is written. A large ring's first orbit correction takes a while\n(its response matrix).",
+    "operationId": "propose_api_v1_va_machines__machine__proposals_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "machine",
+      "required": true,
+      "schema": {
+       "title": "Machine",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ProposalRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "201": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ProposalEntry"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Propose",
+    "tags": [
+     "virtual accelerator"
+    ]
+   }
+  },
   "/api/v1/va/machines/{machine}/reset": {
    "post": {
     "operationId": "reset_api_v1_va_machines__machine__reset_post",
@@ -5968,6 +6562,49 @@
     ]
    }
   },
+  "/api/v1/va/machines/{machine}/tunes": {
+   "get": {
+    "description": "The ring's tune monitor now.",
+    "operationId": "tunes_api_v1_va_machines__machine__tunes_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "machine",
+      "required": true,
+      "schema": {
+       "title": "Machine",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/TuneReading"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Tunes",
+    "tags": [
+     "virtual accelerator"
+    ]
+   }
+  },
   "/api/v1/va/me": {
    "get": {
     "operationId": "whoami_api_v1_va_me_get",
@@ -6103,6 +6740,210 @@
      }
     },
     "summary": "Options",
+    "tags": [
+     "virtual accelerator"
+    ]
+   }
+  },
+  "/api/v1/va/proposals/{proposal}": {
+   "get": {
+    "operationId": "proposal_api_v1_va_proposals__proposal__get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "proposal",
+      "required": true,
+      "schema": {
+       "title": "Proposal",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ProposalEntry"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Proposal",
+    "tags": [
+     "virtual accelerator"
+    ]
+   }
+  },
+  "/api/v1/va/proposals/{proposal}/apply": {
+   "post": {
+    "description": "Write a proposal's changes: on a shared machine by a person (an agent's token cannot).",
+    "operationId": "apply_api_v1_va_proposals__proposal__apply_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "proposal",
+      "required": true,
+      "schema": {
+       "title": "Proposal",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "anyOf": [
+         {
+          "$ref": "#/components/schemas/Reason"
+         },
+         {
+          "type": "null"
+         }
+        ],
+        "title": "Body"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ProposalEntry"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Apply",
+    "tags": [
+     "virtual accelerator"
+    ]
+   }
+  },
+  "/api/v1/va/proposals/{proposal}/discard": {
+   "post": {
+    "operationId": "discard_api_v1_va_proposals__proposal__discard_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "proposal",
+      "required": true,
+      "schema": {
+       "title": "Proposal",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "anyOf": [
+         {
+          "$ref": "#/components/schemas/Reason"
+         },
+         {
+          "type": "null"
+         }
+        ],
+        "title": "Body"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ProposalEntry"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Discard",
+    "tags": [
+     "virtual accelerator"
+    ]
+   }
+  },
+  "/api/v1/va/proposals/{proposal}/verify": {
+   "post": {
+    "description": "What the BPMs or the tune monitor show since it was applied, against the prediction.",
+    "operationId": "verify_api_v1_va_proposals__proposal__verify_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "proposal",
+      "required": true,
+      "schema": {
+       "title": "Proposal",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ProposalEntry"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Verify",
     "tags": [
      "virtual accelerator"
     ]

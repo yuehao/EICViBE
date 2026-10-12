@@ -20,15 +20,16 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
+import numpy as np
 from pydantic import BaseModel, Field
 
 from eicvibe.ai import AiConfig, load_config, save_config
 from eicvibe.domain.lattice import Lattice, Route
 from eicvibe.domain.machine import MachineRegistry
-from eicvibe.engines.contracts import Fidelity
+from eicvibe.engines.contracts import Effect, Fidelity, Options
 
 from .settings import MachineSettings, Values
-from .store import ANONYMOUS, Role, Store, User
+from .store import ANONYMOUS, Role, Store, User, now
 
 
 class Forbidden(Exception):
@@ -633,6 +634,192 @@ class VirtualAccelerator:
         instance.run.acquire()
         self.store.act(user.name, "acquire", machine_id, reason, run=instance.run_id, turn=instance.position)
 
+    # -- proposals (ADR 0010) -------------------------------------------------------------------
+
+    def propose(self, user: User, machine_id: str, request: Mapping[str, Any]) -> dict[str, Any]:
+        """An operation computed on the machine as it is set and as its BPMs read: a proposal, written to
+        nothing. Agents may propose on shared machines too; a person applies there."""
+        from eicvibe.operations.bump import local_bump
+        from eicvibe.operations.model import MachineModel
+        from eicvibe.operations.orbit import correct_orbit
+        from eicvibe.operations.tune import move_tunes
+
+        instance = self._instance(machine_id)
+        self._may(user, instance, Role.PHYSICIST, agent=True)
+        spec = instance.spec
+        if spec.kind != "ring":
+            raise ValueError("operations are for rings so far; a route's lines come later")
+        request = dict(request)
+        operation, plane = request.get("operation"), request.get("plane") or "x"
+        settings = self._machine_settings(spec.mode)
+        context: dict[str, Any] = {"turn": instance.position}
+        if operation in ("orbit_correction", "local_bump") and instance.state == "running":
+            try:
+                context["orbit_before"] = self._measured_orbit(instance)  # to verify against
+            except Conflict:
+                pass
+        # The model as the ring is tracked: 6D, with its RF (a horizontal kick that changes the path
+        # changes the energy), unless the RF holds no bunch (the run's warnings).
+        effects = frozenset({Effect.LONGITUDINAL})
+        if instance.run is not None:
+            effects = frozenset() if instance.run.warnings else instance.run.options.effects
+        options = Options(fidelity=Fidelity(spec.fidelity), effects=effects)
+        with MachineModel(settings, spec.target, self.live(machine_id), options=options) as model:
+            if operation == "orbit_correction":
+                orbit = None
+                if request.get("source", "measured") == "measured":
+                    measured = context.get("orbit_before") or self._measured_orbit(instance)
+                    orbit = {n: v * 1e-3 for n, v in measured[plane].items()}
+                proposal = correct_orbit(
+                    model, plane, orbit, method=request.get("method", "svd"),
+                    damping=float(request.get("damping", 0.01)), count=int(request.get("count", 3)),
+                    correctors=request.get("correctors"),
+                )  # fmt: skip
+            elif operation == "local_bump":
+                if request.get("at") is None or request.get("amplitude_mm") is None:
+                    raise ValueError("a bump needs where (at: a BPM's name) and its amplitude_mm")
+                angle = request.get("angle_mrad")
+                proposal = local_bump(
+                    model, plane, request["at"], float(request["amplitude_mm"]) * 1e-3,
+                    None if angle is None else float(angle) * 1e-3, correctors=request.get("correctors"),
+                )  # fmt: skip
+            elif operation == "tune_move":
+                proposal = move_tunes(
+                    model, float(request.get("dqx", 0.0)), float(request.get("dqy", 0.0)),
+                    quadrupoles=request.get("quadrupoles"),
+                )  # fmt: skip
+                context["tunes_before"] = self.tunes(machine_id)
+            else:
+                raise ValueError(
+                    f"no operation {operation!r}; operations: orbit_correction, local_bump, tune_move"
+                )
+        ident = uuid.uuid4().hex[:10]
+        stored = proposal.model_dump(mode="json") | {"context": context}
+        self.store.add_proposal(ident, machine_id, user, operation, request, stored, instance.position)
+        self.store.act(
+            user.name, "propose", machine_id, request.get("reason", ""), proposal=ident, operation=operation,
+            agent=user.agent, summary=proposal.summary,
+        )  # fmt: skip
+        return self.store.proposal(ident)
+
+    def proposals(self, machine_id: str) -> list[dict[str, Any]]:
+        self._instance(machine_id)
+        return self.store.proposals(machine_id)
+
+    def proposal(self, ident: str) -> dict[str, Any]:
+        return self.store.proposal(ident)
+
+    def apply(self, user: User, ident: str, reason: str = "") -> dict[str, Any]:
+        """Write a proposal's changes, atomically, if the machine is still as it was proposed for.
+
+        On a shared machine a person applies it (an agent's token cannot); in a sandbox its owner or
+        the owner's agent.
+        """
+        from eicvibe.operations.proposal import Proposal
+
+        row = self.store.proposal(ident)
+        instance = self._instance(row["machine"])
+        self._may(user, instance, Role.PHYSICIST)
+        if row["state"] != "proposed":
+            raise Conflict(f"proposal {ident} is {row['state']}")
+        proposal = Proposal.model_validate(row["proposal"])
+        settings = self._machine_settings(instance.spec.mode)
+        live = self.live(row["machine"])
+        moved = [
+            c.channel
+            for c in proposal.changes
+            if abs(settings.value(c.channel, live) - c.before) > 1e-9 * max(1.0, abs(c.before))
+        ]
+        if moved:
+            self.store.update_proposal(ident, state="stale", decided=now(), decided_by=user.name)
+            self.store.act(
+                user.name, "proposal stale", row["machine"], reason, proposal=ident, channels=moved
+            )
+            raise Conflict(
+                f"the machine changed since proposal {ident} ({', '.join(moved[:3])}): propose again"
+            )
+        why = f"proposal {ident}: {proposal.summary}" + (f"; {reason}" if reason else "")
+        result = self.write(user, row["machine"], proposal.values(), why, correlation=f"proposal-{ident}")
+        if not result["applied"]:
+            refused = [w for w in result["writes"] if w["refusal"]]
+            raise Conflict(f"refused: {refused[0]['channel']}: {refused[0]['refusal']}")
+        self.store.update_proposal(
+            ident, state="applied", decided=now(), decided_by=user.name,
+            applied_turn=instance.position, correlation=result["correlation"],
+        )  # fmt: skip
+        self.store.act(user.name, "apply proposal", row["machine"], reason, proposal=ident, agent=user.agent)
+        return self.store.proposal(ident)
+
+    def discard(self, user: User, ident: str, reason: str = "") -> dict[str, Any]:
+        row = self.store.proposal(ident)
+        self._may(user, self._instance(row["machine"]), Role.PHYSICIST, agent=True)
+        if row["state"] != "proposed":
+            raise Conflict(f"proposal {ident} is {row['state']}")
+        self.store.update_proposal(ident, state="discarded", decided=now(), decided_by=user.name)
+        self.store.act(user.name, "discard proposal", row["machine"], reason, proposal=ident)
+        return self.store.proposal(ident)
+
+    def verify(self, user: User, ident: str) -> dict[str, Any]:
+        """What the machine shows since a proposal was applied, against what the proposal predicted.
+
+        Once its settings have ramped and the BPMs (or the tune monitor) have measured after the
+        ramp; until then the answer says when. Orbits are compared as changes (the BPMs' hidden
+        offsets cancel), tunes as changes too (a tune monitor may see a synchrotron sideband,
+        which moves with the tune).
+        """
+        row = self.store.proposal(ident)
+        instance = self._instance(row["machine"])
+        self._may(user, instance, Role.PHYSICIST, agent=True)
+        if row["state"] not in ("applied", "verified"):
+            raise Conflict(f"proposal {ident} is {row['state']}: only an applied one is verified")
+        if instance.state != "running":
+            raise Conflict(f"{row['machine']} is {instance.state}: start it to measure")
+        settled = row["applied_turn"] + instance.spec.ramp_turns
+        proposal, context = row["proposal"], row["proposal"].get("context", {})
+        if row["operation"] == "tune_move":
+            reading = self.tunes(row["machine"])
+            ready = (
+                reading is not None and reading["settled"] and reading["turn"] - reading["turns"] >= settled
+            )
+            if not ready:
+                return row | {"verification": {"ready": False, "until": settled + instance.run.tune_turns}}
+            verification = _verify_tunes(proposal, context.get("tunes_before"), reading)
+        else:
+            samples = self._orbit_samples(instance)
+            after = [i for i, first in enumerate(samples.turn) if first >= settled]
+            if not after:
+                return row | {"verification": {"ready": False, "until": settled}}
+            verification = _verify_orbit(proposal, context.get("orbit_before"), samples, after[-1])
+        self.store.update_proposal(ident, state="verified", verification=verification)
+        self.store.act(
+            user.name, "verify proposal", row["machine"], "", proposal=ident, ok=verification["ok"]
+        )
+        return self.store.proposal(ident)
+
+    def tunes(self, machine_id: str) -> dict[str, Any] | None:
+        """The ring's tune monitor: fractional tunes (0 to 0.5), the turn, whether settled; None yet."""
+        instance = self._instance(machine_id)
+        if instance.spec.kind != "ring" or instance.run is None:
+            return None
+        return getattr(instance.run, "tunes", None)
+
+    def _orbit_samples(self, instance: Instance):
+        from eicvibe.virtual import BpmHistory
+
+        if instance.run is None:
+            raise Conflict(f"{instance.spec.id} has not run: start it to measure its orbit")
+        return BpmHistory.open(self.runs / instance.run_id).orbit()
+
+    def _measured_orbit(self, instance: Instance) -> dict[str, dict[str, float]]:
+        """The latest slow orbit sample, by BPM name, mm."""
+        samples = self._orbit_samples(instance)
+        if len(samples.turn) == 0:
+            raise Conflict(f"{instance.spec.id} has no orbit measured yet: wait a second after its start")
+        return {
+            p: {n: float(v) for n, v in zip(samples.bpms, getattr(samples, p)[-1], strict=True) if v == v}
+            for p in ("x", "y")
+        }
+
     # -- helpers --------------------------------------------------------------------------------
 
     def _instance(self, machine_id: str) -> Instance:
@@ -655,10 +842,18 @@ class VirtualAccelerator:
             raise Forbidden("log in first")
         if not user.can(role):
             raise Forbidden(f"{user.name} is a {user.role.label}; this needs a {role.label}")
+        if user.agent and role >= Role.OPERATOR:
+            raise Forbidden(f"an agent's token cannot do what needs an {role.label}; a person does")
 
-    def _may(self, user: User, instance: Instance, shared_role: Role) -> None:
-        """Shared machines need ``shared_role``; a sandbox, its owner (or an administrator)."""
+    def _may(self, user: User, instance: Instance, shared_role: Role, *, agent: bool = False) -> None:
+        """Shared machines need ``shared_role``; a sandbox, its owner (or an administrator).
+
+        An agent (its user's agent token) acts only in its user's sandboxes: on a shared machine it
+        may only do what ``agent`` allows (propose, verify), and a person applies (ADR 0010).
+        """
         if instance.spec.shared:
+            if user.agent and not agent:
+                raise Forbidden(f"{user.name}'s agent only proposes on a shared machine; a person applies")
             self._require(user, shared_role)
             return
         self._require(user, Role.PHYSICIST if user.name == instance.spec.owner else Role.ADMIN)
@@ -671,3 +866,70 @@ class VirtualAccelerator:
 
 def _spec_fields(stored: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in stored.items() if k in MachineSpec.model_fields}
+
+
+def _verify_orbit(proposal: dict, before: dict | None, samples, index: int) -> dict[str, Any]:
+    """The orbit change the BPMs measured against the change predicted, at every BPM, mm."""
+    predicted = proposal["predicted"]
+    plane = predicted["plane"]
+    names = list(samples.bpms)
+    after = {n: float(v) for n, v in zip(names, getattr(samples, plane)[index], strict=True)}
+    if before is None:
+        return {"ready": True, "ok": False, "note": "no orbit was measured when it was proposed"}
+    if proposal["operation"] == "orbit_correction":
+        expected = {
+            n: a - b
+            for n, a, b in zip(predicted["bpms"], predicted["after"], predicted["before"], strict=True)
+            if a is not None and b is not None
+        }
+    else:
+        expected = dict(zip(predicted["bpms"], predicted["change"], strict=True))
+    measured = {n: after[n] - before[plane][n] for n in expected if n in after and n in before[plane]}
+    common = [n for n in expected if n in measured and measured[n] == measured[n]]
+    if not common:
+        return {"ready": True, "ok": False, "note": "no BPM read before and after"}
+    m = np.array([measured[n] for n in common])
+    e = np.array([expected[n] for n in common])
+    difference = float(np.sqrt(np.mean((m - e) ** 2)))
+    size = float(np.sqrt(np.mean(e**2)))
+    limit = 0.05 * size + 0.005  # mm: the BPMs' gain errors (1 %) and noise, with margin
+    return {
+        "ready": True,
+        "ok": difference <= limit,
+        "plane": plane,
+        "rms_difference_mm": difference,
+        "rms_predicted_change_mm": size,
+        "limit_mm": limit,
+        "sample_turn": int(samples.turn[index]),
+        "bpms": common,
+        "measured_change_mm": m.tolist(),
+        "predicted_change_mm": e.tolist(),
+        "note": "the orbit change the BPMs measured against the change predicted (offsets cancel)",
+    }
+
+
+def _verify_tunes(proposal: dict, before: dict | None, reading: dict) -> dict[str, Any]:
+    """The tune monitor's change against the tune change predicted.
+
+    A pickup sees fractional tunes folded into 0 to 0.5, so a tune above the half integer reads as
+    1 - q and moves the other way; the model's tune says which side (as an operator knows).
+    """
+    if before is None:
+        return {"ready": True, "ok": False, "note": "the tune monitor had no reading when it was proposed"}
+    (qx0, qy0), (qx1, qy1) = proposal["predicted"]["tunes"]
+    out: dict[str, Any] = {"ready": True, "turn": reading["turn"], "planes": {}}
+    ok = True
+    for plane, q0, q1 in (("x", qx0, qx1), ("y", qy0, qy1)):
+        side = -1.0 if (q0 % 1.0) > 0.5 else 1.0
+        measured = side * (reading[plane] - before[plane])
+        expected = q1 - q0
+        tolerance = max(5e-4, 0.1 * abs(expected))
+        good = abs(measured - expected) <= tolerance
+        ok &= good
+        out["planes"][plane] = {
+            "measured_change": measured, "predicted_change": expected, "tolerance": tolerance, "ok": good,
+            "reading_before": before[plane], "reading_after": reading[plane],
+        }  # fmt: skip
+    out["ok"] = bool(ok)
+    out["note"] = "the tune monitor's change against the change predicted (fractional, folded)"
+    return out

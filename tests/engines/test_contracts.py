@@ -118,3 +118,38 @@ def test_quasi_static_applies_each_snapshot_before_computing():
         session, Program({key: [(0.0, 1.0), (1.0, 2.0)]}), (0.0, 0.5, 1.0), lambda s: s.values[key]
     )
     assert results == [(0.0, 1.0), (0.5, 1.5), (1.0, 2.0)]
+
+
+def test_an_engine_must_be_an_adapter_with_every_computation(monkeypatch):
+    """A new engine gets the contract's checks by subclassing; leaving a computation out, or not
+    subclassing, is refused before it can run (ADR 0006)."""
+    import sys
+    import types
+
+    from eicvibe.engines import EngineAdapter, EngineSession
+
+    class Partial(EngineSession):  # no _orbit, _track, _track_beam
+        engine = "partial"
+
+        def _update(self, changes): ...
+
+        def _optics(self, request, occurrences, partial): ...
+
+        def close(self): ...
+
+    with pytest.raises(TypeError, match="abstract"):
+        Partial(None, None, None, None, {})
+
+    class Bare:  # the shape of an engine, but none of its checks
+        name = "bare"
+
+        def available(self):
+            return True
+
+    module = types.ModuleType("bare_engine")
+    module.Bare = Bare
+    monkeypatch.setitem(sys.modules, "bare_engine", module)
+    monkeypatch.setitem(ENGINES, "bare", "bare_engine:Bare")
+    with pytest.raises(TypeError, match="not an EngineAdapter"):
+        engine("bare")
+    assert issubclass(type(engine("xsuite")), EngineAdapter)

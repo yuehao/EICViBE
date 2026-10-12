@@ -16,6 +16,7 @@ import { AccountMenu, useAuth } from "./components/Auth";
 import { BpmView } from "./components/BpmView";
 import { AskAi, useAi } from "./components/Ai";
 import { CheckView, viewerRuns } from "./components/CheckView";
+import { OperateView } from "./components/OperateView";
 import { ElementTable } from "./components/ElementTable";
 import { FloorPlan, type FloorPlanHandle } from "./components/FloorPlan";
 import { Inspector } from "./components/Inspector";
@@ -70,8 +71,8 @@ export function App() {
   const [selection, setSelection] = useState<Target | null>(null);
   const [query, setQuery] = useState(initial.q ?? "");
   const [runs, setRuns] = useState<RunEntry[]>([]);
-  const [tab, setTab] = useState<"optics" | "orbit" | "check">(
-    initial.tab === "orbit" || initial.tab === "check" ? initial.tab : "optics",
+  const [tab, setTab] = useState<"optics" | "orbit" | "check" | "operate">(
+    initial.tab === "orbit" || initial.tab === "check" || initial.tab === "operate" ? initial.tab : "optics",
   );
   // The virtual accelerator, if this server runs one (ADR 0008): its machines, the one the viewer
   // works with (remembered by this browser), and who is logged in, asked only when changing something.
@@ -403,6 +404,17 @@ export function App() {
       >
         Check
       </button>
+      {vaOn ? (
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "operate"}
+          onClick={() => setTab("operate")}
+          title="Orbit correction, closed bumps and tune moves on a virtual accelerator's ring: proposals a person applies"
+        >
+          Operate
+        </button>
+      ) : null}
     </span>
   );
   const strip = summary ? (
@@ -561,6 +573,11 @@ export function App() {
                   ai={aiStatus}
                 />
               </div>
+              {vaOn ? (
+                <div className="tab-panel" role="tabpanel" aria-label="Operate" hidden={tab !== "operate"}>
+                  <OperateView machine={machine} auth={auth} active={tab === "operate"} tabs={tabs} scheme={scheme} />
+                </div>
+              ) : null}
             </div>
           </section>
           <Splitter variable="--side-width" orientation="vertical" sign={-1} min={320} max={1400} initial={620} />

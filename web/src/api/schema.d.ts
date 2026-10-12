@@ -514,6 +514,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/va/machines/{machine}/proposals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Proposals */
+        get: operations["proposals_api_v1_va_machines__machine__proposals_get"];
+        put?: never;
+        /**
+         * Propose
+         * @description Compute an operation (orbit correction, a closed bump, a tune move) on the machine as it is set
+         *     and as its BPMs read; nothing is written. A large ring's first orbit correction takes a while
+         *     (its response matrix).
+         */
+        post: operations["propose_api_v1_va_machines__machine__proposals_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/va/machines/{machine}/reset": {
         parameters: {
             query?: never;
@@ -618,6 +641,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/va/machines/{machine}/tunes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Tunes
+         * @description The ring's tune monitor now.
+         */
+        get: operations["tunes_api_v1_va_machines__machine__tunes_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/va/me": {
         parameters: {
             query?: never;
@@ -681,6 +724,80 @@ export interface paths {
         get: operations["options_api_v1_va_options_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/va/proposals/{proposal}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Proposal */
+        get: operations["proposal_api_v1_va_proposals__proposal__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/va/proposals/{proposal}/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Apply
+         * @description Write a proposal's changes: on a shared machine by a person (an agent's token cannot).
+         */
+        post: operations["apply_api_v1_va_proposals__proposal__apply_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/va/proposals/{proposal}/discard": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Discard */
+        post: operations["discard_api_v1_va_proposals__proposal__discard_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/va/proposals/{proposal}/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Verify
+         * @description What the BPMs or the tune monitor show since it was applied, against the prediction.
+         */
+        post: operations["verify_api_v1_va_proposals__proposal__verify_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1690,6 +1807,12 @@ export interface components {
         };
         /** Me */
         Me: {
+            /**
+             * Agent
+             * @description Calling with an agent's token
+             * @default false
+             */
+            agent: boolean;
             /** Logged In */
             logged_in: boolean;
             /** Name */
@@ -2080,6 +2203,197 @@ export interface components {
             /** @description This magnet's transfer function */
             transfer: components["schemas"]["Transfer"] | null;
         };
+        /** ProposalBody */
+        ProposalBody: {
+            /** Changes */
+            changes: components["schemas"]["ProposalChange"][];
+            /** Checks */
+            checks: components["schemas"]["ProposalCheck"][];
+            /**
+             * Context
+             * @description What was measured when proposed
+             */
+            context?: {
+                [key: string]: unknown;
+            };
+            /** Engine */
+            engine: string;
+            /** Machine */
+            machine: string;
+            /** Method */
+            method: string;
+            /** Operation */
+            operation: string;
+            /** Parameters */
+            parameters: {
+                [key: string]: unknown;
+            };
+            /** Predicted */
+            predicted: {
+                [key: string]: unknown;
+            };
+            /** References */
+            references: string[];
+            /** Summary */
+            summary: string;
+        };
+        /** ProposalChange */
+        ProposalChange: {
+            /** After */
+            after: number;
+            /** Before */
+            before: number;
+            /** Channel */
+            channel: string;
+            /** Device */
+            device: string;
+            /** Limits */
+            limits?: number[] | null;
+            /** Unit */
+            unit: string;
+        };
+        /** ProposalCheck */
+        ProposalCheck: {
+            /** Limit */
+            limit?: number | null;
+            /** Name */
+            name: string;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+            /** Ok */
+            ok: boolean;
+            /** Value */
+            value?: number | null;
+        };
+        /** ProposalEntry */
+        ProposalEntry: {
+            /**
+             * Agent
+             * @description Proposed through an agent's token
+             */
+            agent: boolean;
+            /** Applied Turn */
+            applied_turn: number | null;
+            /** Correlation */
+            correlation: string | null;
+            /** Created */
+            created: string;
+            /** Decided */
+            decided: string | null;
+            /** Decided By */
+            decided_by: string | null;
+            /** Id */
+            id: string;
+            /** Machine */
+            machine: string;
+            /** Operation */
+            operation: string;
+            proposal: components["schemas"]["ProposalBody"];
+            /** Request */
+            request: {
+                [key: string]: unknown;
+            };
+            /**
+             * State
+             * @description proposed, applied, verified, discarded or stale
+             */
+            state: string;
+            /** Turn */
+            turn: number | null;
+            /** User */
+            user: string;
+            /** Verification */
+            verification: {
+                [key: string]: unknown;
+            } | null;
+        };
+        /**
+         * ProposalRequest
+         * @description An operation to compute on a machine as it is set (ADR 0010); nothing is written.
+         */
+        ProposalRequest: {
+            /**
+             * Amplitude Mm
+             * @description Bump: the offset there, mm
+             */
+            amplitude_mm?: number | null;
+            /**
+             * Angle Mrad
+             * @description Bump: the angle there, mrad (four correctors)
+             */
+            angle_mrad?: number | null;
+            /**
+             * At
+             * @description Bump: a BPM's name (or an element's)
+             */
+            at?: string | null;
+            /**
+             * Correctors
+             * @description Only these corrector channels
+             */
+            correctors?: string[] | null;
+            /**
+             * Count
+             * @description MICADO: correctors to use
+             * @default 3
+             */
+            count: number;
+            /**
+             * Damping
+             * @description SVD: Tikhonov damping, of the largest singular value
+             * @default 0.01
+             */
+            damping: number;
+            /**
+             * Dqx
+             * @description Tune move: the change of the horizontal tune
+             * @default 0
+             */
+            dqx: number;
+            /**
+             * Dqy
+             * @description Tune move: the change of the vertical tune
+             * @default 0
+             */
+            dqy: number;
+            /**
+             * Method
+             * @default svd
+             * @enum {string}
+             */
+            method: "svd" | "micado";
+            /**
+             * Operation
+             * @enum {string}
+             */
+            operation: "orbit_correction" | "local_bump" | "tune_move";
+            /**
+             * Plane
+             * @default x
+             * @enum {string}
+             */
+            plane: "x" | "y";
+            /**
+             * Quadrupoles
+             * @description Tune move: only these quadrupole channels
+             */
+            quadrupoles?: string[] | null;
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
+            /**
+             * Source
+             * @description Orbit correction: the BPMs' latest slow orbit, or the model's own
+             * @default measured
+             * @enum {string}
+             */
+            source: "measured" | "model";
+        };
         /** Reason */
         Reason: {
             /**
@@ -2411,6 +2725,11 @@ export interface components {
         TokenEntry: {
             /** Created */
             created: string;
+            /**
+             * Kind
+             * @default api
+             */
+            kind: string;
             /** Label */
             label: string;
         };
@@ -2426,6 +2745,13 @@ export interface components {
         };
         /** TokenRequest */
         TokenRequest: {
+            /**
+             * Kind
+             * @description api: a notebook's, with its user's rights; agent: a model's harness, which on shared machines only proposes (a person applies)
+             * @default api
+             * @enum {string}
+             */
+            kind: "api" | "agent";
             /** Label */
             label: string;
         };
@@ -2467,6 +2793,28 @@ export interface components {
             occurrence: string;
             /** Role */
             role: string;
+        };
+        /**
+         * TuneReading
+         * @description A ring's tune monitor: fractional tunes folded into 0 to 0.5, as one pickup sees them.
+         */
+        TuneReading: {
+            /**
+             * Settled
+             * @description No setting ramped during those turns
+             */
+            settled: boolean;
+            /** Turn */
+            turn: number;
+            /**
+             * Turns
+             * @description Turns the spectrum took
+             */
+            turns: number;
+            /** X */
+            x: number;
+            /** Y */
+            y: number;
         };
         /** UserChange */
         UserChange: {
@@ -3457,6 +3805,72 @@ export interface operations {
             };
         };
     };
+    proposals_api_v1_va_machines__machine__proposals_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                machine: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProposalEntry"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    propose_api_v1_va_machines__machine__proposals_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                machine: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProposalRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProposalEntry"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     reset_api_v1_va_machines__machine__reset_post: {
         parameters: {
             query?: never;
@@ -3732,6 +4146,37 @@ export interface operations {
             };
         };
     };
+    tunes_api_v1_va_machines__machine__tunes_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                machine: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TuneReading"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     whoami_api_v1_va_me_get: {
         parameters: {
             query?: never;
@@ -3852,6 +4297,138 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["VaOptions"];
+                };
+            };
+        };
+    };
+    proposal_api_v1_va_proposals__proposal__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                proposal: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProposalEntry"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    apply_api_v1_va_proposals__proposal__apply_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                proposal: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["Reason"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProposalEntry"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    discard_api_v1_va_proposals__proposal__discard_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                proposal: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["Reason"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProposalEntry"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    verify_api_v1_va_proposals__proposal__verify_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                proposal: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProposalEntry"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
