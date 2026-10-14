@@ -1529,3 +1529,63 @@ button.link {
   border-radius: 4px;
   margin-bottom: 8px;
 }
+
+/* A machine's errors (ADR 0011): magnets, supplies and BPMs */
+.dialog.errors-dialog {
+  width: min(1180px, 96vw);
+  max-height: 90vh;
+  overflow: auto;
+}
+
+.errors-editor h3 {
+  margin: 10px 0 2px;
+}
+
+.errors-editor p {
+  margin: 2px 0 6px;
+}
+
+table.errors-table {
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+table.errors-table th {
+  text-align: left;
+  font-weight: 600;
+  padding: 2px 6px;
+  white-space: nowrap;
+}
+
+table.errors-table td {
+  padding: 2px 6px;
+  vertical-align: middle;
+}
+
+.error-kinds {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  max-width: 300px;
+}
+
+.error-kinds label {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  white-space: nowrap;
+}
+
+input.error-number {
+  width: 6em;
+}
+
+.errors-bpms label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+input.error-number.error-seed {
+  width: 9em;
+}

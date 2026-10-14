@@ -68,6 +68,7 @@ from eicvibe.domain.lattice import (
     ElementKind,
     Lattice,
     LatticeBuilder,
+    Route,
     adopt_ids,
     derived_id,
     diff,
@@ -155,10 +156,15 @@ EIN_SERIES: Mapping[str, tuple[ElementKind, ...]] = MappingProxyType(
 _BRANCHES = ("ltr", "itl", "bar", "etl", "rcs", "rte")
 
 #: The beam's paths (routes.yaml): straight from the linac into the RCS, or through the BAR
-#: (into it by the ITL, out by the ETL, back onto the LTR) first. Both go once round the RCS.
+#: (into it by the ITL, out by the ETL, back onto the LTR) first; then once round the RCS, on to its
+#: extraction (about half a turn more) and along the RTE.
 EIN_ROUTES: Mapping[str, tuple[str, ...]] = MappingProxyType(
-    {"direct": ("ltr", "rcs"), "bar": ("ltr", "itl", "bar", "etl", "ltr", "rcs")}
+    {"direct": ("ltr", "rcs", "rte"), "bar": ("ltr", "itl", "bar", "etl", "ltr", "rcs", "rte")}
 )
+#: Full turns round a ring before the route goes on: the RCS's circulating beam, shown once round.
+EIN_TURNS: Mapping[str, int] = MappingProxyType({"rcs": 1})
+#: Rings the beam is accelerated in: the RCS ramps it to the RTE's momentum.
+EIN_ACCELERATED: tuple[str, ...] = ("rcs",)
 #: Rings each route stores its beam in: the BAR accumulates and damps, so its beam leaves on the
 #: BAR's own optics.
 EIN_STORED: Mapping[str, tuple[str, ...]] = MappingProxyType({"bar": ("bar",)})
@@ -173,11 +179,23 @@ EIN_P1_QUADS = ("ltr_qua07", "ltr_qua08", "ltr_qua09", "ltr_qua10")
 def _routes() -> dict[str, list[str] | dict]:
     """The routes as routes.yaml writes them."""
     return {
-        name: {"branches": list(branches), "stored": list(EIN_STORED[name])}
-        if name in EIN_STORED
-        else list(branches)
+        name: {
+            "branches": list(branches),
+            "stored": list(EIN_STORED.get(name, ())),
+            "turns": {r: n for r, n in EIN_TURNS.items() if r in branches},
+            "accelerated": [r for r in EIN_ACCELERATED if r in branches],
+        }
         for name, branches in EIN_ROUTES.items()
     }
+
+
+def ein_route(lattice: Lattice, name: str) -> Route:
+    """One of the EIN's routes (:data:`EIN_ROUTES`) on ``lattice``."""
+    branches = EIN_ROUTES[name]
+    return route_through(
+        lattice, name, branches, EIN_STORED.get(name, ()),
+        {r: n for r, n in EIN_TURNS.items() if r in branches}, [r for r in EIN_ACCELERATED if r in branches],
+    )  # fmt: skip
 
 
 @dataclass(frozen=True)
@@ -514,7 +532,7 @@ def match_ein_lattice(lattice: Lattice, *, engine: str = "xsuite", fidelity: str
     from eicvibe.engines.model import route_start
 
     model, options = find_engine(engine), Options(fidelity=Fidelity(fidelity))
-    routes = {n: route_through(lattice, n, b, EIN_STORED.get(n, ())) for n, b in EIN_ROUTES.items()}
+    routes = {n: ein_route(lattice, n) for n in EIN_ROUTES}
     whole = machine_optics(model, lattice, options=options)
     ltr = lattice.layout("ltr")
     ids = {b: [p.id for p in lattice.layout(b).placements] for b in _BRANCHES}

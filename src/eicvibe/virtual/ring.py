@@ -32,7 +32,7 @@ import numpy as np
 from pydantic import Field
 
 from eicvibe.diagnostics.analysis import averaged_tune
-from eicvibe.diagnostics.bpm import NO_BEAM, VALID
+from eicvibe.diagnostics.bpm import NO_BEAM
 from eicvibe.domain.lattice import ElementKind, Lattice
 from eicvibe.domain.lattice._base import DomainModel
 from eicvibe.domain.machine import MachineRegistry
@@ -43,6 +43,7 @@ from eicvibe.engines.convert import C_LIGHT, reference, rf_phase
 from eicvibe.engines.model import effective
 from eicvibe.engines.worker import EngineWorker, RemoteSession
 
+from .errors import BpmModel, MachineErrors, VirtualBpms
 from .history import BpmHistory, RunInfo
 from .matching import Matching, ring_matching
 
@@ -64,15 +65,6 @@ class Beam(DomainModel):
     )
     charge: float = Field(1e-9, gt=0, description="Bunch charge, C; the BPMs' intensity is in nC")
     seed: int = 1
-
-
-class BpmModel(DomainModel):
-    """How the virtual BPMs read the beam: reading = gain (centroid - offset) + noise."""
-
-    resolution: float = Field(0.005, ge=0, description="Noise, mm rms per turn at full intensity")
-    offset_rms: float = Field(0.1, ge=0, description="Hidden offsets of the BPMs, mm rms")
-    gain_rms: float = Field(0.01, ge=0, description="Hidden relative gain errors, rms")
-    seed: int = 7
 
 
 def default_engine() -> str:
@@ -136,35 +128,6 @@ def rf_warnings(
     return out
 
 
-class VirtualBpms:
-    """The BPMs of a run: each with a hidden offset and gain error, reading with noise."""
-
-    def __init__(self, model: BpmModel, count: int, particles: int, charge: float) -> None:
-        rng = np.random.default_rng(model.seed)
-        self.model = model
-        self.offsets = rng.normal(0.0, model.offset_rms, (2, count))
-        self.gains = 1.0 + rng.normal(0.0, model.gain_rms, (2, count))
-        self.particles = particles
-        self.charge = charge
-        self._noise = np.random.default_rng(model.seed + 1)
-
-    def hidden(self, names: list[str]) -> dict[str, Any]:
-        return {"offsets_mm": self.offsets.tolist(), "gains": self.gains.tolist(), "bpms": names}
-
-    def read(self, x: np.ndarray, y: np.ndarray, count: np.ndarray) -> tuple[np.ndarray, ...]:
-        """Readings of centroids ``[bpm, n]`` (m): mm, offset and scaled, noisier as the beam thins."""
-        with np.errstate(divide="ignore", invalid="ignore"):
-            noise = self.model.resolution * np.sqrt(self.particles / count)
-        readings = []
-        for k, centroid in enumerate((x, y)):
-            value = self.gains[k][:, None] * (1e3 * centroid - self.offsets[k][:, None])
-            value = value + noise * self._noise.standard_normal(value.shape)
-            readings.append(np.where(count > 0, value, np.nan))
-        intensity = self.charge * 1e9 * count / self.particles
-        status = np.where(count > 0, VALID, NO_BEAM)
-        return readings[0], readings[1], intensity, status
-
-
 class RingRun:
     """A ring tracked turn after turn in an engine worker, its BPMs recorded into a history."""
 
@@ -191,6 +154,7 @@ class RingRun:
         slow_period: float = 1.0,
         ramp_turns: int = 1024,
         call_seconds: float = 0.25,
+        errors: MachineErrors | None = None,
     ) -> None:
         layout = lattice.layout(branch)
         if not layout.periodic:
@@ -224,6 +188,11 @@ class RingRun:
         magnet follows its supply, so the beam's orbit and optics follow without a mismatch; 0: a step."""
         self.call_seconds = call_seconds
         """Wall clock each engine call aims at: commands are taken up within about as long."""
+        self.errors = errors if errors is not None and not errors.empty else None
+        """The machine's own errors (``errors.py``): in the engine's values, never in :attr:`values`."""
+        self._fluctuations = None
+        self._standing: list[str] = list(errors.problems) if errors is not None else []
+        """Warnings that stay while the run goes: its errors' (a choice of nothing, no closed orbit)."""
         self._ramps: list[dict[str, Any]] = []
         self._rate: float | None = None
         self._pending: list[dict[str, Any]] = []
@@ -266,7 +235,11 @@ class RingRun:
     def start(self) -> RingRun:
         """Open the engine, inject a bunch and start tracking in the background."""
         self._worker = EngineWorker(self.engine)
-        self._session = self._worker.open_session(self.lattice, self.branch, self.options, self.values)
+        self._session = self._worker.open_session(
+            self.lattice, self.branch, self.options, self._engine_values()
+        )
+        if self.errors is not None:
+            self._fluctuations = self.errors.fluctuations(self.revolution_period)
         matching = self._matching()
         info = RunInfo(
             id=self.run_id or f"{self.lattice.branch(self.branch).name}-{datetime.now(UTC):%Y%m%dT%H%M%S}",
@@ -289,20 +262,25 @@ class RingRun:
             s=self.bpm_s,
             beam=self.beam.model_dump() | {"matched": matching.summary(self.beam)},
             resolution=self.bpm.resolution,
+            orbit_resolution=self.bpm.orbit_resolution,
             retention_bytes=self.retention_bytes,
             values={f"{o} {p}": v for (o, p), v in self.values.items()},
         )
         self._writer = BpmHistory.create(self.directory, info)
-        hidden = self._bpms.hidden(self.bpm_names)
+        self._writer.slow_noise = self._bpms.orbit_noise
+        hidden = self._bpms.hidden(self.bpm_names) | ({"errors": self.errors.hidden()} if self.errors else {})
         (self.directory / "hidden.json").write_text(json.dumps(hidden), encoding="utf-8")
         self._writer.event(0, "start", engine=self.engine, fidelity=self.options.fidelity.value)
         if Effect.LONGITUDINAL in self.options.effects:
-            optics = self._session.optics(OpticsRequest(options=Options(fidelity=self.options.fidelity)))
-            self._compaction = optics.momentum_compaction or 0.0
-            self.warnings = rf_warnings(self.lattice, self.branch, self._compaction, self.values)
-            for warning in self.warnings:
-                self._writer.event(0, "warning", message=warning)
-                warnings.warn(warning, stacklevel=2)
+            self._compaction = self._momentum_compaction()
+        self.warnings = self._standing + (
+            rf_warnings(self.lattice, self.branch, self._compaction, self.values)
+            if self._compaction is not None
+            else []
+        )
+        for warning in self.warnings:
+            self._writer.event(0, "warning", message=warning)
+            warnings.warn(warning, stacklevel=2)
         self._inject(matching)
         self._thread = threading.Thread(target=self._loop, name=f"ring run {info.id}", daemon=True)
         self._thread.start()
@@ -432,7 +410,7 @@ class RingRun:
                     {"from": now, "turns": self.ramp_turns, "start": begin, "end": dict(values)}
                 )
             else:
-                self._session.update(values)
+                self._session.update(self._engine_values(values))
                 self.values.update(values)
             self._writer.event(
                 now,
@@ -444,7 +422,8 @@ class RingRun:
             if self._compaction is not None and any(p.startswith("RFP.") for _, p in values):
                 before, self.warnings = (
                     self.warnings,
-                    rf_warnings(self.lattice, self.branch, self._compaction, self.values | values),
+                    self._standing
+                    + rf_warnings(self.lattice, self.branch, self._compaction, self.values | values),
                 )
                 for warning in set(self.warnings) - set(before):
                     self._writer.event(now, "warning", message=warning)
@@ -463,13 +442,40 @@ class RingRun:
             return self.values[key]
         return design_value(self.lattice.placement(key[0]), key[1])
 
+    def _engine_values(self, values: Mapping[tuple[str, str], float] | None = None) -> dict:
+        """Settings as the engine takes them, with the machine's errors: ``values`` (an update), or
+        the run's, with every error (a session opened)."""
+        if self.errors is None:
+            return dict(self.values if values is None else values)
+        if values is None:
+            return self.errors.engine_values(self.values, complete=True)
+        return self.errors.engine_values(values)
+
     def _ramps_for(self, first: int, turns: int) -> list[Ramp]:
-        """The settings moving during turns ``[first, first + turns)``, as the engine takes them."""
-        out = []
+        """The settings moving during turns ``[first, first + turns)``, as the engine takes them: the
+        changes ramping in, and the power supplies' noise about them, with the machine's errors."""
+        ramps = []
         for active in self._ramps:
             fraction = _shape((np.arange(first, first + turns) - active["from"]) / active["turns"])
-            out.append(Ramp(dict(active["start"]), dict(active["end"]), fraction))
-        return out
+            ramps.append(
+                Ramp(self._engine_values(active["start"]), self._engine_values(active["end"]), fraction)
+            )
+        if self._fluctuations is None:
+            return ramps
+        for supply, deviation in self._fluctuations.turns(first, turns):
+            steady = {}
+            for key in supply.keys:
+                ramping = next((r for r in ramps if key in r.start), None)
+                if ramping is None:
+                    steady[key] = self._engine_values({key: self._value(key, first)})[key]
+                    continue
+                # Ramping and fluctuating: a line of its own, through its values turn by turn.
+                start, end = ramping.start.pop(key), ramping.end.pop(key)
+                values = (start + np.asarray(ramping.fraction) * (end - start)) * (1.0 + deviation)
+                ramps.append(Ramp({key: 0.0}, {key: 1.0}, values))
+            if steady := {key: value for key, value in steady.items() if value}:
+                ramps.append(Ramp(steady, {key: 2.0 * value for key, value in steady.items()}, deviation))
+        return [r for r in ramps if r.start]
 
     def _advance(self, end: int) -> None:
         """After the turns up to ``end``: the run's values where the ramps are; finished ramps done."""
@@ -479,9 +485,14 @@ class RingRun:
                 self._ramps.remove(active)
 
     def _call_turns(self, first: int) -> int:
-        """Turns for the next engine call: about ``call_seconds`` of tracking, at most ``chunk``."""
+        """Turns for the next engine call: about ``call_seconds`` of the run, at most ``chunk``.
+
+        The run goes at the engine's pace, or at :attr:`max_rate` where that is slower: a call and
+        the wait after it last about ``call_seconds`` either way, so commands are taken up as soon.
+        """
         # A first, short call measures the engine's pace.
-        turns = 64 if self._rate is None else int(self._rate * self.call_seconds)
+        pace = self._rate if self._rate is None or not self.max_rate else min(self._rate, self.max_rate)
+        turns = 64 if pace is None else int(pace * self.call_seconds)
         turns = min(self.chunk, max(16, turns))
         return turns if self.turns is None else min(turns, self.turns - first)
 
@@ -505,13 +516,48 @@ class RingRun:
         self._trigger("inject", self.buffer_turns // 8)  # the injection's oscillations
 
     def _matching(self) -> Matching:
-        """How a bunch fits the ring now: its one-turn map about the closed orbit, at its start."""
-        orbit = self._session.orbit(OrbitRequest(options=self.options))
-        closed = np.array(
-            [orbit.x[-1], orbit.px[-1], orbit.y[-1], orbit.py[-1], orbit.zeta[-1], orbit.delta[-1]]
-        )
+        """How a bunch fits the ring now: its one-turn map about the closed orbit, at its start.
+
+        A ring whose errors leave it no closed orbit, or no stable optics, cannot hold a beam, as a
+        real one could not: the injector still sends the bunch the design asks for (matched to the
+        ring without its errors, on its design orbit), the run says so, and the beam is lost.
+        """
         where = f"{self.lattice.branch(self.branch).name}'s start"
-        return ring_matching(self._session, closed, self.options, where)
+        try:
+            return _matched(self._session, self.options, where)
+        except Exception as error:  # noqa: BLE001 - the engines' own errors, whichever engine
+            if self.errors is None:
+                raise
+            reason = str(error).splitlines()[0][:160]
+        design = self._worker.open_session(self.lattice, self.branch, self.options, self.values)
+        try:
+            matching = _matched(design, self.options, where)
+        finally:
+            design.close()
+        name = self.lattice.branch(self.branch).name
+        warning = (
+            f"{name} has no closed orbit or no stable optics with its errors ({reason}): "
+            "the bunch is injected as its design asks, and is lost"
+        )
+        if warning not in self._standing:
+            self._standing.append(warning)
+            self.warnings = [*self.warnings, warning]
+        return matching
+
+    def _momentum_compaction(self) -> float:
+        """The ring's momentum compaction, for the RF's check: with its errors, or its design's
+        where its errors leave it no optics."""
+        request = OpticsRequest(options=Options(fidelity=self.options.fidelity))
+        try:
+            return self._session.optics(request).momentum_compaction or 0.0
+        except Exception:  # noqa: BLE001 - as in _matching
+            if self.errors is None:
+                raise
+        design = self._worker.open_session(self.lattice, self.branch, self.options, self.values)
+        try:
+            return design.optics(request).momentum_compaction or 0.0
+        finally:
+            design.close()
 
     # -- the loop ----------------------------------------------------------------------
 
@@ -571,10 +617,13 @@ class RingRun:
                 self._coordinates, turns, self.observe, self.options, ramps=self._ramps_for(first, turns)
             )
         except BrokenProcessPool:  # the engine's worker died: start another and go on from the same beam
-            self._session = self._worker.open_session(self.lattice, self.branch, self.options, self.values)
+            self._session = self._worker.open_session(
+                self.lattice, self.branch, self.options, self._engine_values()
+            )
             self._writer.event(first, "engine restarted")
             return
         x, y, intensity, status = self._bpms.read(track.x, track.y, track.count)
+        slow = self._bpms.systematic(track.x, track.y, track.count)  # the closed-orbit acquisition's
         self._tune_monitor(np.asarray(track.x), np.asarray(track.y), first + turns)
         lost = int(np.count_nonzero(track.lost))
         remaining = np.asarray(track.final)[~np.asarray(track.lost)]
@@ -591,7 +640,7 @@ class RingRun:
             )
             self._writer.protect_from = min(c["first"] for c in self._pending)
         finished = time.time()
-        self._writer.append(first, x, y, intensity, status, (started, finished))
+        self._writer.append(first, x, y, intensity, status, (started, finished), slow=slow)
         rate = turns / max(finished - started, 1e-6)
         self._rate = rate if self._rate is None else 0.7 * self._rate + 0.3 * rate
         self._coordinates = remaining
@@ -621,6 +670,13 @@ class RingRun:
         reading = {plane: averaged_tune(self._centroids[k], low) for k, plane in enumerate(("x", "y"))}
         settled = end - self.tune_turns >= self._changed + self.ramp_turns
         self.tunes = reading | {"turn": end, "turns": self.tune_turns, "settled": bool(settled)}
+
+
+def _matched(session, options: Options, where: str) -> Matching:
+    """A bunch's matching to a session's ring: its one-turn map about its closed orbit."""
+    orbit = session.orbit(OrbitRequest(options=options))
+    closed = np.array([orbit.x[-1], orbit.px[-1], orbit.y[-1], orbit.py[-1], orbit.zeta[-1], orbit.delta[-1]])
+    return ring_matching(session, closed, options, where)
 
 
 def _shape(u):

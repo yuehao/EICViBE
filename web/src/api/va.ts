@@ -27,6 +27,10 @@ export type AiTest = Schemas["AiTest"];
 export type ProposalRequest = Schemas["ProposalRequest"];
 export type ProposalEntry = Schemas["ProposalEntry"];
 export type TuneReading = Schemas["TuneReading"];
+export type ErrorSpec = Schemas["ErrorSpec"];
+export type MagnetErrors = Schemas["MagnetErrors"];
+export type SupplyNoise = Schemas["SupplyNoise"];
+export type ErrorsEntry = Schemas["ErrorsEntry"];
 
 const BASE = "/api/v1/va";
 
@@ -103,6 +107,9 @@ export const va = {
   verify: (proposal: string) => call<ProposalEntry>("POST", `/proposals/${enc(proposal)}/verify`),
   discard: (proposal: string, reason = "") => call<ProposalEntry>("POST", `/proposals/${enc(proposal)}/discard`, { reason }),
   tunes: (id: string) => call<TuneReading>("GET", `/machines/${enc(id)}/tunes`),
+  errors: (id: string) => call<ErrorsEntry>("GET", `/machines/${enc(id)}/errors`),
+  checkErrors: (id: string, errors: ErrorSpec) => call<ErrorsEntry>("POST", `/machines/${enc(id)}/errors/check`, { errors }),
+  setErrors: (id: string, errors: ErrorSpec, reason = "") => call<ErrorsEntry>("PUT", `/machines/${enc(id)}/errors`, { errors, reason }),
 
   log: (filters: { machine?: string; user?: string; correlation?: string; before?: number; limit?: number }) =>
     call<LogEntry[]>("GET", "/log", undefined, filters),
@@ -128,8 +135,11 @@ export function atLeast(role: string, needed: (typeof ROLES)[number]): boolean {
   return ROLES.indexOf(role as (typeof ROLES)[number]) >= ROLES.indexOf(needed);
 }
 
-/** The viewer's address showing a machine's orbit: its ring, or its route, in the Orbit tab. */
-export function orbitLink(machine: Pick<MachineEntry, "kind" | "target" | "run">): string {
+/**
+ * The viewer's address showing a machine's orbit: its ring, or its route, in the Orbit tab, with
+ * the machine chosen, so that it follows the machine's runs (a new one each time it starts).
+ */
+export function orbitLink(machine: Pick<MachineEntry, "id" | "kind" | "target">): string {
   const branch = machine.kind === "route" ? `route:${machine.target}` : machine.target;
-  return `/#branch=${enc(branch)}&tab=orbit${machine.run ? `&run=${enc(machine.run)}` : ""}`;
+  return `/#branch=${enc(branch)}&tab=orbit&machine=${enc(machine.id)}`;
 }

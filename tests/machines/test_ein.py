@@ -325,3 +325,42 @@ def test_once_matched_the_bar_is_transparent_and_both_routes_land_matched(ein, t
     assert again.success and all(m.values == m.start for m in again.steps.values())  # nothing to change
     assert again.steps["itl"].stretches["itl"].bmag_before == pytest.approx((1.0, 1.0), abs=1e-3)
     assert again.injection[2] > 0.01  # H: the ITL's bends need beta ~16 m at D1, the bypass gives more
+
+
+def test_the_routes_go_once_round_the_rcs_and_on_along_the_rte(ein):
+    """In at the injection point, once round the RCS, about half a turn more to the extraction, and the
+    RTE: the RCS accelerates the beam, so its optics go on into the RTE unchanged."""
+    pytest.importorskip("xtrack")
+    from eicvibe.domain.lattice import route_length, route_problems
+    from eicvibe.engines import engine, route_optics
+    from eicvibe.machines.ein import ein_route
+
+    lattice = ein.lattice
+    rcs, rte = lattice.layout("rcs"), lattice.layout("rte")
+    for name in ("direct", "bar"):
+        route = ein_route(lattice, name)
+        branches = [lattice.branch(s.branch).name for s in route.segments]
+        assert branches[-4:] == ["rcs", "rcs", "rcs", "rte"]
+        landing, fork = (
+            lattice.placement(route.segments[-4].start),
+            lattice.placement(route.segments[-2].end),
+        )
+        assert fork.name == "fork_rcs_to_rte" and route.segments[-2].start == landing.id
+        in_rcs = sum(
+            lattice.placement(s.end).s_exit - lattice.placement(s.start).s_enter
+            for s in route.segments
+            if s.branch == rcs.id
+        )
+        assert in_rcs == pytest.approx(rcs.length + fork.s_exit - landing.s_enter)  # 1.56 turns
+        assert route_problems(lattice, route) == []  # the RCS accelerates it to the RTE's momentum
+    route = ein_route(lattice, "direct")
+    assert route_length(lattice, route) == pytest.approx(
+        lattice.layout("ltr").length + in_rcs + rte.length, rel=1e-9
+    )
+    optics = route_optics(engine("xsuite"), lattice, route)
+    occurrences = list(optics.occurrences)
+    at = len(occurrences) - 1 - occurrences[::-1].index(fork.id)  # the fork on the last pass
+    assert lattice.placement(occurrences[at + 1]).branch_id == rte.id
+    for column in ("beta_x", "alpha_x", "beta_y", "eta_x"):  # continuous across the acceleration
+        values = getattr(optics, column)
+        assert values[at + 1] == pytest.approx(values[at], rel=1e-9, abs=1e-12), column

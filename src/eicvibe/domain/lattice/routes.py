@@ -21,14 +21,22 @@ gives the beam its own periodic optics where it leaves: an accumulator ring
 such as the EIN's BAR damps whatever came in to its equilibrium. Without it a
 route is one pass, and carries the optics it came in with.
 
-The EIN's BAR route, for example, is ``ltr, itl, bar, etl, ltr, rcs``: the LTR
-to its fork to the ITL; the ITL; the BAR from the septum round to its fork to
-the ETL; the ETL; the LTR again, from where the ETL lands to its fork to the
-RCS; and once round the RCS.
+A route may go round a ring a number of full ``turns`` before it goes on (from
+where it came in, back to it, then on to its fork), so that a synchrotron's
+circulating beam is shown once round before it is extracted; only those rings'
+elements are passed more than once. A ring the beam is *accelerated* in
+(``accelerated``) is left at the next branch's reference momentum: its magnets
+ramp with the beam, so the optics go on unchanged, and the beam's angles and
+momentum spread shrink as the momentum grows (adiabatic damping).
+
+The EIN's BAR route, for example, is ``ltr, itl, bar, etl, ltr, rcs, rte``: the
+LTR to its fork to the ITL; the ITL; the BAR from the septum round to its fork
+to the ETL; the ETL; the LTR again, from where the ETL lands to its fork to the
+RCS; once round the RCS (one turn) and on to its extraction; and the RTE.
 """
 
 import math
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 from pydantic import Field
 
@@ -52,25 +60,63 @@ class Route(DomainModel):
         (),
         description="Ids of the rings the beam is stored in before it leaves them: it leaves on their optics",
     )
+    turns: tuple[tuple[str, int], ...] = Field(
+        (),
+        description="Full turns the beam goes round a ring (by id) before it goes on to its fork",
+    )
+    accelerated: tuple[str, ...] = Field(
+        (),
+        description="Ids of rings the beam is accelerated in: it leaves them at the next branch's momentum",
+    )
+
+    def turns_in(self, branch: str) -> int:
+        """Full turns round ``branch`` (an id) before going on."""
+        return dict(self.turns).get(branch, 0)
 
 
-def route_through(lattice: Lattice, name: str, branches: Sequence[str], stored: Sequence[str] = ()) -> Route:
+def route_through(
+    lattice: Lattice,
+    name: str,
+    branches: Sequence[str],
+    stored: Sequence[str] = (),
+    turns: Mapping[str, int] | None = None,
+    accelerated: Sequence[str] = (),
+) -> Route:
     """The route through ``branches`` (names or ids, in beam order), joined at their forks.
 
-    ``stored`` names the rings the beam is stored in before it leaves them.
+    ``stored`` names the rings the beam is stored in before it leaves them; ``turns`` the full
+    turns it goes round a ring (by name or id) before going on; ``accelerated`` the rings it is
+    accelerated in, which it leaves at the next branch's momentum.
     """
     if not branches:
         raise ValueError(f"route {name}: no branches")
-    kept = []
-    for ring in stored:
-        layout = lattice.layout(ring)
-        if not layout.periodic:
-            raise ValueError(f"route {name}: {layout.branch.name} is a line; only a ring stores a beam")
-        if ring not in branches and layout.id not in branches and layout.branch.name not in branches:
-            raise ValueError(
-                f"route {name}: it does not pass {layout.branch.name}, which it stores the beam in"
-            )
-        kept.append(layout.id)
+    on_route = {lattice.layout(b).id for b in branches}
+
+    def rings(given: Sequence[str], does: str, done: str) -> list[str]:
+        """``given`` as ring ids on the route: ``does`` what only a ring does, ``done`` in it."""
+        out = []
+        for ring in given:
+            layout = lattice.layout(ring)
+            if not layout.periodic:
+                raise ValueError(f"route {name}: {layout.branch.name} is a line; only a ring {does}")
+            if layout.id not in on_route:
+                raise ValueError(f"route {name}: it does not pass {layout.branch.name}, which it {done}")
+            out.append(layout.id)
+        return out
+
+    kept = rings(stored, "stores a beam", "stores the beam in")
+    speeding = rings(accelerated, "accelerates a beam", "accelerates the beam in")
+    last = lattice.layout(branches[-1]).id
+    if last in speeding:
+        raise ValueError(
+            f"route {name}: it ends in {lattice.branch(last).name}, so leaves no ring accelerated"
+        )
+    turning: dict[str, int] = {}
+    for ring, count in (turns or {}).items():
+        if count < 0 or count != int(count):
+            raise ValueError(f"route {name}: {count} turns round {ring}: a whole number, at least 0")
+        if count:
+            turning[rings([ring], "goes round", "goes round")[0]] = int(count)
     segments: list[Segment] = []
     entry = 0
     for k, branch in enumerate(branches):
@@ -80,11 +126,20 @@ def route_through(lattice: Lattice, name: str, branches: Sequence[str], stored: 
         def part(a: int, b: int, layout=layout, ids=ids) -> None:
             segments.append(Segment(branch=layout.id, start=ids[a], end=ids[b]))
 
+        def round_(times: int, entry=entry, ids=ids) -> None:
+            """Full turns from where the route came in, back to it."""
+            for _ in range(times):
+                part(entry, len(ids) - 1)
+                if entry > 0:
+                    part(0, entry - 1)
+
         if k == len(branches) - 1:
-            part(entry, len(ids) - 1)
-            if layout.periodic and entry > 0:
-                part(0, entry - 1)  # once round, back to where the route came in
+            if layout.periodic:
+                round_(max(1, turning.get(layout.id, 0)))  # round, back to where the route came in
+            else:
+                part(entry, len(ids) - 1)
             break
+        round_(turning.get(layout.id, 0))
         target = lattice.layout(branches[k + 1]).id
         forks = sorted(
             (ids.index(e.id), e)
@@ -113,12 +168,21 @@ def route_through(lattice: Lattice, name: str, branches: Sequence[str], stored: 
             entry = landed.index(edge.to_occurrence) + (1 if edge.to_side is ForkSide.EXIT else 0)
             if entry >= len(landed):
                 raise ValueError(f"route {name}: {edge.id} lands at the end of {landing.branch.name}")
-    route = Route(name=name, branches=tuple(branches), segments=tuple(segments), stored=tuple(kept))
+    route = Route(
+        name=name,
+        branches=tuple(branches),
+        segments=tuple(segments),
+        stored=tuple(kept),
+        turns=tuple(turning.items()),
+        accelerated=tuple(speeding),
+    )
     seen: set[str] = set()
-    for placed in route_placements(lattice, route):
-        if placed[1].id in seen:
-            raise ValueError(f"route {name} passes {placed[1].name} twice; a route passes each element once")
-        seen.add(placed[1].id)
+    for _, placed, _ in route_placements(lattice, route):
+        if placed.id in seen and placed.branch_id not in turning:
+            raise ValueError(
+                f"route {name} passes {placed.name} twice; only a ring it goes round (turns) is passed again"
+            )
+        seen.add(placed.id)
     return route
 
 
@@ -145,10 +209,11 @@ def route_length(lattice: Lattice, route: Route) -> float:
 
 
 def route_problems(lattice: Lattice, route: Route) -> list[str]:
-    """What keeps a route from being one pass at one energy: reference momenta that change at a join."""
+    """What keeps a route from being one pass at one energy: reference momenta that change at a join,
+    other than where it leaves a ring it is accelerated in."""
     problems = []
     for before, after in zip(route.segments, route.segments[1:], strict=False):
-        if before.branch == after.branch:
+        if before.branch == after.branch or before.branch in route.accelerated:
             continue
         a, b = (lattice.initial_conditions(s.branch) for s in (before, after))
         pa = a.reference.pc_ref if a and a.reference else None

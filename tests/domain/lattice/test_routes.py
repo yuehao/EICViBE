@@ -85,3 +85,33 @@ def test_a_route_that_cannot_be_one_pass_says_why():
         route_through(lattice, "nowhere", ["out", "ring"])
     hot = route_through(lattice, "hot", ["line", "ring", "hot"])
     assert "reference momentum changes" in route_problems(lattice, hot)[0]
+
+
+def test_a_route_goes_round_a_ring_its_turns_and_may_leave_it_accelerated():
+    """A synchrotron's beam, shown once round before it is extracted to a line at a higher momentum."""
+    lattice = wrapped()
+    once = route_through(lattice, "fast", ["line", "ring", "hot"])
+    assert named(lattice, once)[1:] == [
+        ("ring", "fork_ring_to_hot", "fork_ring_to_hot"),
+        ("hot", "HOT_1", "D_1"),
+    ]
+    round_ = route_through(lattice, "fast", ["line", "ring", "hot"], turns={"ring": 1}, accelerated=["ring"])
+    assert named(lattice, round_)[1:] == [
+        ("ring", "fork_ring_to_hot", "D_5"),  # once round from where it came in
+        ("ring", "START_1", "M_2"),
+        ("ring", "fork_ring_to_hot", "fork_ring_to_hot"),  # and on to the fork
+        ("hot", "HOT_1", "D_1"),
+    ]
+    ring = lattice.layout("ring").length
+    assert route_length(lattice, round_) == pytest.approx(route_length(lattice, once) + ring)
+    assert round_.turns_in(lattice.layout("ring").id) == 1
+    assert route_problems(lattice, once) and route_problems(lattice, round_) == []  # accelerated in the ring
+    # Only a ring it goes round is passed again; turns and acceleration are a ring's.
+    passes = [p.id for _, p, _ in route_placements(lattice, round_)]
+    assert len(passes) > len(set(passes))
+    with pytest.raises(ValueError, match="only a ring goes round"):
+        route_through(lattice, "x", ["line", "ring", "hot"], turns={"line": 1})
+    with pytest.raises(ValueError, match="ends in ring"):
+        route_through(lattice, "x", ["line", "ring"], accelerated=["ring"])
+    with pytest.raises(ValueError, match="whole number"):
+        route_through(lattice, "x", ["line", "ring", "hot"], turns={"ring": -1})

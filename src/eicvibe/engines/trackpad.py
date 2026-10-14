@@ -127,6 +127,8 @@ COLUMNS = (
     "dx",
     "dy",
     "roll",
+    "pitch",
+    "yaw",
     "x_pitch",
     "y_pitch",
     "tilt",
@@ -681,8 +683,9 @@ def _strengths(multipoles: dict[str, Any], length: float, *, thin: bool = False)
 
 
 def _placement(groups: dict[str, Any], roll: float) -> dict[str, float]:
-    x, y, z_rot = displacement(NAME, groups)
-    return {"dx": x, "dy": y, "roll": roll + z_rot}
+    """The body's offsets, roll, and PALS pitch and yaw (about its centre; see trackpad.jl ``placement``)."""
+    d = displacement(NAME, groups)
+    return {"dx": d.x, "dy": d.y, "roll": roll + d.roll, "pitch": d.pitch, "yaw": d.yaw}
 
 
 def _pieces(

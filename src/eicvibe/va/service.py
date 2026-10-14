@@ -27,6 +27,7 @@ from eicvibe.ai import AiConfig, load_config, save_config
 from eicvibe.domain.lattice import Lattice, Route
 from eicvibe.domain.machine import MachineRegistry
 from eicvibe.engines.contracts import Effect, Fidelity, Options
+from eicvibe.virtual.errors import ErrorSpec
 
 from .settings import MachineSettings, Values
 from .store import ANONYMOUS, Role, Store, User, now
@@ -62,6 +63,10 @@ class MachineSpec(BaseModel):
         description="Turns a ring's setting change ramps over (a half cosine); 0 steps",
     )
     autostart: bool = Field(False, description="Started whenever the service starts")
+    errors: ErrorSpec = Field(
+        default_factory=ErrorSpec,
+        description="Its magnets', supplies' and BPMs' errors, drawn from their seed as it starts (ADR 0011)",
+    )
 
 
 @dataclass
@@ -334,9 +339,14 @@ class VirtualAccelerator:
         rate: float | None = None,
         ramp_turns: int = 1024,
         autostart: bool = False,
+        errors: ErrorSpec | Mapping[str, Any] | None = None,
         reason: str = "",
     ) -> dict[str, Any]:
-        """A new machine: shared (administrators), or a sandbox of the user's own."""
+        """A new machine: shared (administrators), or a sandbox of the user's own.
+
+        ``errors`` (ADR 0011): by default none on magnets and supplies, the BPMs' usual ones; a spec
+        without a seed gets one drawn now, so the machine has the same errors every time it starts.
+        """
         self._require(user, Role.ADMIN if shared else Role.PHYSICIST)
         if not shared:
             self._quota(user)
@@ -372,10 +382,18 @@ class VirtualAccelerator:
                 rate=rate,
                 ramp_turns=ramp_turns,
                 autostart=autostart and shared,
+                errors=_seeded(ErrorSpec.model_validate(errors or {}), None),
             )
             self.store.add_machine(machine_id, spec.model_dump(), user.name)
             self._instances[machine_id] = Instance(spec)
-        self.store.act(user.name, "create", machine_id, reason, **spec.model_dump(exclude={"id"}))
+        self.store.act(
+            user.name,
+            "create",
+            machine_id,
+            reason,
+            **spec.model_dump(exclude={"id", "errors"}),
+            errors=_described(spec.errors),
+        )
         return self._entry(self._instances[machine_id])
 
     def fork(self, user: User, machine_id: str, name: str | None = None, reason: str = "") -> dict[str, Any]:
@@ -393,6 +411,7 @@ class VirtualAccelerator:
             particles=source.particles,
             rate=source.rate,
             ramp_turns=source.ramp_turns,
+            errors=source.errors,  # a copy of the same machine: the same errors
             reason=reason,
         )
         instance = self._instances[entry["id"]]
@@ -401,6 +420,57 @@ class VirtualAccelerator:
         copied = self.store.copy_live(machine_id, instance.spec.id, user.name)
         self.store.act(user.name, "fork", instance.spec.id, reason, source=machine_id, settings=copied)
         return self._entry(instance)
+
+    def errors(self, user: User, machine_id: str) -> dict[str, Any]:
+        """A machine's errors as specified, seed included, and what each row chooses: for whoever
+        may configure it."""
+        instance = self._instance(machine_id)
+        self._may(user, instance, Role.ADMIN)
+        return self._errors_entry(instance.spec, instance.spec.errors)
+
+    def check_errors(
+        self, user: User, machine_id: str, errors: ErrorSpec | Mapping[str, Any]
+    ) -> dict[str, Any]:
+        """What ``errors`` would choose on a machine: magnets and supplies by row, and the rows that
+        choose nothing. Nothing is saved."""
+        instance = self._instance(machine_id)
+        self._may(user, instance, Role.ADMIN)
+        return self._errors_entry(instance.spec, ErrorSpec.model_validate(errors))
+
+    def _errors_entry(self, spec: MachineSpec, errors: ErrorSpec) -> dict[str, Any]:
+        from eicvibe.virtual import MachineErrors
+
+        drawn = MachineErrors(errors, self.source.lattice, self._branches(spec), self.source.registry)
+        return {"errors": errors.model_dump(mode="json"), "chosen": drawn.chosen, "problems": drawn.problems}
+
+    def set_errors(
+        self, user: User, machine_id: str, errors: ErrorSpec | Mapping[str, Any], reason: str = ""
+    ) -> dict[str, Any]:
+        """Give a stopped machine other errors; it draws them when it starts. Without a seed, it
+        keeps its own: the same magnets keep the same errors where their spec is the same."""
+        instance = self._instance(machine_id)
+        self._may(user, instance, Role.ADMIN)
+        if instance.state not in ("stopped", "failed"):
+            raise Conflict(f"stop {machine_id} first: a machine draws its errors when it starts")
+        errors = _seeded(ErrorSpec.model_validate(errors), instance.spec.errors.seed)
+        if problems := self._errors_entry(instance.spec, errors)["problems"]:
+            raise ValueError(
+                "; ".join(problems)
+                + ": nothing would be drawn for it; check its kinds and names (no names: all)"
+            )
+        new_seed = errors.seed != instance.spec.errors.seed
+        with self._lock:
+            instance.spec = instance.spec.model_copy(update={"errors": errors})
+            self.store.update_machine(machine_id, instance.spec.model_dump())
+        self.store.act(
+            user.name,
+            "errors",
+            machine_id,
+            reason,
+            errors=_described(errors),
+            seed="new" if new_seed else "kept",
+        )
+        return self.errors(user, machine_id)
 
     def remove(self, user: User, machine_id: str, reason: str = "") -> None:
         instance = self._instance(machine_id)
@@ -463,7 +533,7 @@ class VirtualAccelerator:
 
     def _run(self, spec: MachineSpec):
         """A ring or route run of the machine as it is now: its mode's settings and its live ones."""
-        from eicvibe.virtual import Beam, RingRun, RouteRun
+        from eicvibe.virtual import Beam, MachineErrors, RingRun, RouteRun
 
         settings = self._machine_settings(spec.mode)
         values = self._for(spec, settings.start_values(self.live(spec.id)))
@@ -477,8 +547,10 @@ class VirtualAccelerator:
             "retention_bytes": self.retention_bytes,
             "run_id": run_id,
             "machine": spec.id,
+            "bpm": spec.errors.bpm_model(),
         }
         lattice = self.source.lattice
+        common["errors"] = MachineErrors(spec.errors, lattice, self._branches(spec), self.source.registry)
         if spec.kind == "ring":
             branch = lattice.layout(spec.target).id
             return RingRun(
@@ -491,6 +563,12 @@ class VirtualAccelerator:
             )
         route = self.source.routes[spec.target]
         return RouteRun(lattice, route, self.runs / run_id, rate=spec.rate or self.route_rate, **common)
+
+    def _branches(self, spec: MachineSpec) -> list[str]:
+        """The branches a machine tracks, by id: its ring, or its route's, in order."""
+        if spec.kind == "ring":
+            return [self.source.lattice.layout(spec.target).id]
+        return list(dict.fromkeys(s.branch for s in self.source.routes[spec.target].segments))
 
     def _for(self, spec: MachineSpec, values: Values) -> Values:
         """The values a machine's engine takes: those of the branches it tracks."""
@@ -862,6 +940,20 @@ class VirtualAccelerator:
         own = [i for i in self._instances.values() if not i.spec.shared and i.spec.owner == user.name]
         if len(own) >= self.sandbox_quota and not user.can(Role.ADMIN):
             raise Forbidden(f"{user.name} has {len(own)} sandboxes, the most allowed; remove one first")
+
+
+def _seeded(errors: ErrorSpec, current: int | None) -> ErrorSpec:
+    """``errors`` with a seed: its own, else the machine's current one, else one drawn now."""
+    if errors.seed is not None:
+        return errors
+    return errors.replaced(
+        seed=current if current is not None else int(np.random.default_rng().integers(1, 2**31))
+    )
+
+
+def _described(errors: ErrorSpec) -> dict[str, Any]:
+    """A machine's errors for the log: what kinds and how large, never the seed that draws them."""
+    return errors.model_dump(mode="json", exclude={"seed": True, "bpms": {"seed"}})
 
 
 def _spec_fields(stored: dict[str, Any]) -> dict[str, Any]:

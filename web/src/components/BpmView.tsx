@@ -44,9 +44,12 @@ interface Props {
   runs: RunEntry[];
   /** Shown: only then does it follow the run. */
   active?: boolean;
-  /** The run to show first, e.g. a virtual accelerator machine's (from the URL). */
+  /** The run to show first (a link naming it), kept until the user picks another. */
   initialRun?: string;
-  /** The run of the machine the viewer works with: shown unless the user picked another. */
+  /**
+   * The run of the machine the viewer works with: shown unless the user picked another, and
+   * followed into the machine's next run when it is stopped and started again.
+   */
   preferRun?: string;
   /** The virtual accelerator's machine the viewer works with, and how to show what it tracks. */
   machine?: MachineEntry | null;
@@ -86,11 +89,36 @@ function eventText(events: readonly { kind: string; turn: number }[]): string {
     .join("");
 }
 
-/** A positive whole number from an input, or the fallback. */
-const whole = (text: string, fallback: number, max: number) => {
+/** A positive whole number from an input's text, or null while it is not one (empty, or being typed). */
+const whole = (text: string, max: number): number | null => {
   const n = Math.round(Number(text));
-  return Number.isFinite(n) && n >= 1 ? Math.min(n, max) : fallback;
+  return text.trim() !== "" && Number.isFinite(n) && n >= 1 ? Math.min(n, max) : null;
 };
+
+/**
+ * A field for a positive whole number, typed freely: it may be empty or unfinished while typed,
+ * each whole number takes effect as it is typed, and leaving the field shows the one in effect.
+ */
+function WholeField(props: { value: number; max: number; label: string; onChange(value: number): void }) {
+  const { value, max, onChange } = props;
+  const [text, setText] = useState(String(value));
+  useEffect(() => setText((t) => (whole(t, max) === value ? t : String(value))), [value, max]);
+  return (
+    <input
+      type="number"
+      min={1}
+      max={max}
+      value={text}
+      aria-label={props.label}
+      onChange={(e) => {
+        setText(e.target.value);
+        const n = whole(e.target.value, max);
+        if (n !== null) onChange(n);
+      }}
+      onBlur={() => setText(String(value))}
+    />
+  );
+}
 
 export function BpmView(props: Props) {
   const { digest, latticeName, branch, runs, selection, hover, range, band, history, scheme, onSelect } = props;
@@ -127,6 +155,8 @@ export function BpmView(props: Props) {
   const ring = run?.kind === "ring";
   const fixed = source.startsWith("capture:");
   useEffect(() => {
+    setFrames(null); // another run's orbits are not shown under this one's name
+    setError(null);
     setSource("buffer");
     setCaptures([]);
     setLive(true);
@@ -370,7 +400,11 @@ export function BpmView(props: Props) {
       const i = nearestBpm(frames.s, s, 8 / sScale(view, sizeRef.current.width));
       if (i === null) return null;
       const name = frames.bpms[i]!;
-      const index = branch.labels.indexOf(name);
+      // The BPM of that name nearest the reading: a route round a ring reads one BPM on each pass.
+      let index = -1;
+      branch.labels.forEach((label, k) => {
+        if (label === name && (index < 0 || Math.abs(branch.s[k]! - frames.s[i]!) < Math.abs(branch.s[index]! - frames.s[i]!))) index = k;
+      });
       return { i, name, target: index >= 0 ? { branch: branch.id, index } : null };
     };
     const pick = (s: number): Target | null => {
@@ -467,6 +501,8 @@ export function BpmView(props: Props) {
         `${branch.name} --out DIR\` and serve it with \`eicvibe-web … --runs DIR\`.`
       : "No virtual-ring run of this ring on the server. Start one with `eicvibe-virtual ring MACHINE --branch " +
         `${branch.name} --out DIR\` and serve it with \`eicvibe-web … --runs DIR\`.`;
+  else if (!frames && run.end_turn === run.first_turn && run.state !== "stopped")
+    message = `Waiting for ${run.id}'s first ${unit}s…`;
   else if (error) message = `Cannot read the run's orbits: ${error}`;
   else if (!frames) message = "Reading the run…";
 
@@ -475,7 +511,12 @@ export function BpmView(props: Props) {
       <div className="optics-bar bpm-bar">
         {props.tabs}
         {candidates.length > 1 ? (
-          <select aria-label="Run" value={runId ?? ""} onChange={(e) => setChosen(e.target.value)}>
+          <select
+            aria-label="Run"
+            value={runId ?? ""}
+            // The machine's own run: follow the machine, into its next run when it starts again.
+            onChange={(e) => setChosen(e.target.value === props.preferRun ? null : e.target.value)}
+          >
             {candidates.map((r) => (
               <option key={r.id} value={r.id}>
                 {r.machine ? `${r.machine}: ` : ""}
@@ -537,26 +578,10 @@ export function BpmView(props: Props) {
           </span>
         ) : null}
         <label title={`${unit === "shot" ? "Shots" : unit === "sample" ? "Samples" : "Turns"} between the orbits shown`}>
-          every{" "}
-          <input
-            type="number"
-            min={1}
-            value={every}
-            aria-label="Turns between orbits"
-            onChange={(e) => setEvery(whole(e.target.value, every, 1_000_000))}
-          />{" "}
-          {unit}s
+          every <WholeField value={every} max={1_000_000} label="Turns between orbits" onChange={setEvery} /> {unit}s
         </label>
         <label title="Orbits shown; older ones fade">
-          last{" "}
-          <input
-            type="number"
-            min={1}
-            max={50}
-            value={count}
-            aria-label="Orbits shown"
-            onChange={(e) => setCount(whole(e.target.value, count, 50))}
-          />
+          last <WholeField value={count} max={50} label="Orbits shown" onChange={setCount} />
         </label>
         <span className="bpm-turns" data-testid="bpm-turns">
           {frames

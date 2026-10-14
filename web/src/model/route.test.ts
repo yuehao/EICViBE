@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { BranchData, BranchSummary } from "../api/client";
 import { branchModel, occurrenceAt, type BranchModel } from "./branch";
-import { isRoute, routeModel, routeS, targetIn, type RouteModel, type RouteSummary } from "./route";
+import { isRoute, routeModel, routePasses, routeS, targetIn, type RouteModel, type RouteSummary } from "./route";
 
 /** A straight branch of ``names``, one metre each, along z from ``z0``. */
 function straight(id: string, names: string[], z0: number, order: number): BranchModel {
@@ -95,6 +95,25 @@ describe("route model", () => {
     expect(routeS(route, "ring", 0.5)).toBe(6.5); // once round: the ring's start comes last
     expect(routeS(route, "line", 3)).toBe(3);
     expect(routeS(route, "other", 1)).toBeNull();
+  });
+
+  it("goes round a ring and on: the ring's elements on each pass, found at the first", () => {
+    // In at q1, once round (q1 to q2, then d1), and on round to q1 again: 1.25 turns.
+    const round: RouteSummary = {
+      ...summary,
+      id: "route:round",
+      name: "round",
+      segments: [
+        ...summary.segments,
+        { branch: "ring", start: "ring.q1", end: "ring.q1", s_start: 7, length: 1 },
+      ],
+      length: 8,
+    };
+    const twice = routeModel(round, models) as RouteModel;
+    expect(twice.ids.slice(3)).toEqual(["ring.q1", "ring.d2", "ring.q2", "ring.d1", "ring.q1"]);
+    expect(twice.index.get("ring.q1")).toBe(3); // a selection lands on the first pass
+    expect(routePasses(twice, "ring", 1.5)).toEqual([3.5, 7.5]); // a fork there is flagged on both passes
+    expect(routeS(twice, "ring", 1.5)).toBe(3.5);
   });
 
   it("waits for every branch it passes", () => {

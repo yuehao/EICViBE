@@ -31,11 +31,19 @@ polynom_a(r::Row) = SVector(r[:a0], r[:a1], r[:a2], r[:a3])
 order(r::Row) = round(Int, r[:order])
 steps(r::Row) = round(Int, r[:steps])
 
-"""Entrance and exit maps of a displaced and rolled element (AT's T1, T2, R1, R2)."""
+"""Entrance and exit maps of a displaced, pitched, yawed and rolled element (AT's T1, T2, R1, R2).
+
+The body's centre is offset by (dx, dy) and its axis turned about the centre by PALS's right-handed
+pitch (x_rot: the exit towards -y) and yaw (y_rot: the exit towards +x); to first order in the
+angles the entrance face is then half a length back along the turned axis, and the particle enters
+at the angle the axis makes. The roll turns the body about its own axis after that.
+"""
 function placement(r::Row)
-    dx, dy, roll = r[:dx], r[:dy], r[:roll]
-    shift = iszero(dx) && iszero(dy) ? (;) : (t1=SVector(-dx, 0.0, -dy, 0.0, 0.0, 0.0),
-                                             t2=SVector(dx, 0.0, dy, 0.0, 0.0, 0.0))
+    dx, dy, roll, pitch, yaw = r[:dx], r[:dy], r[:roll], r[:pitch], r[:yaw]
+    half = r[:L] / 2
+    moved = !(iszero(dx) && iszero(dy) && iszero(pitch) && iszero(yaw))
+    shift = moved ? (t1=SVector(-dx + yaw * half, -yaw, -dy - pitch * half, pitch, 0.0, 0.0),
+                     t2=SVector(dx + yaw * half, yaw, dy - pitch * half, -pitch, 0.0, 0.0)) : (;)
     iszero(roll) && return shift
     c, s = cos(roll), sin(roll)
     r1 = @SMatrix [c 0 s 0 0 0; 0 c 0 s 0 0; -s 0 c 0 0 0; 0 -s 0 c 0 0; 0 0 0 0 1 0; 0 0 0 0 0 1]

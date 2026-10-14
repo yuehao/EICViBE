@@ -82,6 +82,105 @@ test("an administrator starts a machine, changes a setting, and the log keeps it
   });
 });
 
+test("a machine's Orbit link follows the machine into the run it starts next", async ({ page, request }) => {
+  await asAdmin(request);
+  const made = await request.post("/api/v1/va/machines", {
+    data: { name: "Restart ring", kind: "ring", target: "ring", engine: "xsuite", fidelity: "fast", particles: 8 },
+  });
+  expect(made.ok()).toBeTruthy();
+  const machine = (await made.json()) as { id: string };
+  const started = async () => {
+    expect((await request.post(`/api/v1/va/machines/${machine.id}/start`, { data: { reason: "e2e" } })).ok()).toBeTruthy();
+    let run: string | null = null;
+    await expect(async () => {
+      const entry = (await (await request.get(`/api/v1/va/machines/${machine.id}`)).json()) as { state: string; run: string | null };
+      expect(entry.state).toBe("running");
+      run = entry.run;
+    }).toPass({ timeout: 30_000 });
+    return run!;
+  };
+  const first = await started();
+
+  await adminLogin(page, "admin", ADMIN_PASSWORD);
+  const link = page.locator(`tr[data-machine=${machine.id}]`).getByRole("link", { name: "Orbit" });
+  const href = await link.getAttribute("href");
+  expect(href).toContain(`machine=${machine.id}`);
+  expect(href).not.toContain("run="); // the machine, whichever run it has
+  await page.goto(href!);
+  const orbit = page.getByRole("tabpanel", { name: "Orbit" });
+  await expect(orbit.getByLabel("Run")).toHaveValue(first);
+  await expect(orbit.getByTestId("bpm-turns")).toContainText("turns", { timeout: 20_000 });
+
+  expect((await request.post(`/api/v1/va/machines/${machine.id}/stop`, { data: { reason: "e2e" } })).ok()).toBeTruthy();
+  await expect(orbit.getByTestId("bpm-state")).toHaveText("stopped", { timeout: 20_000 });
+  const second = await started();
+  expect(second).not.toBe(first);
+  await expect(orbit.getByLabel("Run")).toHaveValue(second, { timeout: 20_000 });
+  await expect(orbit.getByTestId("bpm-state")).toHaveText("running", { timeout: 20_000 });
+  await expect(orbit.getByTestId("bpm-turns")).toContainText("turns", { timeout: 20_000 });
+
+  await request.post(`/api/v1/va/machines/${machine.id}/stop`, { data: { reason: "e2e" } });
+});
+
+test("an administrator chooses a machine's errors, which it draws when it starts", async ({ page, request }) => {
+  await asAdmin(request);
+  const made = await request.post("/api/v1/va/machines", {
+    data: { name: "Errors ring", kind: "ring", target: "ring", engine: "xsuite", fidelity: "fast", particles: 8 },
+  });
+  expect(made.ok()).toBeTruthy();
+  const machine = (await made.json()) as { id: string };
+
+  await adminLogin(page, "admin", ADMIN_PASSWORD);
+  const row = page.locator(`tr[data-machine=${machine.id}]`);
+  await row.getByRole("button", { name: "Errors" }).click();
+  const editor = page.getByTestId("errors-editor");
+  await expect(editor).toBeVisible();
+  await editor.getByRole("button", { name: "+ Typical alignment" }).click();
+  await expect(editor.getByLabel("x offset µm, row 1")).toHaveValue("200");
+  await expect(editor.getByTestId("chooses-magnet-1")).toHaveText("67 magnets"); // the ring's bends, quads and sextupoles
+  // A name that matches nothing is said at once, and refused when saved.
+  await editor.getByLabel("Names, row 1").fill("any");
+  await expect(editor.getByTestId("chooses-magnet-1")).toHaveText("none");
+  await editor.getByRole("button", { name: "Save errors" }).click();
+  await expect(page.getByTestId("errors-note")).toContainText("no Bend or Quadrupole or Sextupole named any here");
+  await editor.getByLabel("Names, row 1").fill("");
+  await expect(editor.getByTestId("chooses-magnet-1")).toHaveText("67 magnets");
+  await editor.getByLabel("pitch mrad, row 1").fill("0.1");
+  await editor.getByRole("button", { name: "+ Fluctuating supply" }).click();
+  await editor.getByLabel("Supply names, row 1").fill("b_*");
+  await editor.getByLabel("Ripple, row 1").fill("360:5");
+  await editor.getByLabel("BPM rolls mrad").fill("1");
+  await editor.getByLabel("Reason for the errors").fill("e2e errors");
+  await editor.getByRole("button", { name: "Save errors" }).click();
+  await expect(page.getByTestId("errors-note")).toContainText("draws these errors (seed");
+
+  const entry = (await (await request.get(`/api/v1/va/machines/${machine.id}/errors`)).json()) as {
+    errors: {
+      magnets: { x_offset: number; roll: number; pitch: number; select: { kinds: string[] } }[];
+      supplies: { rms: number; ripple: { frequency: number; amplitude: number }[]; select: { names: string[] } }[];
+      bpms: { roll_rms: number };
+    };
+    chosen: { magnets: number[]; supplies: number[] };
+  };
+  const stored = entry.errors;
+  expect(entry.chosen).toEqual({ magnets: [67], supplies: [1] }); // the string of b_* bends is one supply
+  expect(stored.magnets[0]!.select.kinds).toEqual(["Bend", "Quadrupole", "Sextupole"]);
+  expect([stored.magnets[0]!.x_offset, stored.magnets[0]!.roll, stored.magnets[0]!.pitch]).toEqual([2e-4, 5e-4, 1e-4]);
+  expect(stored.supplies[0]!.select.names).toEqual(["b_*"]);
+  expect(stored.supplies[0]!.rms).toBeCloseTo(1e-5, 12);
+  expect(stored.supplies[0]!.ripple).toEqual([{ frequency: 360, amplitude: 5e-6 }]);
+  expect(stored.bpms.roll_rms).toBe(1e-3);
+
+  // Running, it has drawn them: they cannot change until it stops.
+  await page.getByRole("button", { name: "Machines" }).click();
+  await row.getByRole("button", { name: "Start" }).click();
+  await expect(row.getByTestId("machine-state")).toHaveText("running", { timeout: 30_000 });
+  await row.getByRole("button", { name: "Errors" }).click();
+  await expect(editor).toContainText("Stop Errors ring to change its errors");
+  await expect(editor.getByRole("button", { name: "Save errors" })).toBeDisabled();
+  await request.post(`/api/v1/va/machines/${machine.id}/stop`, { data: { reason: "e2e" } });
+});
+
 test("a user views without logging in, and logs in only to change a setting", async ({ page, request }) => {
   await asAdmin(request);
   const made = await request.post("/api/v1/va/machines", {

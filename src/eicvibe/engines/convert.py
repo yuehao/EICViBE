@@ -8,7 +8,7 @@ harmonic. Each helper refuses what it cannot represent with
 """
 
 import math
-from typing import Any
+from typing import Any, NamedTuple
 
 from eicvibe.domain.lattice import SPECIES, Lattice
 
@@ -49,13 +49,32 @@ def common_tilt(engine: str, multipoles: dict[str, Any], order: int) -> float:
     return main
 
 
-def displacement(engine: str, groups: Groups) -> tuple[float, float, float]:
-    """``(x_offset, y_offset, z_rot)`` of an element's BodyShiftP; the other shifts are refused."""
+class Displacement(NamedTuple):
+    """An element body's BodyShiftP: offsets of its centre (m) and right-handed rotations about it (rad).
+
+    ``pitch`` is PALS ``x_rot`` (a positive one turns the exit end towards -y), ``yaw`` is ``y_rot``
+    (towards +x), ``roll`` is ``z_rot``; all are about the body's centre, as Bmad's are.
+    """
+
+    x: float
+    y: float
+    roll: float
+    pitch: float
+    yaw: float
+
+
+def displacement(engine: str, groups: Groups) -> Displacement:
+    """An element's BodyShiftP as a :class:`Displacement`; a longitudinal offset is refused."""
     shift = groups.get("BodyShiftP", {})
-    for name in ("z_offset", "x_rot", "y_rot"):
-        if shift.get(name):
-            raise UnsupportedRequest(engine, [f"BodyShiftP.{name} is not converted yet"])
-    return shift.get("x_offset", 0.0), shift.get("y_offset", 0.0), shift.get("z_rot", 0.0)
+    if shift.get("z_offset"):
+        raise UnsupportedRequest(engine, ["BodyShiftP.z_offset is not converted yet"])
+    return Displacement(
+        shift.get("x_offset", 0.0),
+        shift.get("y_offset", 0.0),
+        shift.get("z_rot", 0.0),
+        shift.get("x_rot", 0.0),
+        shift.get("y_rot", 0.0),
+    )
 
 
 def bend_edges(engine: str, bend: dict[str, Any]) -> tuple[float, float]:

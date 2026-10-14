@@ -196,8 +196,19 @@ test("the Orbit tab follows the demo ring's run, orbits every N turns, and pause
   });
   expect(colours).toBeGreaterThan(8); // faded copies of two colours, and the axes
 
-  await page.getByLabel("Turns between orbits").fill("10");
+  // Typed as a person types: the field may be emptied first, and keeps what is typed.
+  const every = page.getByLabel("Turns between orbits");
+  await every.click();
+  await page.keyboard.press("End");
+  await page.keyboard.press("Backspace");
+  await expect(every).toHaveValue("");
+  await page.keyboard.type("10");
+  await expect(every).toHaveValue("10");
   await expect.poll(async () => { const [a, b] = await span(); return b! - a!; }).toBe(40);
+  await every.selectText();
+  await page.keyboard.press("Backspace");
+  await page.getByLabel("Orbits shown").click(); // leaving it empty: it shows the number in effect
+  await expect(every).toHaveValue("10");
 
   await page.getByRole("button", { name: "Pause" }).click();
   const paused = (await span())[1]!;

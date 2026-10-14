@@ -73,8 +73,9 @@ export function routeModel(route: RouteSummary, models: ReadonlyMap<string, Bran
     }
   }
   offsets[n] = point;
+  // An element a route passes more than once (turns round a ring) is found at its first pass.
   const index = new Map<string, number>();
-  ids.forEach((id, i) => index.set(id, i));
+  ids.forEach((id, i) => index.has(id) || index.set(id, i));
   return {
     id: route.id,
     name: route.name,
@@ -110,11 +111,20 @@ export function routeModel(route: RouteSummary, models: ReadonlyMap<string, Bran
   };
 }
 
-/** Where s of a branch lies along the route, or null where the route does not pass. */
+/** Where s of a branch lies along the route (its first pass), or null where the route does not pass. */
 export function routeS(route: RouteModel, branch: string, s: number): number | null {
+  return routePasses(route, branch, s)[0] ?? null;
+}
+
+/** Every s along the route where it passes s of a branch: more than one where it goes round a ring. */
+export function routePasses(route: RouteModel, branch: string, s: number): number[] {
+  const out: number[] = [];
   for (const span of route.spans)
-    if (span.branch === branch && s >= span.s0 - 1e-9 && s <= span.s1 + 1e-9) return span.at + s - span.s0;
-  return null;
+    if (span.branch === branch && s >= span.s0 - 1e-9 && s <= span.s1 + 1e-9) {
+      const at = span.at + s - span.s0;
+      if (!out.some((v) => Math.abs(v - at) < 1e-9)) out.push(at); // a span's end and the next's start
+    }
+  return out;
 }
 
 /** The same occurrence as a target of ``view``: a branch's occurrence on a route, or a route's in its branch. */

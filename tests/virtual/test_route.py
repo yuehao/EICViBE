@@ -105,3 +105,21 @@ def test_a_lost_beam_reads_nothing_downstream(demo, tmp_path):
     assert np.isnan(last).all() and (tbt.x.status[-1] == NO_BEAM).all()
     assert np.isfinite(tbt.x.position[0]).all()  # the line before the ring still sees it
     assert "loss" in [e["kind"] for e in history.events()]
+
+
+def test_an_acceleration_shrinks_the_angles_and_momentum_spread_and_keeps_positions():
+    from eicvibe.virtual.route import accelerated
+
+    bunch = np.array([[1e-3, 2e-4, -1e-3, -2e-4, 0.01, 1e-3]])
+    faster = accelerated(bunch, 0.75 / 10.0)  # from 0.75 to 10 GeV/c
+    assert faster[0] == pytest.approx([1e-3, 1.5e-5, -1e-3, -1.5e-5, 0.01, 7.5e-5])
+    assert bunch[0, 1] == 2e-4  # the bunch given is left as it was
+
+
+def test_a_bpm_read_on_two_passes_has_one_offset_and_gain():
+    from eicvibe.virtual.errors import BpmModel, VirtualBpms
+
+    bpms = VirtualBpms(BpmModel(), 4, 50, 1e-9, names=["b1", "b2", "b1", "b3"])
+    assert bpms.offsets[:, 0] == pytest.approx(bpms.offsets[:, 2])
+    assert bpms.gains[:, 0] == pytest.approx(bpms.gains[:, 2])
+    assert bpms.offsets[0, 0] != bpms.offsets[0, 1]

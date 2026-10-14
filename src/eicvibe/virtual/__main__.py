@@ -2,13 +2,16 @@
 
     eicvibe-virtual ring MACHINE --branch bar --out runs/bar1 [--turns N] [--kick-x RAD] [--kick-every N]
                     [--set rfc:RFP.phase=3.14159] [--engine trackpad] [--fidelity standard] [--particles 100]
+                    [--errors errors.yaml]
     eicvibe-virtual route MACHINE --route bar --out runs/bar-route [--mode MODE] [--shots N] [--rate 2]
+                    [--errors errors.yaml]
     eicvibe-virtual route LATTICE --through ltr,rcs --out runs/direct
     eicvibe-virtual show runs/bar1 [--turns 1024]
     eicvibe-virtual export runs/bar1 acquisition.sdds [--start TURN] [--turns 1024]
 
 ``ring`` tracks until N turns (or Ctrl-C), recording every BPM every turn into
-the run folder; ``route`` sends shots along a route of the machine's
+the run folder, with the magnets', supplies' and BPMs' errors of ``--errors``
+(a YAML or JSON :class:`~.errors.ErrorSpec`, ADR 0011); ``route`` sends shots along a route of the machine's
 ``routes.yaml`` (or through the branches given), recording every BPM every
 shot; ``show`` reads a run's folder, also while the run goes on; ``export``
 writes turns (or shots) in RHIC's turn-by-turn file layout, which tools made
@@ -26,9 +29,35 @@ import numpy as np
 from eicvibe.diagnostics import amplitudes, closed_orbit, tune, write_rhic
 from eicvibe.engines.contracts import Fidelity
 
+from .errors import ErrorSpec, MachineErrors
 from .history import BpmHistory
 from .ring import Beam, RingRun
 from .route import RouteRun
+
+
+def _plain(data):
+    """YAML's mappings and lists as plain dicts and lists."""
+    if isinstance(data, dict):
+        return {k: _plain(v) for k, v in data.items()}
+    if isinstance(data, list):
+        return [_plain(v) for v in data]
+    return data
+
+
+def _errors(path: Path | None, lattice, branches: list[str], registry) -> dict:
+    """The run's ``errors`` and ``bpm`` arguments from an error spec file (YAML or JSON); none without."""
+    if path is None:
+        return {}
+    from eicvibe.store.yamlio import read_yaml
+
+    spec = ErrorSpec.model_validate(_plain(read_yaml(path)) or {})
+    errors = MachineErrors(spec, lattice, list(dict.fromkeys(branches)), registry)
+    print(
+        f"errors from {path}: seed {spec.seed}, {len(errors.shifts) + len(errors.factors)} drawn, "
+        f"{len(errors.supplies)} supplies fluctuating",
+        flush=True,
+    )
+    return {"errors": errors, "bpm": spec.bpm_model()}
 
 
 def _settings(lattice, branches: list[str], items: list[str]) -> dict[tuple[str, str], float]:
@@ -104,6 +133,7 @@ def ring(args: argparse.Namespace) -> None:
         values=_values(args, lattice, [args.branch]),
         registry=registry,
         turns=args.turns,
+        **_errors(args.errors, lattice, [args.branch], registry),
     )
     stopping = False
 
@@ -163,6 +193,7 @@ def route(args: argparse.Namespace) -> None:
         values=_values(args, lattice, [s.branch for s in chosen.segments]),
         registry=registry,
         shots=args.shots,
+        **_errors(args.errors, lattice, [s.branch for s in chosen.segments], registry),
     )
     stopping = False
 
@@ -306,6 +337,9 @@ def main(argv: list[str] | None = None) -> None:
     r.add_argument("--kick-every", type=int, default=0, help="repeat the kick every N turns")
     r.add_argument("--mode", default=None, help="an operating mode's settings, settings/<mode>.yaml")
     r.add_argument("--set", action="append", default=[], help="OCCURRENCE:Group.parameter=value")
+    r.add_argument(
+        "--errors", type=Path, default=None, help="the machine's errors: an ErrorSpec, YAML or JSON"
+    )
     r.set_defaults(handler=ring)
     o = commands.add_parser("route", help="send shots along a route, recording its BPMs")
     o.add_argument("machine", type=Path, help="machine folder or lattice file")
@@ -321,6 +355,9 @@ def main(argv: list[str] | None = None) -> None:
     )
     o.add_argument("--mode", default=None, help="an operating mode's settings: settings/<mode>.yaml")
     o.add_argument("--set", action="append", default=[], help="OCCURRENCE:Group.parameter=value")
+    o.add_argument(
+        "--errors", type=Path, default=None, help="the machine's errors: an ErrorSpec, YAML or JSON"
+    )
     o.set_defaults(handler=route)
     s = commands.add_parser("show", help="what a run has recorded")
     s.add_argument("run", type=Path)

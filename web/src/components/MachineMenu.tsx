@@ -1,10 +1,14 @@
 // Which machine of the virtual accelerator the viewer works with (ADR 0008):
 // the inspector's setpoints and the Orbit tab follow it. A user may make a
 // sandbox of their own from it, to try changes without disturbing anyone, and
-// start, stop or remove their sandboxes; doing so asks them to log in.
+// start, stop or remove their sandboxes, or give them other errors (ADR 0011);
+// doing so asks them to log in.
+
+import { useState } from "react";
 
 import { atLeast, va, VaError, type MachineEntry } from "../api/va";
 import { Cancelled, type Auth } from "./Auth";
+import { ErrorsEditor } from "./ErrorsEditor";
 
 interface Props {
   machines: MachineEntry[];
@@ -18,6 +22,7 @@ interface Props {
 const tracks = (m: MachineEntry) => `the ${m.kind === "route" ? "route" : "ring"} ${m.target}`;
 
 export function MachineMenu({ machines, chosen, auth, onChoose, onChanged, onNotice }: Props) {
+  const [errors, setErrors] = useState(false);
   if (!machines.length) return null;
   const me = auth.me;
   const mine = !!chosen && !chosen.shared && !!me?.logged_in && chosen.owner === me.name;
@@ -71,12 +76,30 @@ export function MachineMenu({ machines, chosen, auth, onChoose, onChanged, onNot
           <button type="button" onClick={() => control(() => (running ? va.stop(chosen.id) : va.start(chosen.id)))}>
             {running ? "Stop" : "Start"}
           </button>
+          <button type="button" title={`${chosen.name}'s magnet, supply and BPM errors`} onClick={() => setErrors(true)}>
+            Errors…
+          </button>
           {!running ? (
             <button type="button" className="danger" onClick={() => window.confirm(`Remove ${chosen.name}? Its log stays.`) && control(() => va.remove(chosen.id))}>
               Remove
             </button>
           ) : null}
         </>
+      ) : null}
+      {errors && mine && chosen ? (
+        <div className="dialog-backdrop" onMouseDown={(e) => e.target === e.currentTarget && setErrors(false)}>
+          <div className="dialog errors-dialog" role="dialog" aria-label={`Errors of ${chosen.name}`} onKeyDown={(e) => e.key === "Escape" && setErrors(false)}>
+            <h3>
+              Errors of {chosen.name} <span className="muted">({chosen.state})</span>
+            </h3>
+            <ErrorsEditor machine={chosen} onError={fail} onSaved={onChanged} />
+            <div className="dialog-buttons">
+              <button type="button" onClick={() => setErrors(false)}>
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
       ) : null}
     </span>
   );

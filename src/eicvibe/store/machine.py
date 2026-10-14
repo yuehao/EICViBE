@@ -91,7 +91,9 @@ A route enters a branch where the previous branch's fork lands and leaves it at 
 to the next branch, going round a ring when that fork lies behind; a route that ends in a
 ring it entered part-way goes round once. A route whose beam is stored in a ring before it
 leaves it (an accumulator) says so: {branches: [...], stored: [ring]}; it leaves on the
-ring's own periodic optics.
+ring's own periodic optics. turns: {ring: n} goes round a ring n full turns before going on to
+its fork (a synchrotron's beam, shown once round before it is extracted); accelerated: [ring]
+leaves a ring at the next branch's momentum (the ring ramps the beam, its optics unchanged).
 """
 
 
@@ -103,8 +105,9 @@ def read_routes(folder: Path, lattice: Lattice) -> tuple[Route, ...]:
 def read_routes_file(path: Path, lattice: Lattice) -> tuple[Route, ...]:
     """The routes in a routes file; none without the file.
 
-    A route is ``name: [branch, ...]``, or ``name: {branches: [...], stored: [ring, ...]}`` for one
-    whose beam is stored in rings it leaves (an accumulator).
+    A route is ``name: [branch, ...]``, or ``name: {branches: [...], stored: [ring, ...],
+    turns: {ring: n}, accelerated: [ring, ...]}`` for one whose beam is stored in rings it leaves
+    (an accumulator), goes round a ring n turns before going on, or is accelerated in a ring.
     """
     path = Path(path)
     if not path.is_file():
@@ -115,18 +118,30 @@ def read_routes_file(path: Path, lattice: Lattice) -> tuple[Route, ...]:
         raise FileError(path, "needs a mapping 'routes' of route names to lists of branch names")
     routes = []
     for name, entry in entries.items():
-        stored = []
+        stored, turns, accelerated = [], {}, []
         if isinstance(entry, dict):
             branches, stored = entry.get("branches"), entry.get("stored") or []
-            if not isinstance(stored, list):
-                raise FileError(path, f"route {name}: give the rings it stores the beam in as a list")
+            turns, accelerated = entry.get("turns") or {}, entry.get("accelerated") or []
+            if not isinstance(stored, list) or not isinstance(accelerated, list):
+                raise FileError(
+                    path, f"route {name}: give the rings it stores or accelerates the beam in as lists"
+                )
+            if not isinstance(turns, dict) or not all(isinstance(n, int) for n in turns.values()):
+                raise FileError(path, f"route {name}: give its turns as {{ring: whole number}}")
         else:
             branches = entry
         if not isinstance(branches, list) or not branches:
             raise FileError(path, f"route {name}: give its branches as a list of names")
         try:
             routes.append(
-                route_through(lattice, str(name), [str(b) for b in branches], [str(r) for r in stored])
+                route_through(
+                    lattice,
+                    str(name),
+                    [str(b) for b in branches],
+                    [str(r) for r in stored],
+                    {str(r): int(n) for r, n in turns.items()},
+                    [str(r) for r in accelerated],
+                )  # fmt: skip
             )
         except (KeyError, ValueError) as error:
             raise FileError(path, f"route {name}: {error}") from None
@@ -142,12 +157,20 @@ def write_routes(folder: Path, routes: dict[str, list[str] | dict]) -> Path | No
 
 
 def write_routes_file(path: Path, routes: dict[str, list[str] | dict]) -> Path:
-    """Write a routes file: ``name: [branch, ...]``, or ``{branches: [...], stored: [...]}``."""
+    """Write a routes file: ``name: [branch, ...]``, or ``{branches: [...], stored: [...], turns:
+    {...}, accelerated: [...]}`` (only what a route has)."""
 
     def entry(route):
-        if isinstance(route, dict):
-            return flow({"branches": list(route["branches"]), "stored": list(route.get("stored", ()))})
-        return flow(list(route))
+        if not isinstance(route, dict):
+            return flow(list(route))
+        out = {"branches": list(route["branches"])}
+        if route.get("stored"):
+            out["stored"] = list(route["stored"])
+        if route.get("turns"):
+            out["turns"] = dict(route["turns"])
+        if route.get("accelerated"):
+            out["accelerated"] = list(route["accelerated"])
+        return flow(out)
 
     body = mapping([("routes", mapping((name, entry(route)) for name, route in routes.items()))])
     return write_yaml(path, body, ROUTES_HEADER)

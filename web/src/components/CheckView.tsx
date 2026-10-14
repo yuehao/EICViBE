@@ -152,7 +152,12 @@ export function CheckView(props: Props) {
       <div className="optics-bar bpm-bar">
         {props.tabs}
         {candidates.length > 1 ? (
-          <select aria-label="Run" value={runId ?? ""} onChange={(e) => setChosen(e.target.value)}>
+          <select
+            aria-label="Run"
+            value={runId ?? ""}
+            // The machine's own run: follow the machine, into its next run when it starts again.
+            onChange={(e) => setChosen(e.target.value === props.preferRun ? null : e.target.value)}
+          >
             {candidates.map((r) => (
               <option key={r.id} value={r.id}>
                 {r.machine ? `${r.machine}: ` : ""}

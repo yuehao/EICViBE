@@ -593,6 +593,9 @@ def _fields(element) -> dict[str, Any]:
         "shift_x",
         "shift_y",
         "rot_s_rad",
+        "rot_x_rad",
+        "rot_y_rad",
+        "rot_shift_anchor",
     ):
         if hasattr(element, name):
             value = getattr(element, name)
@@ -608,9 +611,21 @@ def _orders(multipoles: dict[str, Any], length: float, skip: set[int] = frozense
     return knl, ksl
 
 
-def _misalignment(groups: dict[str, Any], tilt: float = 0.0) -> dict[str, float]:
-    x, y, roll = displacement(NAME, groups)
-    return {"shift_x": x, "shift_y": y, "rot_s_rad": tilt + roll}
+def _misalignment(groups: dict[str, Any], tilt: float = 0.0, length: float = 0.0) -> dict[str, float]:
+    """Xsuite's shifts and rotations of a body, about its centre (``rot_shift_anchor``, from the entry).
+
+    Xsuite's ``rot_y_rad`` is PALS's right-handed yaw; its ``rot_x_rad`` turns the exit towards +y,
+    so it is minus PALS's pitch. The anchor moves only what pitch and yaw do.
+    """
+    d = displacement(NAME, groups)
+    return {
+        "shift_x": d.x,
+        "shift_y": d.y,
+        "rot_s_rad": tilt + d.roll,
+        "rot_x_rad": -d.pitch,
+        "rot_y_rad": d.yaw,
+        "rot_shift_anchor": length / 2,
+    }
 
 
 def _pieces(placed: PlacedElement, groups: dict[str, Any], revolution: float) -> list[tuple[str, Any]]:
@@ -629,7 +644,7 @@ def _pieces(placed: PlacedElement, groups: dict[str, Any], revolution: float) ->
         return _bend(oid, length, groups, mm)
     if kind in (ElementKind.QUADRUPOLE, ElementKind.SEXTUPOLE, ElementKind.OCTUPOLE):
         order = {ElementKind.QUADRUPOLE: 1, ElementKind.SEXTUPOLE: 2, ElementKind.OCTUPOLE: 3}[kind]
-        shifts = _misalignment(groups, common_tilt(NAME, mm, order))
+        shifts = _misalignment(groups, common_tilt(NAME, mm, order), length)
         if length == 0.0:
             knl, ksl = _orders(mm, 0.0)
             return [(oid, xt.Multipole(knl=knl, ksl=ksl, **shifts))]
@@ -674,7 +689,7 @@ def _bend(oid: str, length: float, groups: dict[str, Any], mm: dict[str, Any]) -
     bp = groups.get("BendP", {})
     angle = bp.get("angle_ref", 0.0)
     entry_angle, exit_angle = bend_edges(NAME, bp)
-    shifts = _misalignment(groups, bp.get("tilt_ref", 0.0))
+    shifts = _misalignment(groups, bp.get("tilt_ref", 0.0), length)
     if length == 0.0:
         knl, ksl = _orders(mm, 0.0)
         knl[0] = knl[0] or angle

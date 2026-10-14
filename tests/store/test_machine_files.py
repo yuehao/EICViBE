@@ -317,3 +317,22 @@ def test_values_become_the_design_in_memory_too():
     assert [p.id for p in designed.layout("a").placements] == [p.id for p in lattice.layout("a").placements]
     with pytest.raises(ValueError, match="placed 2 times"):
         with_design(lattice, {(q1.id, "MagneticMultipoleP.Kn1"): 1.0})
+
+
+def test_a_route_may_go_round_a_ring_and_be_accelerated_in_it(folder):
+    from eicvibe.store.machine import ROUTES_FILE, write_routes_file
+
+    route = {"branches": ["injection", "ring", "extraction"], "turns": {"ring": 2}}
+    write_routes_file(folder / ROUTES_FILE, {"transfer": route})
+    assert (
+        "transfer: {branches: [injection, ring, extraction], turns: {ring: 2}}"
+        in (folder / ROUTES_FILE).read_text()
+    )
+    [transfer] = load_machine(folder).routes
+    ring = load_machine(folder).lattice.layout("ring").id
+    assert transfer.turns_in(ring) == 2 and transfer.accelerated == ()
+    (folder / ROUTES_FILE).write_text(
+        "routes:\n  transfer: {branches: [injection, ring], turns: {ring: two}}\n"
+    )
+    with pytest.raises(FileError, match="whole number"):
+        load_machine(folder)

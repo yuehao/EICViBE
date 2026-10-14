@@ -78,7 +78,11 @@ export function App() {
   // works with (remembered by this browser), and who is logged in, asked only when changing something.
   const [vaOn, setVaOn] = useState(false);
   const [machines, setMachines] = useState<MachineEntry[]>([]);
-  const [machineId, setMachineId] = useState<string | null>(() => remembered(MACHINE_KEY));
+  const [machineId, setMachineId] = useState<string | null>(() => {
+    // A link to a machine's orbit (the administration page's) chooses that machine.
+    if (initial.machine) remember(MACHINE_KEY, initial.machine);
+    return initial.machine ?? remembered(MACHINE_KEY);
+  });
   const { auth, dialog } = useAuth(vaOn);
   // The optional local model (ADR 0009): its features show only when the server has one that answers.
   const aiStatus = useAi();
@@ -139,20 +143,19 @@ export function App() {
   }, []);
 
   // Virtual rings' runs the server reads (ADR 0007); new runs appear as they start.
-  useEffect(() => {
-    let stop = false;
-    const load = () =>
+  const loadRuns = useCallback(
+    () =>
       api.runs().then(
-        (list) => !stop && setRuns((previous) => (JSON.stringify(previous) === JSON.stringify(list) ? previous : list)),
+        (list) => setRuns((previous) => (JSON.stringify(previous) === JSON.stringify(list) ? previous : list)),
         () => undefined,
-      );
-    load();
-    const timer = window.setInterval(load, 5_000);
-    return () => {
-      stop = true;
-      window.clearInterval(timer);
-    };
-  }, []);
+      ),
+    [],
+  );
+  useEffect(() => {
+    loadRuns();
+    const timer = window.setInterval(loadRuns, 5_000);
+    return () => window.clearInterval(timer);
+  }, [loadRuns]);
 
   useEffect(() => void vaEnabled().then(setVaOn), []);
   const loadMachines = useCallback(() => va.machines().then(setMachines, () => undefined), []);
@@ -164,6 +167,13 @@ export function App() {
   }, [vaOn, loadMachines]);
   const machine =
     machines.find((m) => m.id === machineId) ?? machines.find((m) => m.shared && m.state === "running") ?? machines[0] ?? null;
+  // Each start of a machine is a new run: list it now, for the views that follow the machine.
+  const machineRun = machine?.run ?? null;
+  useEffect(() => {
+    if (machineRun) loadRuns();
+  }, [machineRun, loadRuns]);
+  /** The run the views follow: the machine's, or, while it is stopped, its last (the newest listed). */
+  const machineShown = machine ? (machineRun ?? runs.find((r) => r.machine === machine.id)?.id) : undefined;
   /** The branch or route id a machine tracks, in this revision. */
   const machineView = useCallback(
     (m: MachineEntry | null) =>
@@ -547,7 +557,7 @@ export function App() {
                   runs={runs}
                   active={tab === "orbit"}
                   initialRun={initial.run}
-                  preferRun={machine?.run ?? undefined}
+                  preferRun={machineShown}
                   machine={vaOn ? machine : null}
                   auth={auth}
                   onShowMachine={machineTarget && machineTarget !== current ? () => switchBranch(machineTarget) : undefined}
@@ -567,7 +577,7 @@ export function App() {
                   {...viewerRuns(runs, digest, summary.name, currentModel)}
                   pageLink
                   active={tab === "check"}
-                  preferRun={machine?.run ?? undefined}
+                  preferRun={machineShown}
                   scheme={scheme}
                   tabs={tabs}
                   ai={aiStatus}

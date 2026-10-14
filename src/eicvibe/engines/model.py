@@ -53,7 +53,7 @@ type Values = Mapping[tuple[str, str], float]
 
 #: Parameters that settings and errors change, which sessions update in place:
 #: multipole strengths and rolls, RF voltage and phase, solenoid strength, and
-#: an element's displacement and roll.
+#: an element's displacement, roll, pitch and yaw.
 SETTINGS = frozenset(
     {f"MagneticMultipoleP.{p}{n}{suffix}" for p in ("Kn", "Ks") for n in range(11) for suffix in ("", "L")}
     | {f"MagneticMultipoleP.tilt{n}" for n in range(11)}
@@ -64,6 +64,8 @@ SETTINGS = frozenset(
         "BodyShiftP.x_offset",
         "BodyShiftP.y_offset",
         "BodyShiftP.z_rot",
+        "BodyShiftP.x_rot",
+        "BodyShiftP.y_rot",
     }
 )
 
@@ -334,9 +336,12 @@ def route_optics(
     a line's from its fork). In a ring the route carries the beam's own optics, not the ring's
     periodic ones: what an injected beam sees. In a ring the beam is stored in (the route's
     ``stored``, an accumulator) the beam has the ring's periodic optics, and leaves on them.
+    Leaving a ring it is accelerated in (``accelerated``), the optics go on unchanged at the next
+    branch's momentum: the ring's magnets ramp with the beam.
     Each segment starts on its branch's design orbit: an offset where a fork lands (an
     injection's) is the beam's trajectory, which tracking shows, not part of the optics. A
-    route whose reference momentum changes at a join (an acceleration) is refused. Positions
+    route whose reference momentum changes at a join is refused, unless it leaves a ring it is
+    accelerated in. Positions
     ``s`` are along the route; ``branch`` is ``route:<name>``.
     """
     values = values or {}
@@ -368,9 +373,16 @@ def route_optics(
             session.close()
     if notes is not None:
         stored = ", ".join(lattice.branch(b).name for b in route.stored)
+        rounds = ", ".join(
+            f"{n} turn{'s' if n > 1 else ''} round {lattice.branch(b).name}" for b, n in route.turns
+        )
+        faster = ", ".join(lattice.branch(b).name for b in route.accelerated)
         # read as "from <origin>", as a branch's notes are
-        notes[f"route:{route.name}"] = origin + (
-            f"; in {stored}, its periodic optics (the beam stored)" if stored else ""
+        notes[f"route:{route.name}"] = (
+            origin
+            + (f"; in {stored}, its periodic optics (the beam stored)" if stored else "")
+            + (f"; {rounds}" if rounds else "")
+            + (f"; accelerated in {faster}, its optics unchanged" if faster else "")
         )
     return _joined(lattice, route, parts)
 

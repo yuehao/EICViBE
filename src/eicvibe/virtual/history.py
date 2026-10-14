@@ -28,6 +28,7 @@ shots, are dropped oldest first beyond a size limit; the slow orbit is kept.
 import json
 import os
 import warnings
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -69,6 +70,11 @@ class RunInfo(BaseModel):
     s: list[float]
     beam: dict[str, Any]
     resolution: float = Field(description="BPM resolution, mm rms per turn at full intensity")
+    orbit_resolution: float = Field(
+        0.0,
+        ge=0,
+        description="The BPMs' closed-orbit acquisition noise, mm rms per sample (0: the turns' average)",
+    )
     retention_bytes: int = Field(description="Captures (a route: shots) kept, at most; the oldest go first")
     machine: str | None = Field(None, description="The virtual accelerator's machine that ran it (ADR 0008)")
     buffer_turns: int = Field(0, ge=0, description="Turns the buffer keeps, the latest; 0: all, by size")
@@ -100,6 +106,9 @@ class BpmHistory:
     writable: bool = False
     protect_from: int | None = None
     """While a capture waits for its turns: the buffer keeps turns from here on."""
+    slow_noise: Callable[[int], np.ndarray] | None = None
+    """The closed-orbit acquisition's noise of one sample, ``[plane, bpm]`` (mm), added to the average
+    of the readings it is given without noise (``append``'s ``slow``); None: the readings averaged."""
     _kept: int = field(default=0, repr=False)
     _slow: dict[str, Any] | None = field(default=None, repr=False)
 
@@ -129,20 +138,23 @@ class BpmHistory:
         intensity: np.ndarray,
         status: np.ndarray,
         wall: float | tuple[float, float],
+        slow: tuple[np.ndarray, np.ndarray] | None = None,
     ) -> None:
         """A chunk of readings ``[bpm, turn]`` from turn ``first``, tracked in the wall-clock interval
-        ``wall`` (or by the time ``wall``), and its share of the slow orbit."""
+        ``wall`` (or by the time ``wall``), and its share of the slow orbit: of ``slow`` (the readings
+        without their turn-by-turn noise, x and y) where given, with :attr:`slow_noise` on each sample."""
         if not self.writable:
             raise PermissionError("this history is open for reading")
         count = x.shape[1]
         path = self.directory / "tbt" / f"{first:012d}-{count}.npz"
         _save(path, x, y, intensity, status)
+        sx, sy = slow if slow is not None else (x, y)
         if self.info.slow_period > 0 and isinstance(wall, tuple):
-            self._slow_orbit(first, x, y, intensity, wall)
+            self._slow_orbit(first, sx, sy, intensity, wall)
         else:
             with warnings.catch_warnings():  # a BPM with no reading in a whole chunk averages to NaN
                 warnings.simplefilter("ignore", RuntimeWarning)
-                means = [np.nanmean(a, axis=1) for a in (x, y, intensity)]
+                means = [np.nanmean(a, axis=1) for a in (sx, sy, intensity)]
             moment = wall[1] if isinstance(wall, tuple) else wall
             self._orbit_record(first, count, moment, means)
         if self.info.buffer_turns:
@@ -197,6 +209,9 @@ class BpmHistory:
         self._slow = None
 
     def _orbit_record(self, first: int, turns: int, wall: float, means: list[np.ndarray]) -> None:
+        if self.slow_noise is not None:
+            noise = self.slow_noise(len(means[0]))
+            means = [means[0] + noise[0], means[1] + noise[1], *means[2:]]
         record = np.concatenate([[first, turns, first * self.info.revolution_period, wall], *means])
         with open(self.directory / "orbit.bin", "ab") as out:
             out.write(record.astype(np.float64).tobytes())

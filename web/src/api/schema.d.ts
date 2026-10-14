@@ -497,6 +497,52 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/va/machines/{machine}/errors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Errors
+         * @description The machine's errors as specified, seed included, and what each row chooses: for whoever
+         *     may configure it (ADR 0011).
+         */
+        get: operations["errors_api_v1_va_machines__machine__errors_get"];
+        /**
+         * Set Errors
+         * @description Other errors for a stopped machine, drawn when it starts; logged without their seed. A row
+         *     that chooses nothing on the machine is refused.
+         */
+        put: operations["set_errors_api_v1_va_machines__machine__errors_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/va/machines/{machine}/errors/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check Errors
+         * @description What errors would choose on the machine, row by row; nothing is saved.
+         */
+        post: operations["check_errors_api_v1_va_machines__machine__errors_check_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/va/machines/{machine}/fork": {
         parameters: {
             query?: never;
@@ -1126,6 +1172,51 @@ export interface components {
             /** Z Min */
             z_min: number;
         };
+        /**
+         * BpmModel
+         * @description How the virtual BPMs read the beam: a reading is gain x (roll of (centroid - offset)) + noise.
+         *
+         *     Each BPM has its own hidden offset, roll and gain. Turn by turn it adds ``resolution`` noise (more
+         *     as the beam thins); its closed-orbit acquisition, a narrow-band average of many turns, adds
+         *     ``orbit_resolution`` to every sample instead.
+         */
+        BpmModel: {
+            /**
+             * Gain Rms
+             * @description Hidden relative gain errors, rms
+             * @default 0.01
+             */
+            gain_rms: number;
+            /**
+             * Offset Rms
+             * @description Hidden offsets of the BPMs, mm rms
+             * @default 0.1
+             */
+            offset_rms: number;
+            /**
+             * Orbit Resolution
+             * @description Closed-orbit (slow acquisition) noise, mm rms
+             * @default 0.0003
+             */
+            orbit_resolution: number;
+            /**
+             * Resolution
+             * @description Turn-by-turn noise, mm rms at full intensity
+             * @default 0.005
+             */
+            resolution: number;
+            /**
+             * Roll Rms
+             * @description Hidden rolls of the BPMs, rad rms
+             * @default 0
+             */
+            roll_rms: number;
+            /**
+             * Seed
+             * @default 7
+             */
+            seed: number;
+        };
         /** BranchData */
         BranchData: {
             /** Branch */
@@ -1486,6 +1577,12 @@ export interface components {
             /** Subject */
             subject: string;
         };
+        /**
+         * ElementKind
+         * @description PALS element kinds supported by the description.
+         * @enum {string}
+         */
+        ElementKind: "Drift" | "Bend" | "Multipole" | "Quadrupole" | "Sextupole" | "Octupole" | "Solenoid" | "Kicker" | "RFCavity" | "CrabCavity" | "Instrument" | "Marker" | "BeamBeam" | "BeginningEle" | "Fork" | "Patch" | "ReferenceChange";
         /** EngineChoice */
         EngineChoice: {
             /** Available */
@@ -1517,6 +1614,65 @@ export interface components {
              * @description Known once the engine has run, for engines started on demand
              */
             version: string | null;
+        };
+        /**
+         * ErrorSpec
+         * @description Which errors a machine has, and how large: drawn from ``seed``, the same every time it starts.
+         */
+        ErrorSpec: {
+            bpms?: components["schemas"]["BpmModel"];
+            /**
+             * Magnets
+             * @default []
+             */
+            magnets: components["schemas"]["MagnetErrors"][];
+            /**
+             * Seed
+             * @description Draws every error; None (a machine from before errors): the BPMs' own seed
+             */
+            seed?: number | null;
+            /**
+             * Supplies
+             * @default []
+             */
+            supplies: components["schemas"]["SupplyNoise"][];
+        };
+        /** ErrorsChange */
+        ErrorsChange: {
+            /** @description Without a seed: the machine keeps its own */
+            errors: components["schemas"]["ErrorSpec"];
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
+        };
+        /** ErrorsChecked */
+        ErrorsChecked: {
+            errors: components["schemas"]["ErrorSpec"];
+        };
+        /** ErrorsChosen */
+        ErrorsChosen: {
+            /**
+             * Magnets
+             * @description Magnets each row of magnet errors chooses on the machine
+             */
+            magnets: number[];
+            /**
+             * Supplies
+             * @description Power supplies each row of supply noise chooses
+             */
+            supplies: number[];
+        };
+        /** ErrorsEntry */
+        ErrorsEntry: {
+            chosen: components["schemas"]["ErrorsChosen"];
+            errors: components["schemas"]["ErrorSpec"];
+            /**
+             * Problems
+             * @description Rows that choose nothing on the machine: refused when saved
+             */
+            problems: string[];
         };
         /**
          * ExplainCheck
@@ -1805,6 +1961,55 @@ export interface components {
              */
             warnings: string[];
         };
+        /**
+         * MagnetErrors
+         * @description Static errors of some magnets, each the rms of a Gaussian cut at ``cut`` sigma, drawn per magnet.
+         */
+        MagnetErrors: {
+            /**
+             * Cut
+             * @description Draws beyond this many sigma are drawn again
+             * @default 2.5
+             */
+            cut: number;
+            /**
+             * Field
+             * @description Relative error of the main field, rms
+             * @default 0
+             */
+            field: number;
+            /**
+             * Pitch
+             * @description Pitch about its centre (x_rot), rad rms
+             * @default 0
+             */
+            pitch: number;
+            /**
+             * Roll
+             * @description Roll about the body's axis (z_rot), rad rms
+             * @default 0
+             */
+            roll: number;
+            select?: components["schemas"]["Selection"];
+            /**
+             * X Offset
+             * @description Horizontal offset of the body's centre, m rms
+             * @default 0
+             */
+            x_offset: number;
+            /**
+             * Y Offset
+             * @description Vertical offset, m rms
+             * @default 0
+             */
+            y_offset: number;
+            /**
+             * Yaw
+             * @description Yaw about its centre (y_rot), rad rms
+             * @default 0
+             */
+            yaw: number;
+        };
         /** Me */
         Me: {
             /**
@@ -1832,6 +2037,8 @@ export interface components {
             autostart: boolean;
             /** Engine */
             engine?: string | null;
+            /** @description Its errors (ADR 0011); by default only the BPMs' usual ones, with a seed drawn now */
+            errors?: components["schemas"]["ErrorSpec"] | null;
             /**
              * Fidelity
              * @default standard
@@ -2430,6 +2637,22 @@ export interface components {
              */
             reason: string;
         };
+        /**
+         * Ripple
+         * @description A line of a power supply's ripple: its frequency and relative amplitude (of the current).
+         */
+        Ripple: {
+            /**
+             * Amplitude
+             * @description Relative, peak
+             */
+            amplitude: number;
+            /**
+             * Frequency
+             * @description Hz
+             */
+            frequency: number;
+        };
         /** RouteSegment */
         RouteSegment: {
             /**
@@ -2657,6 +2880,29 @@ export interface components {
             /** Turn */
             turn: number;
         };
+        /**
+         * Selection
+         * @description Which magnets: of these kinds, in these branches, with names matching these patterns; empty: any.
+         */
+        Selection: {
+            /**
+             * Branches
+             * @description Branch names
+             * @default []
+             */
+            branches: string[];
+            /**
+             * Kinds
+             * @default []
+             */
+            kinds: components["schemas"]["ElementKind"][];
+            /**
+             * Names
+             * @description Element names, shell patterns: 'qf*', 'q?_1'
+             * @default []
+             */
+            names: string[];
+        };
         /** SettingRow */
         SettingRow: {
             /** At */
@@ -2720,6 +2966,33 @@ export interface components {
         SnapshotRequest: {
             /** Name */
             name: string;
+        };
+        /**
+         * SupplyNoise
+         * @description Power supplies whose current fluctuates about its setting; every magnet of a supply follows it.
+         *
+         *     Noise of ``rms`` (relative to the current), white, or of a first-order ``bandwidth``; and ripple
+         *     lines. In a ring it moves turn by turn, at the ring's revolution period (sampled at least twenty
+         *     times per period of its fastest part); along a route, one value per shot.
+         */
+        SupplyNoise: {
+            /**
+             * Bandwidth
+             * @description Hz: the noise's first-order low-pass corner; None: a new value every turn
+             */
+            bandwidth?: number | null;
+            /**
+             * Ripple
+             * @default []
+             */
+            ripple: components["schemas"]["Ripple"][];
+            /**
+             * Rms
+             * @description Relative rms of the current's noise
+             * @default 0
+             */
+            rms: number;
+            select?: components["schemas"]["Selection"];
         };
         /** TokenEntry */
         TokenEntry: {
@@ -3758,6 +4031,107 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    errors_api_v1_va_machines__machine__errors_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                machine: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorsEntry"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_errors_api_v1_va_machines__machine__errors_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                machine: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ErrorsChange"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorsEntry"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    check_errors_api_v1_va_machines__machine__errors_check_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                machine: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ErrorsChecked"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorsEntry"];
+                };
             };
             /** @description Validation Error */
             422: {

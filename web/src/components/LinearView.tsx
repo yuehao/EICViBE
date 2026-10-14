@@ -15,7 +15,7 @@ import type { LatticeSummary } from "../api/client";
 import { occurrenceAt, strengthText, type BranchModel } from "../model/branch";
 import { formatMetres, formatNumber } from "../model/format";
 import { kindColor, kindStyle } from "../model/kinds";
-import { isRoute, routeS } from "../model/route";
+import { isRoute, routePasses } from "../model/route";
 import { sameTarget, type Store, type Target } from "../model/store";
 import { clampRange, niceStep, S_MARGIN as MARGIN, type SRange, type ZoomHistory } from "../model/viewport";
 import { attachSInteraction } from "./sInteraction";
@@ -77,14 +77,25 @@ export function LinearView(props: Props) {
       // A route's flags: every fork from the stretches it passes, and every landing on them but its own joins.
       flags.current = [
         ...summary.forks.flatMap((f) => {
-          const s = routeS(branch, f.from_branch, f.s_from);
-          return s === null ? [] : [{ s, label: `→ ${names.get(f.to_branch)}`, branch: f.to_branch, occurrence: f.to_occurrence, landing: f.s_to }];
+          // every pass: a route going round a ring passes its forks on each turn
+          return routePasses(branch, f.from_branch, f.s_from).map((s) => ({
+            s,
+            label: `→ ${names.get(f.to_branch)}`,
+            branch: f.to_branch,
+            occurrence: f.to_occurrence,
+            landing: f.s_to,
+          }));
         }),
         ...summary.forks
           .filter((f) => !branch.index.has(f.id))
           .flatMap((f) => {
-            const s = routeS(branch, f.to_branch, f.s_to);
-            return s === null ? [] : [{ s, label: `← ${names.get(f.from_branch)}`, branch: f.from_branch, occurrence: f.id, landing: f.s_from }];
+            return routePasses(branch, f.to_branch, f.s_to).map((s) => ({
+              s,
+              label: `← ${names.get(f.from_branch)}`,
+              branch: f.from_branch,
+              occurrence: f.id,
+              landing: f.s_from,
+            }));
           }),
       ];
       return;

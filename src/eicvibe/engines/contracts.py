@@ -384,8 +384,10 @@ class Ramp:
 
     Each (occurrence, parameter) of ``start`` goes to its value in ``end``: before turn ``t`` of the
     tracking call it is ``start + fraction[t] * (end - start)``. ``fraction`` has a value per turn of
-    the call, from 0 to 1, held at either end outside the ramp; a ramp may begin or end within a
-    call, or span several. Settings change the beam this way rather than by a step between calls.
+    the call, from 0 to 1 for a change of settings, held at either end outside the ramp; a ramp may
+    begin or end within a call, or span several. Settings change the beam this way rather than by a
+    step between calls. Any other fraction moves the settings along the same line, as a power
+    supply's noise does (``eicvibe.virtual.errors``).
     """
 
     start: dict[tuple[str, str], float]

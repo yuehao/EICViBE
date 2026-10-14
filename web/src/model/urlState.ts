@@ -22,8 +22,10 @@ export interface UrlState {
   mode?: string;
   /** The lower panel's tab: optics (absent), orbit or check. */
   tab?: string;
-  /** The run the Orbit tab shows first (a link from the admin page); read once. */
+  /** The run the Orbit tab shows first; read once. */
   run?: string;
+  /** The virtual accelerator's machine to work with (a link from the admin page); read once. */
+  machine?: string;
 }
 
 const numbers = (text: string | null, count: number): number[] | null => {
@@ -35,7 +37,7 @@ const numbers = (text: string | null, count: number): number[] | null => {
 export function parseHash(hash: string): UrlState {
   const params = new URLSearchParams(hash.replace(/^#/, ""));
   const state: UrlState = {};
-  for (const key of ["source", "rev", "branch", "sel", "q", "engine", "fidelity", "mode", "tab", "run"] as const) {
+  for (const key of ["source", "rev", "branch", "sel", "q", "engine", "fidelity", "mode", "tab", "run", "machine"] as const) {
     const value = params.get(key);
     if (value) state[key] = value;
   }

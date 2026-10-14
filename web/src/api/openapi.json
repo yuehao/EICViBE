@@ -495,6 +495,54 @@
     "title": "Bounds",
     "type": "object"
    },
+   "BpmModel": {
+    "additionalProperties": false,
+    "description": "How the virtual BPMs read the beam: a reading is gain x (roll of (centroid - offset)) + noise.\n\nEach BPM has its own hidden offset, roll and gain. Turn by turn it adds ``resolution`` noise (more\nas the beam thins); its closed-orbit acquisition, a narrow-band average of many turns, adds\n``orbit_resolution`` to every sample instead.",
+    "properties": {
+     "gain_rms": {
+      "default": 0.01,
+      "description": "Hidden relative gain errors, rms",
+      "minimum": 0.0,
+      "title": "Gain Rms",
+      "type": "number"
+     },
+     "offset_rms": {
+      "default": 0.1,
+      "description": "Hidden offsets of the BPMs, mm rms",
+      "minimum": 0.0,
+      "title": "Offset Rms",
+      "type": "number"
+     },
+     "orbit_resolution": {
+      "default": 0.0003,
+      "description": "Closed-orbit (slow acquisition) noise, mm rms",
+      "minimum": 0.0,
+      "title": "Orbit Resolution",
+      "type": "number"
+     },
+     "resolution": {
+      "default": 0.005,
+      "description": "Turn-by-turn noise, mm rms at full intensity",
+      "minimum": 0.0,
+      "title": "Resolution",
+      "type": "number"
+     },
+     "roll_rms": {
+      "default": 0.0,
+      "description": "Hidden rolls of the BPMs, rad rms",
+      "minimum": 0.0,
+      "title": "Roll Rms",
+      "type": "number"
+     },
+     "seed": {
+      "default": 7,
+      "title": "Seed",
+      "type": "integer"
+     }
+    },
+    "title": "BpmModel",
+    "type": "object"
+   },
    "BranchData": {
     "properties": {
      "branch": {
@@ -1338,6 +1386,30 @@
     "title": "Diagnostic",
     "type": "object"
    },
+   "ElementKind": {
+    "description": "PALS element kinds supported by the description.",
+    "enum": [
+     "Drift",
+     "Bend",
+     "Multipole",
+     "Quadrupole",
+     "Sextupole",
+     "Octupole",
+     "Solenoid",
+     "Kicker",
+     "RFCavity",
+     "CrabCavity",
+     "Instrument",
+     "Marker",
+     "BeamBeam",
+     "BeginningEle",
+     "Fork",
+     "Patch",
+     "ReferenceChange"
+    ],
+    "title": "ElementKind",
+    "type": "string"
+   },
    "EngineChoice": {
     "properties": {
      "available": {
@@ -1401,6 +1473,126 @@
      "method"
     ],
     "title": "EngineInfo",
+    "type": "object"
+   },
+   "ErrorSpec": {
+    "additionalProperties": false,
+    "description": "Which errors a machine has, and how large: drawn from ``seed``, the same every time it starts.",
+    "properties": {
+     "bpms": {
+      "$ref": "#/components/schemas/BpmModel"
+     },
+     "magnets": {
+      "default": [],
+      "items": {
+       "$ref": "#/components/schemas/MagnetErrors"
+      },
+      "title": "Magnets",
+      "type": "array"
+     },
+     "seed": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Draws every error; None (a machine from before errors): the BPMs' own seed",
+      "title": "Seed"
+     },
+     "supplies": {
+      "default": [],
+      "items": {
+       "$ref": "#/components/schemas/SupplyNoise"
+      },
+      "title": "Supplies",
+      "type": "array"
+     }
+    },
+    "title": "ErrorSpec",
+    "type": "object"
+   },
+   "ErrorsChange": {
+    "properties": {
+     "errors": {
+      "$ref": "#/components/schemas/ErrorSpec",
+      "description": "Without a seed: the machine keeps its own"
+     },
+     "reason": {
+      "default": "",
+      "title": "Reason",
+      "type": "string"
+     }
+    },
+    "required": [
+     "errors"
+    ],
+    "title": "ErrorsChange",
+    "type": "object"
+   },
+   "ErrorsChecked": {
+    "properties": {
+     "errors": {
+      "$ref": "#/components/schemas/ErrorSpec"
+     }
+    },
+    "required": [
+     "errors"
+    ],
+    "title": "ErrorsChecked",
+    "type": "object"
+   },
+   "ErrorsChosen": {
+    "properties": {
+     "magnets": {
+      "description": "Magnets each row of magnet errors chooses on the machine",
+      "items": {
+       "type": "integer"
+      },
+      "title": "Magnets",
+      "type": "array"
+     },
+     "supplies": {
+      "description": "Power supplies each row of supply noise chooses",
+      "items": {
+       "type": "integer"
+      },
+      "title": "Supplies",
+      "type": "array"
+     }
+    },
+    "required": [
+     "magnets",
+     "supplies"
+    ],
+    "title": "ErrorsChosen",
+    "type": "object"
+   },
+   "ErrorsEntry": {
+    "properties": {
+     "chosen": {
+      "$ref": "#/components/schemas/ErrorsChosen"
+     },
+     "errors": {
+      "$ref": "#/components/schemas/ErrorSpec"
+     },
+     "problems": {
+      "description": "Rows that choose nothing on the machine: refused when saved",
+      "items": {
+       "type": "string"
+      },
+      "title": "Problems",
+      "type": "array"
+     }
+    },
+    "required": [
+     "errors",
+     "chosen",
+     "problems"
+    ],
+    "title": "ErrorsEntry",
     "type": "object"
    },
    "ExplainCheck": {
@@ -2089,6 +2281,66 @@
     "title": "MachineEntry",
     "type": "object"
    },
+   "MagnetErrors": {
+    "additionalProperties": false,
+    "description": "Static errors of some magnets, each the rms of a Gaussian cut at ``cut`` sigma, drawn per magnet.",
+    "properties": {
+     "cut": {
+      "default": 2.5,
+      "description": "Draws beyond this many sigma are drawn again",
+      "exclusiveMinimum": 0.0,
+      "title": "Cut",
+      "type": "number"
+     },
+     "field": {
+      "default": 0.0,
+      "description": "Relative error of the main field, rms",
+      "minimum": 0.0,
+      "title": "Field",
+      "type": "number"
+     },
+     "pitch": {
+      "default": 0.0,
+      "description": "Pitch about its centre (x_rot), rad rms",
+      "minimum": 0.0,
+      "title": "Pitch",
+      "type": "number"
+     },
+     "roll": {
+      "default": 0.0,
+      "description": "Roll about the body's axis (z_rot), rad rms",
+      "minimum": 0.0,
+      "title": "Roll",
+      "type": "number"
+     },
+     "select": {
+      "$ref": "#/components/schemas/Selection"
+     },
+     "x_offset": {
+      "default": 0.0,
+      "description": "Horizontal offset of the body's centre, m rms",
+      "minimum": 0.0,
+      "title": "X Offset",
+      "type": "number"
+     },
+     "y_offset": {
+      "default": 0.0,
+      "description": "Vertical offset, m rms",
+      "minimum": 0.0,
+      "title": "Y Offset",
+      "type": "number"
+     },
+     "yaw": {
+      "default": 0.0,
+      "description": "Yaw about its centre (y_rot), rad rms",
+      "minimum": 0.0,
+      "title": "Yaw",
+      "type": "number"
+     }
+    },
+    "title": "MagnetErrors",
+    "type": "object"
+   },
    "Me": {
     "properties": {
      "agent": {
@@ -2136,6 +2388,17 @@
        }
       ],
       "title": "Engine"
+     },
+     "errors": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/ErrorSpec"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Its errors (ADR 0011); by default only the BPMs' usual ones, with a seed drawn now"
      },
      "fidelity": {
       "default": "standard",
@@ -3555,6 +3818,30 @@
     "title": "ResetRequest",
     "type": "object"
    },
+   "Ripple": {
+    "additionalProperties": false,
+    "description": "A line of a power supply's ripple: its frequency and relative amplitude (of the current).",
+    "properties": {
+     "amplitude": {
+      "description": "Relative, peak",
+      "minimum": 0.0,
+      "title": "Amplitude",
+      "type": "number"
+     },
+     "frequency": {
+      "description": "Hz",
+      "exclusiveMinimum": 0.0,
+      "title": "Frequency",
+      "type": "number"
+     }
+    },
+    "required": [
+     "frequency",
+     "amplitude"
+    ],
+    "title": "Ripple",
+    "type": "object"
+   },
    "RouteSegment": {
     "properties": {
      "branch": {
@@ -3959,6 +4246,40 @@
     "title": "RunEvent",
     "type": "object"
    },
+   "Selection": {
+    "additionalProperties": false,
+    "description": "Which magnets: of these kinds, in these branches, with names matching these patterns; empty: any.",
+    "properties": {
+     "branches": {
+      "default": [],
+      "description": "Branch names",
+      "items": {
+       "type": "string"
+      },
+      "title": "Branches",
+      "type": "array"
+     },
+     "kinds": {
+      "default": [],
+      "items": {
+       "$ref": "#/components/schemas/ElementKind"
+      },
+      "title": "Kinds",
+      "type": "array"
+     },
+     "names": {
+      "default": [],
+      "description": "Element names, shell patterns: 'qf*', 'q?_1'",
+      "items": {
+       "type": "string"
+      },
+      "title": "Names",
+      "type": "array"
+     }
+    },
+    "title": "Selection",
+    "type": "object"
+   },
    "SettingRow": {
     "properties": {
      "at": {
@@ -4137,6 +4458,45 @@
      "name"
     ],
     "title": "SnapshotRequest",
+    "type": "object"
+   },
+   "SupplyNoise": {
+    "additionalProperties": false,
+    "description": "Power supplies whose current fluctuates about its setting; every magnet of a supply follows it.\n\nNoise of ``rms`` (relative to the current), white, or of a first-order ``bandwidth``; and ripple\nlines. In a ring it moves turn by turn, at the ring's revolution period (sampled at least twenty\ntimes per period of its fastest part); along a route, one value per shot.",
+    "properties": {
+     "bandwidth": {
+      "anyOf": [
+       {
+        "exclusiveMinimum": 0.0,
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Hz: the noise's first-order low-pass corner; None: a new value every turn",
+      "title": "Bandwidth"
+     },
+     "ripple": {
+      "default": [],
+      "items": {
+       "$ref": "#/components/schemas/Ripple"
+      },
+      "title": "Ripple",
+      "type": "array"
+     },
+     "rms": {
+      "default": 0.0,
+      "description": "Relative rms of the current's noise",
+      "minimum": 0.0,
+      "title": "Rms",
+      "type": "number"
+     },
+     "select": {
+      "$ref": "#/components/schemas/Selection"
+     }
+    },
+    "title": "SupplyNoise",
     "type": "object"
    },
    "TokenEntry": {
@@ -5961,6 +6321,153 @@
      }
     },
     "summary": "Beam",
+    "tags": [
+     "virtual accelerator"
+    ]
+   }
+  },
+  "/api/v1/va/machines/{machine}/errors": {
+   "get": {
+    "description": "The machine's errors as specified, seed included, and what each row chooses: for whoever\nmay configure it (ADR 0011).",
+    "operationId": "errors_api_v1_va_machines__machine__errors_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "machine",
+      "required": true,
+      "schema": {
+       "title": "Machine",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorsEntry"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Errors",
+    "tags": [
+     "virtual accelerator"
+    ]
+   },
+   "put": {
+    "description": "Other errors for a stopped machine, drawn when it starts; logged without their seed. A row\nthat chooses nothing on the machine is refused.",
+    "operationId": "set_errors_api_v1_va_machines__machine__errors_put",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "machine",
+      "required": true,
+      "schema": {
+       "title": "Machine",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ErrorsChange"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorsEntry"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Set Errors",
+    "tags": [
+     "virtual accelerator"
+    ]
+   }
+  },
+  "/api/v1/va/machines/{machine}/errors/check": {
+   "post": {
+    "description": "What errors would choose on the machine, row by row; nothing is saved.",
+    "operationId": "check_errors_api_v1_va_machines__machine__errors_check_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "machine",
+      "required": true,
+      "schema": {
+       "title": "Machine",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ErrorsChecked"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorsEntry"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Check Errors",
     "tags": [
      "virtual accelerator"
     ]

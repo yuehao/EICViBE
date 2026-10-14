@@ -29,12 +29,14 @@ from eicvibe.diagnostics.bpm import NO_BEAM
 from eicvibe.domain.lattice import ElementKind, Lattice, Route, route_placements, route_problems
 from eicvibe.domain.lattice._base import DomainModel
 from eicvibe.domain.machine import MachineRegistry
+from eicvibe.domain.machine.power import design_value
 from eicvibe.engines.contracts import Fidelity, Options
 from eicvibe.engines.worker import EngineWorker, RemoteSession
 
+from .errors import BpmModel, MachineErrors, VirtualBpms
 from .history import BpmHistory, RunInfo
 from .matching import twiss_bunch
-from .ring import Beam, BpmModel, VirtualBpms, default_engine
+from .ring import Beam, default_engine
 
 
 class Jitter(DomainModel):
@@ -86,6 +88,7 @@ class RouteRun:
         run_id: str | None = None,
         machine: str | None = None,
         shots: int | None = None,
+        errors: MachineErrors | None = None,
     ) -> None:
         if problems := route_problems(lattice, route):
             raise ValueError(f"route {route.name} is not one pass: {'; '.join(problems)}")
@@ -107,13 +110,19 @@ class RouteRun:
         self.machine = machine
         self.shots = shots
         """Stop by itself after this many shots; None: never."""
+        self.errors = errors if errors is not None and not errors.empty else None
+        """The machine's own errors (``errors.py``): in the engines' values, never in :attr:`values`."""
+        self._fluctuations = self.errors.fluctuations(1.0 / rate) if self.errors else None
+        self.warnings: list[str] = list(errors.problems) if errors is not None else []
+        """What the run found wrong: its errors' rows that chose nothing."""
         bpms = route_bpms(lattice, route, registry)
         if not bpms:
             raise ValueError(f"route {route.name} has no BPMs to record")
         self._observe = [[b[1] for b in bpms if b[0] == k] for k in range(len(route.segments))]
         self.bpm_names = [b[2] for b in bpms]
         self.bpm_s = [b[3] for b in bpms]
-        self._bpms = VirtualBpms(self.bpm, len(bpms), self.beam.particles, self.beam.charge)
+        self._bpms = VirtualBpms(self.bpm, len(bpms), self.beam.particles, self.beam.charge, self.bpm_names)
+        self._accelerate = _accelerations(lattice, route)
         self._bunches = np.random.default_rng(self.beam.seed)
         self._jitter = np.random.default_rng(self.jitter.seed)
         self._commands: queue.Queue[Callable[[], None]] = queue.Queue()
@@ -137,7 +146,7 @@ class RouteRun:
             for segment in self.route.segments:
                 if segment.branch not in self._sessions:
                     self._sessions[segment.branch] = self._worker.open_session(
-                        self.lattice, segment.branch, self.options, self.values
+                        self.lattice, segment.branch, self.options, self._engine_values()
                     )
             self._start, self._origin = self._start_optics()
         except BaseException:
@@ -171,9 +180,8 @@ class RouteRun:
             values={f"{o} {p}": v for (o, p), v in self.values.items()},
         )
         self._writer = BpmHistory.create(self.directory, info)
-        (self.directory / "hidden.json").write_text(
-            json.dumps(self._bpms.hidden(self.bpm_names)), encoding="utf-8"
-        )
+        hidden = self._bpms.hidden(self.bpm_names) | ({"errors": self.errors.hidden()} if self.errors else {})
+        (self.directory / "hidden.json").write_text(json.dumps(hidden), encoding="utf-8")
         self._writer.event(0, "start", engine=self.engine, route=list(self.route.branches))
         self._thread = threading.Thread(target=self._loop, name=f"route run {info.id}", daemon=True)
         self._thread.start()
@@ -231,19 +239,43 @@ class RouteRun:
         values = dict(values)
 
         def update() -> None:
-            by_branch: dict[str, dict] = {}
-            for (occurrence, parameter), value in values.items():
-                branch = self.lattice.placement(occurrence).branch_id
-                by_branch.setdefault(branch, {})[(occurrence, parameter)] = value
-            for branch, changes in by_branch.items():
-                if branch in self._sessions:
-                    self._sessions[branch].update(changes)
+            self._to_sessions(self._engine_values(values))
             self.values.update(values)
             self._writer.event(
                 self._shot, "settings", values={f"{o} {p}": v for (o, p), v in values.items()}, **note
             )
 
         self._commands.put(update)
+
+    def _to_sessions(self, values: Mapping[tuple[str, str], float]) -> None:
+        """Values into the sessions of the branches they are on."""
+        by_branch: dict[str, dict] = {}
+        for (occurrence, parameter), value in values.items():
+            branch = self.lattice.placement(occurrence).branch_id
+            by_branch.setdefault(branch, {})[(occurrence, parameter)] = value
+        for branch, changes in by_branch.items():
+            if branch in self._sessions:
+                self._sessions[branch].update(changes)
+
+    def _engine_values(self, values: Mapping[tuple[str, str], float] | None = None) -> dict:
+        """Settings as the engines take them, with the machine's errors: ``values`` (an update), or
+        the run's, with every error (sessions opened)."""
+        if self.errors is None:
+            return dict(self.values if values is None else values)
+        if values is None:
+            return self.errors.engine_values(self.values, complete=True)
+        return self.errors.engine_values(values)
+
+    def _supplies(self, shot: int) -> None:
+        """The power supplies as this shot finds them: their settings, off by their noise, pulse to pulse."""
+        if self._fluctuations is None:
+            return
+        values = {}
+        for supply, deviation in self._fluctuations.turns(shot, 1):
+            for key in supply.keys:
+                setting = self.values.get(key, design_value(self.lattice.placement(key[0]), key[1]))
+                values[key] = self._engine_values({key: setting})[key] * (1.0 + float(deviation[0]))
+        self._to_sessions(values)
 
     # -- shots -------------------------------------------------------------------------
 
@@ -258,7 +290,7 @@ class RouteRun:
         centre = np.array([t.x, t.px, t.y, t.py, t.zeta, t.delta]) + np.insert(offset, 4, 0.0)
         particles = twiss_bunch(self._bunches, self.beam, t, centre)
         xs, ys, counts = [], [], []
-        for segment, observe in zip(self.route.segments, self._observe, strict=True):
+        for k, (segment, observe) in enumerate(zip(self.route.segments, self._observe, strict=True)):
             if len(particles) == 0:
                 xs += [np.nan] * len(observe)
                 ys += [np.nan] * len(observe)
@@ -271,6 +303,8 @@ class RouteRun:
             ys += list(np.asarray(track.y)[:, 0])
             counts += list(np.asarray(track.count)[:, 0])
             particles = np.asarray(track.final)[~np.asarray(track.lost)]
+            if (ratio := self._accelerate.get(k)) is not None:
+                particles = accelerated(particles, ratio)
         return np.array(xs), np.array(ys), np.array(counts)
 
     def _loop(self) -> None:
@@ -287,6 +321,7 @@ class RouteRun:
                 for _ in range(n):
                     while not self._commands.empty():
                         self._commands.get_nowait()()
+                    self._supplies(first + len(shots))
                     shots.append(self._shoot())
                     if self._stopping.is_set():
                         break
@@ -311,3 +346,29 @@ class RouteRun:
             if self._writer is not None:
                 self._writer.set_state(state, self._shot)
             self._stopped.set()
+
+
+def _accelerations(lattice: Lattice, route: Route) -> dict[int, float]:
+    """Where a route leaves a ring the beam is accelerated in: segment index -> p before / p after."""
+    out = {}
+    for k, (before, after) in enumerate(zip(route.segments, route.segments[1:], strict=False)):
+        if before.branch == after.branch or before.branch not in route.accelerated:
+            continue
+        a, b = (lattice.initial_conditions(s.branch) for s in (before, after))
+        pa = a.reference.pc_ref if a and a.reference else None
+        pb = b.reference.pc_ref if b and b.reference else None
+        if pa and pb:
+            out[k] = pa / pb
+    return out
+
+
+def accelerated(particles: np.ndarray, ratio: float) -> np.ndarray:
+    """A bunch (rows of x, px, y, py, zeta, delta) after an acceleration from momentum p0 to p1 =
+    p0 / ``ratio``: every particle gains the same momentum, so the angles (px, py: transverse momenta
+    over the reference momentum) and the momentum deviation shrink by p0 / p1 (adiabatic damping);
+    positions stay."""
+    out = np.array(particles, dtype=float, copy=True)
+    out[:, 1] *= ratio
+    out[:, 3] *= ratio
+    out[:, 5] *= ratio
+    return out

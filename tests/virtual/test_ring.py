@@ -1,6 +1,7 @@
 """A virtual ring tracked turn after turn: BPM data that reads as a real system's does."""
 
 import math
+import time
 from datetime import timedelta
 from importlib.util import find_spec
 
@@ -147,6 +148,24 @@ def test_settings_ramp_in_so_the_orbit_moves_without_ringing(demo, tmp_path):
     # One centroid on the closed orbit: after steps it rings about the new orbit by as much as that
     # moved; after the ramps, by a few thousandths of it (a 1024-turn ramp leaves a ten-thousandth).
     assert ringing[0] > 0.5 and ringing[256] < 0.01
+
+
+def test_a_run_slowed_to_its_rate_takes_a_change_within_a_call_not_a_chunk(demo, tmp_path):
+    lattice, _, _ = demo
+    corrector = next(p.id for p in lattice.layout("ring").placements if p.kind is ElementKind.KICKER)
+    key = (corrector, "MagneticMultipoleP.Kn0L")
+    # The engine goes thousands of turns a second here; the run is held to 100. Calls sized to the
+    # engine would track the whole 1024-turn chunk and then wait ten seconds before taking a change.
+    ring = run(demo, tmp_path / "paced", turns=None, chunk=1024, max_rate=100.0, ramp_turns=0)
+    ring.start()
+    ring.wait(100)
+    asked = time.monotonic()
+    ring.update({key: 1e-5})
+    while ring.values.get(key) != 1e-5 and time.monotonic() - asked < 15:
+        time.sleep(0.01)
+    taken = time.monotonic() - asked
+    ring.stop()
+    assert ring.values.get(key) == 1e-5 and taken < 1.5
 
 
 def test_bpms_come_from_the_registry_or_else_the_instruments(demo):

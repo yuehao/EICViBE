@@ -1,6 +1,6 @@
 // The virtual accelerator's administration page (ADR 0008): machines to create,
-// start and stop, their settings to change and put back, the log of every
-// change, and users. Nothing links to it; it shows nothing but a login until an
+// start and stop, their settings to change and put back, their errors (ADR
+// 0011), the log of every change, and users. Nothing links to it; it shows nothing but a login until an
 // operator or administrator logs in. Users work in the lattice viewer, which
 // asks them to log in only when they change something.
 //
@@ -26,13 +26,15 @@ import {
   type VaOptions,
   type WriteResult,
 } from "../api/va";
+import { ErrorsEditor } from "../components/ErrorsEditor";
 import { AiPanel } from "./AiPanel";
 
-type Tab = "machines" | "settings" | "log" | "users" | "ai" | "account";
+type Tab = "machines" | "settings" | "errors" | "log" | "users" | "ai" | "account";
 
 const TABS: { key: Tab; label: string; role?: (typeof ROLES)[number]; login?: boolean }[] = [
   { key: "machines", label: "Machines" },
   { key: "settings", label: "Settings" },
+  { key: "errors", label: "Errors", login: true },
   { key: "log", label: "Log" },
   { key: "users", label: "Users", role: "admin" },
   { key: "ai", label: "AI", role: "admin" },
@@ -156,6 +158,8 @@ export function AdminApp() {
           <Machines me={me} machines={machines} options={options} onChanged={refresh} onError={fail} onOpen={(id, t) => setHash({ tab: t, machine: id })} />
         ) : tab === "settings" ? (
           <Settings me={me} machines={machines} machine={selected} onMachine={(id) => setHash({ machine: id })} onChanged={refresh} onError={fail} />
+        ) : tab === "errors" ? (
+          <Errors machines={machines} machine={selected} onMachine={(id) => setHash({ machine: id })} onChanged={refresh} onError={fail} />
         ) : tab === "log" ? (
           <Log machines={machines} machine={hash.machine} onMachine={(id) => setHash({ machine: id })} onError={fail} />
         ) : tab === "users" ? (
@@ -167,6 +171,32 @@ export function AdminApp() {
         )}
       </main>
     </div>
+  );
+}
+
+// -- errors ---------------------------------------------------------------------------
+
+function Errors(props: { machines: MachineEntry[]; machine: string | null; onMachine(id: string): void; onChanged(): void; onError(e: unknown): void }) {
+  const { machines, machine, onMachine, onChanged, onError } = props;
+  const entry = machines.find((m) => m.id === machine) ?? null;
+  return (
+    <section>
+      <h2>
+        Errors of{" "}
+        <select aria-label="Machine" value={machine ?? ""} onChange={(e) => onMachine(e.target.value)}>
+          {machines.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.name} ({m.state})
+            </option>
+          ))}
+        </select>
+      </h2>
+      <p className="muted">
+        What makes the virtual machine differ from its model, as a real one does: drawn from the seed when it starts, hidden from its users, its settings and the log. A
+        run keeps what it drew in its hidden.json.
+      </p>
+      {entry ? <ErrorsEditor machine={entry} onError={onError} onSaved={onChanged} /> : null}
+    </section>
   );
 }
 
@@ -283,6 +313,7 @@ function Machines(props: {
                     </button>
                   ) : null}
                   <button type="button" onClick={() => onOpen(m.id, "settings")}>Settings</button>
+                  <button type="button" onClick={() => onOpen(m.id, "errors")}>Errors</button>
                   <button type="button" onClick={() => onOpen(m.id, "log")}>Log</button>
                   <a className="button" href={orbitLink(m)} target="_blank" rel="noreferrer">
                     Orbit

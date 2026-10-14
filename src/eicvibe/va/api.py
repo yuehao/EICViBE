@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from eicvibe.ai import PROVIDERS, AiConfig, AiUnavailable
+from eicvibe.virtual.errors import ErrorSpec
 
 from .service import Conflict, Forbidden, VirtualAccelerator
 from .store import ANONYMOUS, SESSION_HOURS, Role, User
@@ -137,7 +138,30 @@ class NewMachine(BaseModel):
     rate: float | None = Field(None, gt=0)
     ramp_turns: int = Field(1024, ge=0, le=1_000_000, description="Turns a ring's setting change ramps over")
     autostart: bool = False
+    errors: ErrorSpec | None = Field(
+        None, description="Its errors (ADR 0011); by default only the BPMs' usual ones, with a seed drawn now"
+    )
     reason: str = ""
+
+
+class ErrorsChange(BaseModel):
+    errors: ErrorSpec = Field(description="Without a seed: the machine keeps its own")
+    reason: str = ""
+
+
+class ErrorsChecked(BaseModel):
+    errors: ErrorSpec
+
+
+class ErrorsChosen(BaseModel):
+    magnets: list[int] = Field(description="Magnets each row of magnet errors chooses on the machine")
+    supplies: list[int] = Field(description="Power supplies each row of supply noise chooses")
+
+
+class ErrorsEntry(BaseModel):
+    errors: ErrorSpec
+    chosen: ErrorsChosen
+    problems: list[str] = Field(description="Rows that choose nothing on the machine: refused when saved")
 
 
 class Fork(BaseModel):
@@ -500,6 +524,26 @@ def va_router(get: Callable[[], VirtualAccelerator | None]) -> APIRouter:
     def machine(machine: str) -> MachineEntry:
         va = service()
         return MachineEntry(**call(lambda: va.machine(machine)))
+
+    @router.get("/machines/{machine}/errors", response_model=ErrorsEntry)
+    def errors(me: Caller, machine: str) -> ErrorsEntry:
+        """The machine's errors as specified, seed included, and what each row chooses: for whoever
+        may configure it (ADR 0011)."""
+        va = service()
+        return ErrorsEntry(**call(lambda: va.errors(me, machine)))
+
+    @router.post("/machines/{machine}/errors/check", response_model=ErrorsEntry)
+    def check_errors(me: Caller, machine: str, body: ErrorsChecked) -> ErrorsEntry:
+        """What errors would choose on the machine, row by row; nothing is saved."""
+        va = service()
+        return ErrorsEntry(**call(lambda: va.check_errors(me, machine, body.errors)))
+
+    @router.put("/machines/{machine}/errors", response_model=ErrorsEntry)
+    def set_errors(me: Caller, machine: str, body: ErrorsChange) -> ErrorsEntry:
+        """Other errors for a stopped machine, drawn when it starts; logged without their seed. A row
+        that chooses nothing on the machine is refused."""
+        va = service()
+        return ErrorsEntry(**call(lambda: va.set_errors(me, machine, body.errors, body.reason)))
 
     @router.post("/machines/{machine}/start", response_model=MachineEntry)
     def start(me: Caller, machine: str, body: Reason | None = None) -> MachineEntry:

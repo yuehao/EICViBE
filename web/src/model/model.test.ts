@@ -161,6 +161,12 @@ describe("url state", () => {
   it("ignores malformed values", () => {
     expect(parseHash("#floor=1,2&s=5,1&branch=ltr")).toEqual({ branch: "ltr" });
   });
+
+  it("reads a link's machine once, and does not keep it in the address", () => {
+    const state = parseHash("#branch=route%3Adirect&tab=orbit&machine=ein-direct");
+    expect(state).toEqual({ branch: "route:direct", tab: "orbit", machine: "ein-direct" });
+    expect(formatHash(state)).toBe("#branch=route%3Adirect&tab=orbit");
+  });
 });
 
 describe("store", () => {
