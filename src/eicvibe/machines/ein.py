@@ -40,8 +40,14 @@ Branches and connections, in beam order:
 The RCS file is written at its extraction energy (9 GeV, 30 MV per cavity).
 As in EIN_connection.ipynb, the RCS is pinned at injection: 0.75 GeV and the
 RF of the parameter database's ramp at t = 0. Which path the beam takes is a
-scenario choice, not part of the lattice (ADR 0001). Not modelled yet: the
-preinjector, which exists as GPT and PARMELA input only.
+scenario choice, not part of the lattice (ADR 0001).
+
+Before the LTR, the preinjector (:mod:`.preinjector`, ADR 0012): ``prj`` from
+the cathode to the LTR, which it forks into at its start, and its gun and spin
+diagnostic lines ``prj_gun`` and ``prj_spin``, from its engineers' survey and
+PARMELA deck. Its magnets are given by their fields, and the lattice engines do
+not track it: the routes start at the LTR, with the beam the preinjector
+delivers there (``beams/ltr.csv``, from the deck's run).
 
 Names are temporary: SEG has not assigned EIC area prefixes to these
 branches, so :data:`TEMPORARY_AREAS` holds placeholders that callers replace,
@@ -98,9 +104,24 @@ from eicvibe.store import (
     update_names,
     write_machine,
 )
-from eicvibe.store.device_files import add_bpms, rename_references
-from eicvibe.store.lattice_files import write_lattice
-from eicvibe.store.machine import write_index, write_routes
+from eicvibe.store.beams import DeliveredBeam, file_source, write_beam
+from eicvibe.store.device_files import add_bpms, read_devices, rename_references, write_devices
+from eicvibe.store.lattice_files import branch_order, write_lattice
+from eicvibe.store.machine import eic_names, read_index, write_index, write_routes
+
+from .preinjector import (
+    BRANCHES as PREINJECTOR_BRANCHES,
+)
+from .preinjector import (
+    DEVICES as PREINJECTOR_DEVICES,
+)
+from .preinjector import (
+    GUN_DIPOLE,
+    SPIN_KICKER,
+    PreinjectorSources,
+    build_preinjector,
+    preinjector_beam,
+)
 
 _STAGED = "EICVIBE_lattice/madx"
 
@@ -133,6 +154,9 @@ EIN_BMAD: Mapping[str, str] = MappingProxyType(
 #: The RCS of the earlier route notebook, RCSV5S1, as written in the einlattices checkout.
 RCSV5S1 = {"rcs": "einlattices/RCS/RCSV5S1.madx", "rcs_extraction_after": "es_pip03"}
 
+#: The preinjector's design files (ADR 0012), included in the EIN by default.
+PREINJECTOR = PreinjectorSources()
+
 #: RCS injection energy (total, eV) and total RF voltage (V) at t = 0 of the 9 GeV ramp
 #: (RCS parameter database), as pinned in EIN_connection.ipynb.
 RCS_INJECTION_ENERGY = 0.75e9
@@ -140,7 +164,17 @@ RCS_INJECTION_RF_VOLTAGE = 1.69758e6
 
 #: Temporary EIC area prefixes of the EIN branches, until SEG assigns them. Override any of them.
 TEMPORARY_AREAS: Mapping[str, str] = MappingProxyType(
-    {"ltr": "ltr", "itl": "itl", "bar": "bar", "etl": "etl", "rcs": "rcs", "rte": "rte"}
+    {
+        "prj": "prj",
+        "prj_gun": "prj",
+        "prj_spin": "prj",
+        "ltr": "ltr",
+        "itl": "itl",
+        "bar": "bar",
+        "etl": "etl",
+        "rcs": "rcs",
+        "rte": "rte",
+    }
 )
 
 _RINGS = {"bar", "rcs"}
@@ -207,6 +241,8 @@ class Ein:
     sources: Mapping[str, Path]
     """Every file read, by role."""
     madx_version: str
+    names: Mapping[tuple[str, str], str] = MappingProxyType({})
+    """EIC names the design files give (the preinjector's), by (branch, occurrence name)."""
 
 
 def build_ein(
@@ -217,6 +253,7 @@ def build_ein(
     rcs_rf_voltage: float | None = RCS_INJECTION_RF_VOLTAGE,
     workdir: str | Path | None = None,
     name: str = "ein",
+    preinjector: PreinjectorSources | None = PREINJECTOR,
 ) -> Ein:
     """Import the EIN sources under ``folder`` and connect them into one lattice.
 
@@ -224,7 +261,8 @@ def build_ein(
     RCS cavities, V) replace the values of the RCS file; None keeps them.
     MAD-X runs in ``workdir``, by default a temporary directory, so that the
     scripts' TWISS and SURVEY output does not land beside the sources. For
-    another RCS, pass e.g. ``EinSources(**RCSV5S1)``.
+    another RCS, pass e.g. ``EinSources(**RCSV5S1)``. ``preinjector``: its
+    design files (None: without it).
     """
     folder, sources = Path(folder), sources or EinSources()
     with tempfile.TemporaryDirectory(prefix="eicvibe-ein-") as scratch:
@@ -254,6 +292,10 @@ def build_ein(
     builder.add_fork("etl", "ltr", to="ltr_mark_p2", to_side="exit")
     builder.add_fork("ltr", "rcs", to=injection, to_side="exit")
     builder.add_fork("rcs", "rte", after=extraction)
+    pre = build_preinjector(folder, preinjector) if preinjector is not None else None
+    if pre is not None:
+        builder.include(pre.lattice)
+        builder.add_fork("prj", "ltr")  # the preinjector's end is where the LTR starts
     _drop_unplaced(builder)
 
     draft = builder.build()
@@ -271,7 +313,7 @@ def build_ein(
             builder.update_element(definition, RFP={"voltage": rcs_rf_voltage / len(cavities)})
     # The septum's own supply sets its field for the injected and extracted beams: state it, so
     # that zero means no field instead of the reference field.
-    [septum] = draft.shared_components
+    [septum] = [c for c in draft.shared_components if c.name == SEPTUM]
     for traversal in septum.traversals:
         if traversal.role in _SEPTUM_DRIVEN:
             placed = draft.placement(traversal.occurrence)
@@ -285,7 +327,9 @@ def build_ein(
     notes = tuple(note for result in imports.values() for note in result.notes)
     roles = (*_BRANCHES, "ltr_beam")
     read = {role: (folder / getattr(sources, role)).resolve() for role in roles}
-    return Ein(lattice, notes, read, imports["ltr"].madx_version)
+    if pre is None:
+        return Ein(lattice, notes, read, imports["ltr"].madx_version)
+    return Ein(lattice, notes + pre.notes, read | pre.files, imports["ltr"].madx_version, pre.names)
 
 
 def convert_ein_bmad(folder: str | Path, *, tools: BmadTools | None = None) -> dict[str, BmadConversion]:
@@ -311,8 +355,11 @@ def ein_areas(
     the RCS into its sections.
     """
     chosen = {**TEMPORARY_AREAS, **(areas or {})}
+    present = {b.name for b in lattice.branches}
     result = {}
     for branch, value in chosen.items():
+        if branch not in present:  # an EIN without its preinjector, say
+            continue
         if isinstance(value, str):
             value = (NamingArea(prefix=value, start=0.0, end=lattice.layout(branch).length + 1.0),)
         result[branch] = tuple(value)
@@ -328,7 +375,7 @@ def ein_registry(
 ) -> MachineRegistry:
     """Element names, devices and channels of every EIN branch: the registry of :func:`ein_description`."""
     lattice = ein.lattice if isinstance(ein, Ein) else ein
-    return assemble_registry(lattice, ein_description(lattice, areas=areas, scheme=scheme, series=series))
+    return assemble_registry(lattice, ein_description(ein, areas=areas, scheme=scheme, series=series))
 
 
 def ein_description(
@@ -350,13 +397,28 @@ def ein_description(
     with official names keeps the identity of every device.
     """
     lattice = ein.lattice if isinstance(ein, Ein) else ein
+    names = ein.names if isinstance(ein, Ein) else {}
+    present = {b.name for b in lattice.branches}
     return describe_machine(
         lattice,
-        ein_areas(lattice, areas),
+        {b: a for b, a in ein_areas(lattice, areas).items() if b in present},
         scheme=scheme,
         series=EIN_SERIES if series is None else series,
-        shared={SEPTUM: SharedMagnet(home="circulation", driven=_SEPTUM_DRIVEN)},
+        shared={k: v for k, v in EIN_SHARED.items() if k in {c.name for c in lattice.shared_components}},
+        names={lattice.placement(n, branch=b).id: eic for (b, n), eic in names.items()},
     )
+
+
+#: The magnets several EIN branches pass through, how each is named and which traversals its
+#: supply sets: the BAR septum, the gun dipole (the main line's bend; reversed, the gun diagnostic
+#: line's) and the spin kicker (off for the main line, the spin diagnostic line's bend when pulsed).
+EIN_SHARED: Mapping[str, SharedMagnet] = MappingProxyType(
+    {
+        SEPTUM: SharedMagnet(home="circulation", driven=_SEPTUM_DRIVEN),
+        GUN_DIPOLE: SharedMagnet(home="circulation", driven=("circulation",), abbreviation="dh"),
+        SPIN_KICKER: SharedMagnet(home="circulation", driven=("extraction",), abbreviation="kck"),
+    }
+)
 
 
 def ein_repository(areas: Mapping[str, str] | None = None) -> NamingRepository:
@@ -366,7 +428,11 @@ def ein_repository(areas: Mapping[str, str] | None = None) -> NamingRepository:
     temporary by choice, such as signal tokens awaiting approval.
     """
     prefixes = {**TEMPORARY_AREAS, **(areas or {})}.values()
-    return default_repository().extended(areas=prefixes, note="temporary EIN area prefixes")
+    return default_repository().extended(
+        areas=prefixes,
+        devices=PREINJECTOR_DEVICES,
+        note="temporary EIN area prefixes and the preinjector's device abbreviations",
+    )
 
 
 #: The machine folder, inside the EIN folder.
@@ -399,6 +465,85 @@ def write_ein_machine(
     written = write_machine(folder, ein.lattice, description or ein_description(ein), source=ein_source(ein))
     if routes := write_routes(folder, _routes()):
         written.append(routes)
+    if "preinjector_beam" in ein.sources:
+        written += write_beam(folder, ein_delivered_beam(ein.sources["preinjector_beam"], ein.lattice))
+    return written
+
+
+def ein_delivered_beam(path: Path, lattice: Lattice, charge: float = PREINJECTOR.charge) -> DeliveredBeam:
+    """The beam the preinjector delivers to the LTR (PARMELA's run), about the LTR's reference momentum."""
+    reference = lattice.initial_conditions(lattice.layout("ltr").id).reference.pc_ref
+    particles = preinjector_beam(path.parent, reference, PreinjectorSources(beam=path.name))
+    note = "PARMELA 3.4 run of the preinjector deck, at its interface to the LTR (ADR 0012)"
+    return DeliveredBeam("ltr", particles, charge, reference, file_source(path, code=note))
+
+
+def add_ein_preinjector(
+    machine: str | Path, folder: str | Path, sources: PreinjectorSources = PREINJECTOR
+) -> list[Path]:
+    """Add the preinjector to an EIN machine folder that has none (ADR 0012).
+
+    Its branches, forked into the LTR; their devices, EIC names and the shared gun dipole and spin
+    kicker; and the beam it delivers to the LTR (``beams/ltr``). The other branches, devices, names
+    and settings stay as the folder has them: they are read and written back. Returns the files
+    written.
+    """
+    machine = Path(machine)
+    old = load_lattice(machine)
+    if present := sorted({b.name for b in old.branches} & set(PREINJECTOR_BRANCHES)):
+        raise ValueError(f"{machine} already has {', '.join(present)}")
+    pre = build_preinjector(folder, sources)
+    builder = LatticeBuilder.from_lattice(old)
+    builder.include(pre.lattice)
+    builder.add_fork("prj", "ltr")  # the preinjector's end is where the LTR starts
+    new = builder.build()
+    added = Ein(new, pre.notes, pre.files, "", pre.names)
+    part = ein_description(added)
+    kept = read_devices(machine, old)
+    ours = set(PREINJECTOR_BRANCHES)
+    prj_ids = {new.layout(b).id for b in ours}
+    naming = kept.naming.model_dump()
+    naming["areas"] |= {k: v for k, v in part.naming.model_dump()["areas"].items() if k in prj_ids}
+    naming["names"] |= part.naming.model_dump()["names"]
+    components = {c.id for c in new.shared_components if c.name in (GUN_DIPOLE, SPIN_KICKER)}
+    naming["shared"] = [
+        *naming["shared"],
+        *(s for s in part.naming.model_dump()["shared"] if s["component"] in components),
+    ]
+    in_prj = {p.id for b in ours for p in new.layout(b).placements}
+    supplies = [
+        s
+        for s in part.supplies
+        if any(o in in_prj for c in s.circuits for m in c.magnets for o in m.occurrences)
+    ]
+    description = type(kept).model_validate(
+        {
+            "lattice": new.name,
+            "naming": naming,
+            "supplies": [*(s.model_dump() for s in kept.supplies), *(s.model_dump() for s in supplies)],
+            "bpms": [
+                *(b.model_dump() for b in kept.bpms),
+                *(b.model_dump() for b in part.bpms if b.occurrence in in_prj),
+            ],
+            "rf": [
+                *(r.model_dump() for r in kept.rf),
+                *(r.model_dump() for r in part.rf if r.occurrence in in_prj),
+            ],
+            "tune_monitors": [m.model_dump() for m in kept.tune_monitors],
+        }
+    )
+    source = dict(read_index(machine).get("source") or {})
+    files = dict(source.get("files") or {})
+    files |= {
+        role: {"path": str(p), "sha256": hashlib.sha256(p.read_bytes()).hexdigest()}
+        for role, p in pre.files.items()
+    }
+    source["files"] = files
+    order = branch_order(new)
+    written = [write_index(machine, new, source, order)]
+    written += write_lattice(new, machine, order, eic_names(assemble_registry(new, description)))
+    written += write_devices(description, new, machine)
+    written += write_beam(machine, ein_delivered_beam(pre.files["preinjector_beam"], new, sources.charge))
     return written
 
 

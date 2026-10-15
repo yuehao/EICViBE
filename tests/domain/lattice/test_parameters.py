@@ -103,7 +103,7 @@ def test_aperture_vertices_go_once_around_the_center():
 
 def test_multipole_orders_are_per_length_or_integrated():
     MagneticMultipoleP(Kn0L=1e-3, Ks0L=-1e-3, Kn1=0.5, tilt1=0.1)
-    with pytest.raises(ValidationError, match="integrated Kn1L/Ks1L"):
+    with pytest.raises(ValidationError, match="Kn1/Ks1 and Kn1L/Ks1L"):
         MagneticMultipoleP(Kn1=0.5, Ks1L=0.01)
     with pytest.raises(ValidationError):
         MagneticMultipoleP(tilt=0.1)  # PALS tilts are per order
@@ -178,3 +178,24 @@ def test_parameter_adapter_applies_field_bounds():
 
 def test_group_registry_names_match_classes():
     assert all(name == cls.__name__ == cls.group_name for name, cls in GROUP_TYPES.items())
+
+
+def test_a_multipole_order_is_given_in_one_form_normalized_or_field():
+    """PALS's field forms (BnN, BnNL) beside the normalized ones, for lines whose momentum along them
+    comes from tracking (ADR 0012); one order takes one form, and strength_parameter names it."""
+    from eicvibe.domain.lattice import MagneticMultipoleP, has_fields, strength_parameter
+
+    quad = MagneticMultipoleP(Bn1=-1.72)
+    assert (
+        has_fields(quad)
+        and strength_parameter(quad, 1) == "Bn1"
+        and strength_parameter(quad, 1, normal=False) == "Bs1"
+    )
+    assert strength_parameter(MagneticMultipoleP(Bn0L=2e-4), 0) == "Bn0L"
+    assert strength_parameter(MagneticMultipoleP(Kn1L=0.3), 1) == "Kn1L" and not has_fields(
+        MagneticMultipoleP(Kn1=0.5)
+    )
+    assert strength_parameter(None, 2) == "Kn2"  # nothing given: normalized per length
+    with pytest.raises(ValidationError, match="Kn1/Ks1 and Bn1/Bs1"):
+        MagneticMultipoleP(Kn1=0.5, Bs1=0.1)
+    assert MagneticMultipoleP.model_fields["Bn1L"].json_schema_extra["unit"] == "T"

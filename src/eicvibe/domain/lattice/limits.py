@@ -86,6 +86,7 @@ PLACEHOLDER_LIMITS: dict[ElementKind, dict[str, Limit]] = {
     ElementKind.KICKER: _multipole(0, 0.1),
     ElementKind.RFCAVITY: {"RFP.voltage": Limit(minimum=0.0, maximum=1e9)},
     ElementKind.CRABCAVITY: {"RFP.voltage": Limit(minimum=0.0, maximum=1e9)},
+    ElementKind.EGUN: {"RFP.voltage": Limit(minimum=0.0, maximum=1e9)},
 }
 
 

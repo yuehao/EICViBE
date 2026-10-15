@@ -33,6 +33,7 @@ class ElementKind(StrEnum):
     KICKER = "Kicker"
     RFCAVITY = "RFCavity"
     CRABCAVITY = "CrabCavity"
+    EGUN = "EGun"
     INSTRUMENT = "Instrument"
     MARKER = "Marker"
     BEAMBEAM = "BeamBeam"
@@ -70,6 +71,8 @@ ALLOWED_GROUPS: dict[ElementKind, frozenset[str]] = {
         ElementKind.KICKER: _MAGNET,
         ElementKind.RFCAVITY: (*_MAGNET, "RFP", "SolenoidP"),
         ElementKind.CRABCAVITY: (*_MAGNET, "RFP"),  # PALS omits RFP from the list but uses it in its example
+        # PALS's EGun is under construction: RFP gives its voltage, as Bmad's PALS writer does (ADR 0012).
+        ElementKind.EGUN: (*_MAGNET, "RFP"),
         ElementKind.INSTRUMENT: _MAGNET,
         ElementKind.MARKER: ("ApertureP", "BodyShiftP", "MetaP"),
         ElementKind.BEAMBEAM: (*_BODY, "BeamBeamP"),

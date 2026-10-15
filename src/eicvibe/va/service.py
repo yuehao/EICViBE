@@ -79,6 +79,8 @@ class Source:
     routes: dict[str, Route]
     folder: Path | None = None
     """A machine folder, whose settings/ holds the modes; None for a lattice file."""
+    beams: dict[str, Any] = field(default_factory=dict)
+    """Beams delivered at branch starts (a machine folder's beams/), by branch name (ADR 0012)."""
 
     def modes(self) -> list[str]:
         if self.folder is None:
@@ -104,7 +106,12 @@ def load_source(path: str | Path) -> Source:
     if is_machine(path):
         machine = load_machine(path)
         return Source(
-            path.name, machine.lattice, machine.registry, {r.name: r for r in machine.routes}, folder=path
+            path.name,
+            machine.lattice,
+            machine.registry,
+            {r.name: r for r in machine.routes},
+            folder=path,
+            beams=dict(machine.beams),
         )
     stem = path.name.removesuffix("_lattice.json")
     registry_path = path.with_name(f"{stem}_registry.json")
@@ -562,7 +569,18 @@ class VirtualAccelerator:
                 **common,
             )
         route = self.source.routes[spec.target]
-        return RouteRun(lattice, route, self.runs / run_id, rate=spec.rate or self.route_rate, **common)
+        first = route.segments[0]
+        delivered = self.source.beams.get(lattice.branch(first.branch).name)
+        if delivered is not None and lattice.layout(first.branch).placements[0].id != first.start:
+            delivered = None  # delivered at the branch's start; this route starts further on
+        return RouteRun(
+            lattice,
+            route,
+            self.runs / run_id,
+            rate=spec.rate or self.route_rate,
+            delivered=delivered,
+            **common,
+        )
 
     def _branches(self, spec: MachineSpec) -> list[str]:
         """The branches a machine tracks, by id: its ring, or its route's, in order."""

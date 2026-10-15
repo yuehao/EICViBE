@@ -30,7 +30,7 @@ import numpy as np
 from pydantic import Field
 
 from eicvibe.diagnostics.bpm import NO_BEAM, VALID
-from eicvibe.domain.lattice import ElementKind, Lattice, PlacedElement
+from eicvibe.domain.lattice import ElementKind, Lattice, PlacedElement, strength_parameter
 from eicvibe.domain.lattice._base import DomainModel
 from eicvibe.domain.machine import MachineRegistry
 from eicvibe.domain.machine.power import design_value
@@ -72,21 +72,23 @@ _ORDER = {ElementKind.BEND: 0, ElementKind.QUADRUPOLE: 1, ElementKind.SEXTUPOLE:
 def main_fields(placed: PlacedElement) -> tuple[str, ...]:
     """The parameters of a magnet's main field, which its field error scales and its supply drives.
 
-    A bend's dipole field, a quadrupole's gradient, a sextupole's and an octupole's, each per length
-    or integrated as the lattice gives it; a corrector's two planes; a solenoid's strength. A thin
-    multipole has no one main field.
+    A bend's dipole field, a quadrupole's gradient, a sextupole's and an octupole's, each in the form
+    the lattice gives it (normalized or field, per length or integrated); a corrector's two planes;
+    a solenoid's strength or field. A thin multipole has no one main field.
     """
+    group = placed.element.MagneticMultipoleP
     if placed.kind in _ORDER:
-        n = _ORDER[placed.kind]
-        multipoles = placed.element.MagneticMultipoleP
-        integrated = (
-            multipoles is not None and getattr(multipoles, f"Kn{n}L") and not getattr(multipoles, f"Kn{n}")
-        )
-        return (f"MagneticMultipoleP.Kn{n}{'L' if integrated else ''}",)
+        return (f"MagneticMultipoleP.{strength_parameter(group, _ORDER[placed.kind])}",)
     if placed.kind is ElementKind.KICKER:
-        return ("MagneticMultipoleP.Kn0L", "MagneticMultipoleP.Ks0L")
+        normal, skew = strength_parameter(group, 0), strength_parameter(group, 0, normal=False)
+        integrated = not normal.endswith("L")  # a corrector at zero: its kicks are integrated
+        letter = normal[0]
+        if integrated:
+            normal, skew = f"{letter}n0L", f"{letter}s0L"
+        return (f"MagneticMultipoleP.{normal}", f"MagneticMultipoleP.{skew}")
     if placed.kind is ElementKind.SOLENOID:
-        return ("SolenoidP.Ksol",)
+        solenoid = placed.element.SolenoidP
+        return ("SolenoidP.Bsol" if solenoid is not None and solenoid.Bsol else "SolenoidP.Ksol",)
     return ()
 
 

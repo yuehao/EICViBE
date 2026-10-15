@@ -4,6 +4,7 @@ YAML for structured data, CSV for long tables; see :mod:`.machine` for the
 layout and ADR 0005 for the reasons.
 """
 
+from .beams import DeliveredBeam, read_beams, write_beam
 from .lattice_files import name_ids
 from .machine import (
     Machine,
@@ -24,6 +25,9 @@ from .machine import (
 from .yamlio import FileError
 
 __all__ = [
+    "DeliveredBeam",
+    "read_beams",
+    "write_beam",
     "FileError",
     "Machine",
     "Setting",

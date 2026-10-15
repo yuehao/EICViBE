@@ -27,6 +27,7 @@ from eicvibe.domain.lattice import (
     PlacedElement,
     Route,
     Segment,
+    has_fields,
     route_problems,
 )
 
@@ -158,8 +159,48 @@ def require(
         periodic = lattice.layout(branch).periodic
         time_scale = TimeScale.EQUILIBRIUM if periodic else TimeScale.SINGLE_PASS
     reasons = capabilities.gaps(options, computation, time_scale, kinds_of(lattice, branch))
+    reasons += beyond_lattice_engines(lattice, branch)
     if reasons:
         raise UnsupportedRequest(capabilities.engine, reasons)
+
+
+def beyond_lattice_engines(lattice: Lattice, branch: str) -> list[str]:
+    """What no lattice engine here models on a branch, whatever its capabilities (ADR 0012).
+
+    An electron gun (``EGun``) starts its beam at rest at the cathode, which only tracking in time
+    follows. Magnets given as fields (``BnN``, ``Bsol``) need the reference momentum at each to be
+    normalized. They are how a line that accelerates its beam from a gun is described: its momentum
+    along it comes from tracking the beam, slow and space-charge dominated at first, with an
+    injector code.
+    """
+    layout = lattice.layout(branch)
+    key = (lattice.digest, layout.id)
+    if key not in _BEYOND:
+        _BEYOND[key] = _beyond(lattice, layout.id)
+    return list(_BEYOND[key])
+
+
+_BEYOND: dict[tuple[str, str], tuple[str, ...]] = {}
+
+
+def _beyond(lattice: Lattice, branch: str) -> tuple[str, ...]:
+    layout = lattice.layout(branch)
+    reasons = []
+    if guns := [p.name for p in layout.placements if p.kind is ElementKind.EGUN]:
+        reasons.append(
+            f"{layout.branch.name} has an electron gun ({', '.join(guns)}): its beam starts at rest at the "
+            "cathode, which only an injector code tracking it in time follows (ADR 0012)"
+        )
+    fields = [p.name for p in layout.placements if has_fields(p.element.MagneticMultipoleP)]
+    fields += [p.name for p in layout.placements if p.element.SolenoidP and p.element.SolenoidP.Bsol]
+    if fields:
+        shown = ", ".join(fields[:3]) + (", ..." if len(fields) > 3 else "")
+        reasons.append(
+            f"{len(fields)} magnets of {layout.branch.name} are given as fields ({shown}): normalizing them "
+            "needs the reference momentum at each, which an accelerating injector line only has from an "
+            "injector code that tracks its beam (ADR 0012)"
+        )
+    return tuple(reasons)
 
 
 def effective(placed: PlacedElement, values: Values) -> dict[str, dict[str, Any]]:
@@ -232,6 +273,10 @@ def machine_optics(
         progress = False
         for branch in list(pending):
             layout = lattice.layout(branch)
+            if beyond := beyond_lattice_engines(lattice, branch):
+                pending.remove(branch)
+                found[branch] = f"not for a lattice engine: {beyond[0]}"
+                continue
             if layout.periodic:
                 start, origin = None, "periodic solution"
             elif (start := initial_conditions(lattice, branch)) is not None:

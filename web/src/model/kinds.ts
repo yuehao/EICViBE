@@ -29,6 +29,8 @@ const STYLES: Record<string, KindStyle> = {
   Multipole: { color: "#192935", dark: "#4E6678", floorWidth: 0.3, height: 0.42, lane: "polarity", priority: 3 },
   RFCavity: { color: "#7A6E9E", dark: "#A397C9", floorWidth: 0.5, height: 0.8, lane: "straddle", priority: 3 },
   CrabCavity: { color: "#7A6E9E", dark: "#A397C9", floorWidth: 0.5, height: 0.8, lane: "straddle", priority: 3 },
+  // An electron gun accelerates like a cavity: a plum next to the cavities' purple, its vessel wider.
+  EGun: { color: "#8A5A7E", dark: "#B886AA", floorWidth: 0.6, height: 0.9, lane: "straddle", priority: 3 },
   Kicker: { color: "#9E6060", dark: "#C98989", floorWidth: 0.25, height: 0.5, lane: "straddle", priority: 3 },
   Solenoid: { color: "#4E8A8A", dark: "#76B3B3", floorWidth: 0.4, height: 0.75, lane: "straddle", priority: 3 },
   Instrument: { color: "#6A7D6A", dark: "#93A893", floorWidth: 0, height: 0.35, lane: "tick", priority: 2 },

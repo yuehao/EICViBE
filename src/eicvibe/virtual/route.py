@@ -31,7 +31,9 @@ from eicvibe.domain.lattice._base import DomainModel
 from eicvibe.domain.machine import MachineRegistry
 from eicvibe.domain.machine.power import design_value
 from eicvibe.engines.contracts import Fidelity, Options
+from eicvibe.engines.convert import reference
 from eicvibe.engines.worker import EngineWorker, RemoteSession
+from eicvibe.store.beams import DeliveredBeam
 
 from .errors import BpmModel, MachineErrors, VirtualBpms
 from .history import BpmHistory, RunInfo
@@ -89,6 +91,7 @@ class RouteRun:
         machine: str | None = None,
         shots: int | None = None,
         errors: MachineErrors | None = None,
+        delivered: DeliveredBeam | None = None,
     ) -> None:
         if problems := route_problems(lattice, route):
             raise ValueError(f"route {route.name} is not one pass: {'; '.join(problems)}")
@@ -115,13 +118,29 @@ class RouteRun:
         self._fluctuations = self.errors.fluctuations(1.0 / rate) if self.errors else None
         self.warnings: list[str] = list(errors.problems) if errors is not None else []
         """What the run found wrong: its errors' rows that chose nothing."""
+        self.delivered = delivered
+        """The beam an injector code delivered where the route starts (ADR 0012): each shot is a sample of
+        its particles, with the shot-to-shot jitter, rather than a Gaussian matched to the optics there."""
+        self._pool: np.ndarray | None = None
+        if delivered is not None:
+            first = route.segments[0]
+            layout = lattice.layout(first.branch)
+            if (
+                lattice.branch(first.branch).name != delivered.branch
+                or layout.placements[0].id != first.start
+            ):
+                raise ValueError(
+                    f"route {route.name} does not start where the beam is delivered ({delivered.branch})"
+                )
+            self._pool = delivered.about(reference("route", lattice, first.branch)["pc"])
         bpms = route_bpms(lattice, route, registry)
         if not bpms:
             raise ValueError(f"route {route.name} has no BPMs to record")
         self._observe = [[b[1] for b in bpms if b[0] == k] for k in range(len(route.segments))]
         self.bpm_names = [b[2] for b in bpms]
         self.bpm_s = [b[3] for b in bpms]
-        self._bpms = VirtualBpms(self.bpm, len(bpms), self.beam.particles, self.beam.charge, self.bpm_names)
+        charge = delivered.charge if delivered is not None else self.beam.charge
+        self._bpms = VirtualBpms(self.bpm, len(bpms), self.beam.particles, charge, self.bpm_names)
         self._accelerate = _accelerations(lattice, route)
         self._bunches = np.random.default_rng(self.beam.seed)
         self._jitter = np.random.default_rng(self.jitter.seed)
@@ -174,7 +193,19 @@ class RouteRun:
             | {
                 "jitter": self.jitter.model_dump(),
                 "matched": {"to": self._origin, **self._start.model_dump()},
-            },
+            }
+            | (
+                {
+                    "delivered": {
+                        "branch": self.delivered.branch,
+                        "charge": self.delivered.charge,
+                        "particles": len(self.delivered.particles),
+                        "source": self.delivered.source,
+                    }
+                }
+                if self.delivered is not None
+                else {}
+            ),
             resolution=self.bpm.resolution,
             retention_bytes=self.retention_bytes,
             values={f"{o} {p}": v for (o, p), v in self.values.items()},
@@ -287,8 +318,13 @@ class RouteRun:
         """One shot along the route: the centroid at every BPM, and how many particles reached it."""
         j, t = self.jitter, self._start
         offset = self._jitter.standard_normal(5) * [j.x, j.px, j.y, j.py, j.delta]
-        centre = np.array([t.x, t.px, t.y, t.py, t.zeta, t.delta]) + np.insert(offset, 4, 0.0)
-        particles = twiss_bunch(self._bunches, self.beam, t, centre)
+        if self._pool is not None:  # a sample of the delivered beam, moved by the jitter
+            count = min(self.beam.particles, len(self._pool))
+            particles = self._pool[self._bunches.choice(len(self._pool), size=count, replace=False)]
+            particles = particles + np.insert(offset, 4, 0.0)
+        else:
+            centre = np.array([t.x, t.px, t.y, t.py, t.zeta, t.delta]) + np.insert(offset, 4, 0.0)
+            particles = twiss_bunch(self._bunches, self.beam, t, centre)
         xs, ys, counts = [], [], []
         for k, (segment, observe) in enumerate(zip(self.route.segments, self._observe, strict=True)):
             if len(particles) == 0:

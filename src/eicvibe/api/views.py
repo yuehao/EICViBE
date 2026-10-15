@@ -15,6 +15,7 @@ from eicvibe.domain.lattice import (
     Lattice,
     PlacedElement,
     Route,
+    has_fields,
     parameter_info,
     route_problems,
 )
@@ -64,7 +65,15 @@ COLUMNS = (
     schemas.Column(key="Kn0L", label="Kn0L", unit="rad", description="Horizontal kick; > 0 toward -x"),
     schemas.Column(key="Ks0L", label="Ks0L", unit="rad", description="Vertical kick, skew dipole"),
     schemas.Column(key="Ksol", label="Ksol", unit="1/m", description="Solenoid strength, B_s / (B rho)"),
+    schemas.Column(key="Bn1", label="Bn1", unit="T/m", description="Quadrupole field gradient, Bn1 + Bn1L/L"),
+    schemas.Column(
+        key="Bn0L", label="Bn0L", unit="T m", description="Integrated vertical field of a corrector"
+    ),
+    schemas.Column(key="Bs0L", label="Bs0L", unit="T m", description="Integrated skew dipole field"),
+    schemas.Column(key="Bsol", label="Bsol", unit="T", description="Solenoid field"),
     schemas.Column(key="voltage", label="voltage", unit="V", description="RF peak voltage"),
+    schemas.Column(key="frequency", label="frequency", unit="Hz", description="RF frequency, where given"),
+    schemas.Column(key="phase", label="phase", unit="rad", description="RF phase"),
     schemas.Column(key="tilt", label="tilt", unit="rad", description="Rotation about s of the main field"),
 )
 
@@ -97,8 +106,18 @@ def _row_values(placed: PlacedElement) -> dict[str, float | None]:
         values["angle"] = element.BendP.angle_ref
         if element.BendP.tilt_ref:
             values["tilt"] = element.BendP.tilt_ref
+    multipoles = element.MagneticMultipoleP
+    if has_fields(multipoles):  # given by its fields (an injector line, ADR 0012)
+        length = placed.length
+        gradient = multipoles.Bn1 * length + multipoles.Bn1L
+        if gradient or kind is ElementKind.QUADRUPOLE:
+            values["Bn1"] = gradient / length if length else None
+        for key in ("Bn0L", "Bs0L"):
+            if field := getattr(multipoles, key) + getattr(multipoles, key.removesuffix("L")) * length:
+                values[key] = field
+        multipoles = None
     for order, (thick, thin), always in (
-        (1, ("Kn1", "Kn1L"), kind is ElementKind.QUADRUPOLE),
+        (1, ("Kn1", "Kn1L"), kind is ElementKind.QUADRUPOLE and "Bn1" not in values),
         (2, ("Kn2", "Kn2L"), kind is ElementKind.SEXTUPOLE),
         (3, (None, "Kn3L"), kind is ElementKind.OCTUPOLE),
     ):
@@ -107,7 +126,6 @@ def _row_values(placed: PlacedElement) -> dict[str, float | None]:
             if thick is not None:
                 values[thick] = per_length
             values[thin] = integrated
-    multipoles = element.MagneticMultipoleP
     if multipoles is not None:
         # A bend's Kn0 is its bending field, not a kick.
         for key in ("Ks0L",) if kind is ElementKind.BEND else ("Kn0L", "Ks0L"):
@@ -117,12 +135,20 @@ def _row_values(placed: PlacedElement) -> dict[str, float | None]:
         order = _MAIN_ORDER.get(kind)
         if order is not None and getattr(multipoles, f"tilt{order}"):
             values["tilt"] = getattr(multipoles, f"tilt{order}")
-    elif kind is ElementKind.KICKER:
+    elif kind is ElementKind.KICKER and not ({"Bn0L", "Bs0L"} & values.keys()):
         values["Kn0L"] = values["Ks0L"] = 0.0
-    if element.SolenoidP is not None and (element.SolenoidP.Ksol or kind is ElementKind.SOLENOID):
-        values["Ksol"] = element.SolenoidP.Ksol
-    if kind in (ElementKind.RFCAVITY, ElementKind.CRABCAVITY):
-        values["voltage"] = element.RFP.voltage if element.RFP is not None else 0.0
+    solenoid = element.SolenoidP
+    if solenoid is not None and solenoid.Bsol:
+        values["Bsol"] = solenoid.Bsol
+    elif solenoid is not None and (solenoid.Ksol or kind is ElementKind.SOLENOID):
+        values["Ksol"] = solenoid.Ksol
+    if kind in (ElementKind.RFCAVITY, ElementKind.CRABCAVITY, ElementKind.EGUN):
+        rf = element.RFP
+        values["voltage"] = rf.voltage if rf is not None else 0.0
+        if rf is not None and rf.frequency:
+            values["frequency"] = rf.frequency
+        if rf is not None and rf.phase:
+            values["phase"] = rf.phase
     return values
 
 

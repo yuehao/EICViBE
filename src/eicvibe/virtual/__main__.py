@@ -92,6 +92,13 @@ def _values(args: argparse.Namespace, lattice, branches: list[str]) -> dict[tupl
     return values | _settings(lattice, branches, args.set)
 
 
+def _beams(path: Path) -> dict:
+    """The beams a machine folder delivers at branch starts (none for a lattice file)."""
+    from eicvibe.store import is_machine, read_beams
+
+    return read_beams(path) if is_machine(path) else {}
+
+
 def _load(path: Path):
     """A machine folder's, or a lattice file's, lattice, registry and routes.
 
@@ -115,6 +122,20 @@ def _load(path: Path):
         MachineRegistry.model_validate_json(registry_file.read_text()) if registry_file.is_file() else None
     )
     return lattice, registry, list(read_routes_file(path.with_name(f"{stem}_routes.yaml"), lattice))
+
+
+def _delivered(beams: dict, lattice, route):
+    """The beam delivered where a route starts, if one is: at its first branch's start."""
+    first = route.segments[0]
+    beam = beams.get(lattice.branch(first.branch).name)
+    if beam is not None and lattice.layout(first.branch).placements[0].id == first.start:
+        print(
+            f"shooting the beam delivered at {beam.branch} ({len(beam.particles)} particles, "
+            f"{beam.charge * 1e9:.3g} nC)",
+            flush=True,
+        )
+        return beam
+    return None
 
 
 def ring(args: argparse.Namespace) -> None:
@@ -193,6 +214,7 @@ def route(args: argparse.Namespace) -> None:
         values=_values(args, lattice, [s.branch for s in chosen.segments]),
         registry=registry,
         shots=args.shots,
+        delivered=_delivered(_beams(args.machine), lattice, chosen),
         **_errors(args.errors, lattice, [s.branch for s in chosen.segments], registry),
     )
     stopping = False

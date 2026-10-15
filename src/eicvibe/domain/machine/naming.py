@@ -266,6 +266,7 @@ def eic_device(element: ElementDefinition) -> str | None:
         ElementKind.SOLENOID: "sol",
         ElementKind.RFCAVITY: "cav",
         ElementKind.CRABCAVITY: "cav",
+        ElementKind.EGUN: "gun",
         ElementKind.INSTRUMENT: "b",
         ElementKind.DRIFT: "dt",
         ElementKind.MARKER: "mark",

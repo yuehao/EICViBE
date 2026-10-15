@@ -23,7 +23,7 @@ files, every time, so an edit counts as soon as it is saved.
 import hashlib
 import json
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from importlib.metadata import version
 from pathlib import Path
 from typing import Any
@@ -31,6 +31,7 @@ from typing import Any
 from eicvibe.domain.lattice import ElementKind, Lattice, Route, design_values, route_through
 from eicvibe.domain.machine import MachineDescription, MachineRegistry, assemble_registry
 
+from .beams import BEAMS_DIR, DeliveredBeam, read_beams
 from .device_files import References, read_devices, write_devices
 from .lattice_files import (
     _BRANCH_HEADER,
@@ -81,6 +82,8 @@ class Machine:
     source: dict[str, Any]
     """Provenance of the lattice, as machine.yaml records it."""
     routes: tuple[Route, ...] = ()
+    beams: dict[str, DeliveredBeam] = field(default_factory=dict)
+    """Beams delivered at branch starts (beams/), by branch name (ADR 0012)."""
     """The beam's paths through several branches (routes.yaml)."""
 
 
@@ -207,7 +210,12 @@ def load_machine(folder: Path) -> Machine:
     except (ValueError, KeyError) as error:
         raise FileError(folder, f"cannot assemble the registry: {error}") from None
     routes = read_routes(folder, lattice)
-    return Machine(folder, lattice, description, registry, dict(index.get("source") or {}), routes)
+    beams = read_beams(folder)
+    if unknown := sorted(set(beams) - {b.name for b in lattice.branches}):
+        raise FileError(
+            folder / BEAMS_DIR, f"beams delivered to no branch of the lattice: {', '.join(unknown)}"
+        )
+    return Machine(folder, lattice, description, registry, dict(index.get("source") or {}), routes, beams)
 
 
 def write_machine(

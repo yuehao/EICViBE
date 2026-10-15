@@ -24,6 +24,8 @@ devices/transfer/*.csv    measured transfer functions: current, field
 devices/diagnostics.yaml  BPMs and tune monitors
 devices/rf.yaml           RF stations and the ranges of their settings
 settings/<mode>.yaml      operating settings of a mode: parameter values by occurrence
+beams/<branch>.yaml, .csv a bunch delivered at a branch's start by a code that tracked what comes
+                          before it: its particles, charge, reference momentum and source (ADR 0012)
 routes.yaml               the beam's paths through several branches, by branch name in beam order,
                           and the rings the beam is stored in on the way
 measurements/             reserved: the magnetic measurement database

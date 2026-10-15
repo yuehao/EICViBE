@@ -32,7 +32,8 @@ SHARED_FILE = "shared.yaml"
 _ONE_LINE = 150
 
 _BRANCH_HEADER = """Branch {branch} of {lattice}: its element definitions, then its line in beam order.
-Units SI, angles in rad, strengths normalized (PALS conventions, ADR 0001).
+Units SI, angles in rad, strengths normalized (PALS conventions, ADR 0001), or fields (Bn1,
+Bsol) where a line's momentum along it comes from tracking its beam (ADR 0012).
 Elements are referred to by name. `eic` is the element's EIC name, from the rules in
 naming.yaml; `eicvibe build` keeps it current (to choose a name, add it to naming.yaml's
 names). Keep each occurrence's `id` (drifts have none: they go by name): it is its
@@ -42,12 +43,14 @@ gets an id derived from its name."""
 #: Headers the tools wrote before, replaced by the current one where a file still has them.
 OLD_BRANCH_HEADERS = (
     """Branch {branch} of {lattice}: its element definitions, then its line in beam order.
-Units SI, angles in rad, strengths normalized (PALS conventions, ADR 0001).
+Units SI, angles in rad, strengths normalized (PALS conventions, ADR 0001), or fields (Bn1,
+Bsol) where a line's momentum along it comes from tracking its beam (ADR 0012).
 Elements are referred to by name. Keep each `id`: it is the entry's identity for
 devices and history. A new element or occurrence may leave it out; it then gets
 an id derived from its name.""",
     """Branch {branch} of {lattice}: its element definitions, then its line in beam order.
-Units SI, angles in rad, strengths normalized (PALS conventions, ADR 0001).
+Units SI, angles in rad, strengths normalized (PALS conventions, ADR 0001), or fields (Bn1,
+Bsol) where a line's momentum along it comes from tracking its beam (ADR 0012).
 Elements are referred to by name. `eic` is the element's EIC name, from the rules in
 naming.yaml; `eicvibe build` keeps it current (to choose a name, add it to naming.yaml's
 names). Keep each occurrence's `id`: it is its identity for devices, settings and

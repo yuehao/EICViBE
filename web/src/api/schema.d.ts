@@ -1582,7 +1582,7 @@ export interface components {
          * @description PALS element kinds supported by the description.
          * @enum {string}
          */
-        ElementKind: "Drift" | "Bend" | "Multipole" | "Quadrupole" | "Sextupole" | "Octupole" | "Solenoid" | "Kicker" | "RFCavity" | "CrabCavity" | "Instrument" | "Marker" | "BeamBeam" | "BeginningEle" | "Fork" | "Patch" | "ReferenceChange";
+        ElementKind: "Drift" | "Bend" | "Multipole" | "Quadrupole" | "Sextupole" | "Octupole" | "Solenoid" | "Kicker" | "RFCavity" | "CrabCavity" | "EGun" | "Instrument" | "Marker" | "BeamBeam" | "BeginningEle" | "Fork" | "Patch" | "ReferenceChange";
         /** EngineChoice */
         EngineChoice: {
             /** Available */

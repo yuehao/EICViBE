@@ -190,3 +190,43 @@ def test_magnets_of_one_length_and_strength_share_a_string_whatever_their_names(
     }
     assert strings == {"QF+QF_TWIN": ["QF_1", "QF_TWIN_1", "QF_2"], "QF_LONG": ["QF_LONG_1", "QF_LONG_2"]}
     assert registry.power_problems(lattice) == []  # one current gives each its design strength
+
+
+def test_a_line_given_by_fields_has_supplies_that_set_fields():
+    """An injector line (ADR 0012) gives its magnets by their fields: its supplies set those, with no
+    rigidity in the conversion, also for magnets at zero; solenoids get supplies; screens are no BPMs."""
+    b = LatticeBuilder("injector", ids=SequentialIds())
+    b.define("BEG", "BeginningEle", ReferenceP={"species_ref": "electron", "pc_ref": 0.65e6})
+    b.define("SOL", "Solenoid", length=0.1, SolenoidP={"Bsol": 0.0237})
+    b.define("Q", "Quadrupole", length=0.1, MagneticMultipoleP={"Bn1": -1.72})
+    b.define("Q0", "Quadrupole", length=0.1)
+    b.define("T", "Kicker")
+    b.define("BPM", "Instrument")
+    b.define("YAG", "Instrument", tags=["SCREEN"])
+    b.define("D", "Drift", length=0.5)
+    b.add_branch("line", "linac", ["BEG", "SOL", "D", "Q", "D", "Q0", "T", "BPM", "D", "YAG"])
+    lattice = b.build()
+    registry = generate_registry(lattice)
+    sets = {
+        lattice.placement(o).name: m.parameter
+        for c in registry.circuits
+        for m in c.magnets
+        for o in m.occurrences
+    }
+    assert sets["SOL_1"] == "SolenoidP.Bsol" and sets["Q_1"] == "MagneticMultipoleP.Bn1"
+    assert sets["Q0_1"] == "MagneticMultipoleP.Bn1"  # at zero, in the line's form
+    assert {p for n, p in sets.items() if n == "T_1"} <= {
+        "MagneticMultipoleP.Bn0L",
+        "MagneticMultipoleP.Bs0L",
+    }
+    bpms = [d.name for d in registry.devices if d.type.value == "bpm"]
+    assert len(bpms) == 1  # the screen is not one
+    quad = next(
+        c
+        for c in registry.circuits
+        if any(lattice.placement(o).name == "Q_1" for m in c.magnets for o in m.occurrences)
+    )
+    [magnet] = quad.magnets
+    current = magnet_current(lattice, magnet, -1.72, (-1e3, 1e3))
+    assert magnet_strength(lattice, magnet, magnet.occurrences[0], current) == pytest.approx(-1.72)
+    assert abs(current) == pytest.approx(1.72 / magnet.transfer.coefficients[1])  # the field: no rigidity

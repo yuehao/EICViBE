@@ -51,6 +51,9 @@ def test_branches_and_connections(ein):
     lattice = ein.lattice
     kinds = {b.name: b.kind.value for b in lattice.branches}
     assert kinds == {
+        "prj": "linac",
+        "prj_gun": "linac",
+        "prj_spin": "linac",
         "ltr": "linac",
         "itl": "linac",
         "bar": "periodic",
@@ -60,6 +63,9 @@ def test_branches_and_connections(ein):
     }
     assert lattice.branch(lattice.root_branch).name == "ltr"
     assert connections(lattice) == {
+        ("prj", "ltr"): (None, "entrance"),  # the preinjector ends where the LTR starts
+        ("prj", "prj_gun"): ("prj-d144", "entrance"),  # the gun dipole, reversed
+        ("prj", "prj_spin"): ("prj-spk856", "entrance"),  # the spin kicker, pulsed
         ("ltr", "itl"): (None, "entrance"),
         ("itl", "bar"): ("septum", "exit"),
         ("bar", "etl"): ("eseptum", "entrance"),
@@ -67,9 +73,13 @@ def test_branches_and_connections(ein):
         ("ltr", "rcs"): ("mar.sep_2", "exit"),  # the staged RCS spells its injection point MAR.SEP
         ("rcs", "rte"): (None, "entrance"),
     }
-    [septum] = lattice.shared_components
-    roles = {t.role: lattice.placement(t.occurrence).name for t in septum.traversals}
+    shared = {c.name: c for c in lattice.shared_components}
+    roles = {t.role: lattice.placement(t.occurrence).name for t in shared["bar_septum"].traversals}
     assert roles == {"injection": "iseptum", "circulation": "septum", "extraction": "eseptum"}
+    assert {c: len(shared[c].traversals) for c in ("prj_gun_dipole", "prj_spin_kicker")} == {
+        "prj_gun_dipole": 2,
+        "prj_spin_kicker": 2,
+    }
     assert lattice.diagnose() == ()
 
 
@@ -172,7 +182,7 @@ def test_temporary_names_can_change_without_changing_devices(ein):
     temporary = ein_registry(ein)
     renamed = ein_registry(ein, areas={"rcs": "rcb", "bar": "ba"})
     assert [d.id for d in renamed.devices] == [d.id for d in temporary.devices]
-    assert {d.name.split("-")[0] for d in renamed.devices} == {"ltr", "itl", "ba", "etl", "rcb", "rte"}
+    assert {d.name.split("-")[0] for d in renamed.devices} == {"prj", "ltr", "itl", "ba", "etl", "rcb", "rte"}
     problems = renamed.naming_problems(ein_repository({"rcs": "rcb", "bar": "ba"}))
     assert problems and all("area" not in p for p in problems)  # only signal tokens awaiting approval remain
 
@@ -189,7 +199,8 @@ def test_a_new_machine_folder_holds_the_lattice_devices_and_routes(ein, tmp_path
     assert [c.name for c in machine.registry.channels] == [c.name for c in registry.channels]
     ltr = (folder / "lattice" / "ltr.yaml").read_text()
     assert "{name: ltr_qua01, eic: ltr-q1:1, element: ltr.ltr_qua01, id: occ_" in ltr
-    assert machine.source["madx"].startswith("MAD-X") and len(machine.source["files"]) == 7
+    assert machine.source["madx"].startswith("MAD-X") and len(machine.source["files"]) == 12  # 5: preinjector
+    assert list(machine.beams) == ["ltr"] and machine.beams["ltr"].charge == 1.7e-9  # what it delivers
     assert not (folder / "settings").exists() or not list((folder / "settings").iterdir())  # no BAR mode
     assert {r.name: len(r.stored) for r in machine.routes} == {"direct": 0, "bar": 1}
     assert check_machine(folder) == []
@@ -259,7 +270,9 @@ def test_ring_magnets_are_strung_by_family_and_line_magnets_powered_alone(ein):
         for p in lattice.layout(b.id).placements
         if p.kind.value in magnets and p.id not in powered
     }
-    assert unpowered == {"septum"}  # bends included; only the septum's stored-beam traversal is never set
+    # Bends included, only the shared magnets' undriven traversals are never set: the septum's stored-beam
+    # one, the gun dipole's reversed one and the spin kicker's while it is off.
+    assert unpowered == {"septum", "prj-d144", "prj-spk856"}
     dipoles = next(c for c in registry.circuits if c.name == "rcs.b0")
     assert len(dipoles.magnets) == 156 and registry.setting_of(dipoles.id).name == "rcs-dh111-ps:sp"
     # Strings join magnets of one length and design strength; in the BAR and RCS these are the lattice

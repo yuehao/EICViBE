@@ -24,8 +24,10 @@ The field is the magnet's field, gradient, ... (T, T/m, T/m^2) or, for an
 T/m). A magnet's lattice parameter is its normalized strength, the field
 divided by the reference rigidity B rho of the branch, times the magnet's
 wiring polarity, per length or integrated as the parameter is (``Kn1``,
-``Kn1L``). A setting of a bend's ``Kn0`` gives its field explicitly: whoever
-applies it also sets ``BendP.Kn0_from_g_ref`` false, so that 0 A means no field.
+``Kn1L``); or, where the lattice gives the magnet by its field (``Bn1``,
+``Bsol``: an injector line, ADR 0012), the field itself times the polarity.
+A setting of a bend's ``Kn0`` gives its field explicitly: whoever applies it
+also sets ``BendP.Kn0_from_g_ref`` false, so that 0 A means no field.
 """
 
 from collections.abc import Iterable, Mapping
@@ -241,7 +243,7 @@ def magnet_strength(
     placed = lattice.placement(occurrence)
     field = magnet.polarity * transfer_field(magnet.transfer, current, services)
     field = _convert(field, magnet.transfer.integrated, _integrated(magnet.parameter), placed)
-    return field / rigidity(lattice, placed.branch_id)
+    return field / _scale(lattice, placed, magnet.parameter)
 
 
 def circuit_strengths(
@@ -287,7 +289,7 @@ def magnet_current(
 ) -> float:
     """The circuit current at which a magnet's parameter takes ``value`` (at its first occurrence)."""
     placed = lattice.placement(occurrence or magnet.occurrences[0])
-    field = value * rigidity(lattice, placed.branch_id) * magnet.polarity
+    field = value * _scale(lattice, placed, magnet.parameter) * magnet.polarity
     field = _convert(field, _integrated(magnet.parameter), magnet.transfer.integrated, placed)
     return transfer_current(magnet.transfer, field, limits, services)
 
@@ -328,6 +330,17 @@ def string_problems(
 
 def _integrated(parameter: str) -> bool:
     return parameter.endswith("L")
+
+
+def is_field(parameter: str) -> bool:
+    """Whether a parameter is a field (``BnN``, ``BsNL``, ``Bsol``; T, T/m, ...) rather than a strength
+    normalized by the reference rigidity (``KnN``, ``Ksol``)."""
+    return parameter.partition(".")[2].startswith("B")
+
+
+def _scale(lattice: Lattice, placed: PlacedElement, parameter: str) -> float:
+    """A magnet's field per unit of its parameter: the rigidity for a normalized strength, 1 for a field."""
+    return 1.0 if is_field(parameter) else rigidity(lattice, placed.branch_id)
 
 
 def _convert(field: float, integrated: bool, wanted: bool, placed: PlacedElement) -> float:

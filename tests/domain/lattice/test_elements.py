@@ -63,7 +63,7 @@ def test_with_groups_merges_replaces_and_removes():
 
 def test_with_overrides_revalidates_the_whole_group():
     kicker = element(kind="Kicker", MagneticMultipoleP={"Kn0L": 1e-4})
-    with pytest.raises(ValidationError, match="integrated Kn0L/Ks0L"):
+    with pytest.raises(ValidationError, match="Kn0/Ks0 and Kn0L/Ks0L"):
         kicker.with_overrides([ParameterOverride(group="MagneticMultipoleP", parameter="Ks0", value=1e-4)])
 
 
@@ -75,3 +75,5 @@ def test_allowed_groups_follow_the_pals_kind_lists():
     assert "BodyShiftP" not in ALLOWED_GROUPS[ElementKind.PATCH]
     reference_change = {"ControlP", "MetaP", "ReferenceChangeP", "TrackingP"}
     assert ALLOWED_GROUPS[ElementKind.REFERENCE_CHANGE] == reference_change
+    # PALS's EGun is under construction; RFP for its voltage, as Bmad's PALS writer gives it.
+    assert "RFP" in ALLOWED_GROUPS[ElementKind.EGUN]

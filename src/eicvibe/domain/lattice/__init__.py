@@ -68,8 +68,10 @@ from .parameters import (
     TrackingP,
     TwissP,
     ZeroPhase,
+    has_fields,
     parameter_info,
     parameters_of,
+    strength_parameter,
 )
 from .routes import Route, Segment, route_length, route_placements, route_problems, route_through
 from .topology import BranchLayout, ForkEdge, PlacedElement, Topology
@@ -124,6 +126,8 @@ __all__ = [
     "with_design",
     "MAX_MULTIPOLE_ORDER",
     "MagneticMultipoleP",
+    "has_fields",
+    "strength_parameter",
     "MetaP",
     "MultipoleGeometry",
     "Occurrence",

@@ -33,6 +33,7 @@ from eicvibe.engines.contracts import (  # noqa: E402
 from eicvibe.engines.trackpad import TrackPadEngine, _julia  # noqa: E402
 from eicvibe.engines.xsuite import XsuiteEngine  # noqa: E402
 from eicvibe.importers import import_cpymad  # noqa: E402
+from eicvibe.machines.preinjector import BRANCHES as PREINJECTOR  # noqa: E402
 from tests.engines.test_xsuite import ramped_and_turn_by_turn  # noqa: E402
 from tests.importers.test_madx import RING  # noqa: E402
 
@@ -202,7 +203,8 @@ def test_the_bar_chromaticity_is_madxs(ein):
 def test_every_ein_branch_agrees_with_xsuite(ein):
     ours = machine_optics(TRACKPAD, ein, options=PRECISE)
     theirs = machine_optics(XSUITE, ein, options=PRECISE)
-    assert set(ours) == set(theirs) == {b.id for b in ein.branches}
+    # The preinjector's branches are an injector code's (ADR 0012).
+    assert set(ours) == set(theirs) == {b.id for b in ein.branches if b.name not in PREINJECTOR}
     for branch in ours:
         # The RTE runs up to 12 cm off axis: the RCS's extraction kickers are off, so the beam meets the
         # extraction patch on the RCS's axis, not the RTE's; that far out the bend models part by 7e-3.

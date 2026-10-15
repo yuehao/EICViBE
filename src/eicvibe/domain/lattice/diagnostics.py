@@ -84,8 +84,10 @@ def diagnose(lattice, limits: ParameterLimits | None = None) -> tuple[Diagnostic
     for layout in lattice.topology.layouts.values():
         if not layout.placements:
             found.append(Diagnostic("empty-branch", f"branch {layout.branch.name!r} is empty", layout.id))
-        elif (first := layout.placements[0]).element.FloorP is not None and any(
-            edge.to_occurrence in (None, first.id) for edge in lattice.forks_into(layout.id)
+        elif (
+            (first := layout.placements[0]).element.FloorP is not None
+            and layout.id != lattice.root_branch  # the root starts at its FloorP whatever leads to it
+            and any(edge.to_occurrence in (None, first.id) for edge in lattice.forks_into(layout.id))
         ):
             message = f"branch {layout.branch.name!r}: a fork enters at its start, so its FloorP is ignored"
             found.append(Diagnostic("floor-ignored", message, first.id))
@@ -165,7 +167,8 @@ def _check_element(e: ElementDefinition, subject: str, where: str) -> list[Diagn
             if over(getattr(rf, n), "RFP.phase"):
                 message = f"RFP.{n} = {getattr(rf, n)} exceeds 2 pi; phases are in rad, not degrees"
                 warn("rf-phase-units", message)
-        if (rf.voltage or rf.gradient) and rf.frequency is None and rf.harmon is None:
+        dc = e.kind is ElementKind.EGUN  # a gun without a frequency is a DC gun
+        if (rf.voltage or rf.gradient) and rf.frequency is None and rf.harmon is None and not dc:
             warn("rf-frequency-missing", "an active cavity needs frequency or harmon")
 
     if (a := e.ApertureP) is not None:

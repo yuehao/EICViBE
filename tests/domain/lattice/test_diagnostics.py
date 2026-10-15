@@ -26,6 +26,10 @@ def test_active_cavity_without_frequency():
     assert codes(one_element("RFCavity", 1.2, RFP={"voltage": 3e7})) == ["rf-frequency-missing"]
 
 
+def test_a_gun_without_frequency_is_a_dc_gun():
+    assert codes(one_element("EGun", 0.3, RFP={"voltage": 3.2e5})) == []
+
+
 def test_zero_length_quadrupole_with_per_length_strength():
     assert codes(one_element("Quadrupole", MagneticMultipoleP={"Kn1": 0.5})) == ["thin-thick-strength"]
 

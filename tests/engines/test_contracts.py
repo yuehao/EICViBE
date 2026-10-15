@@ -153,3 +153,23 @@ def test_an_engine_must_be_an_adapter_with_every_computation(monkeypatch):
     with pytest.raises(TypeError, match="not an EngineAdapter"):
         engine("bare")
     assert issubclass(type(engine("xsuite")), EngineAdapter)
+
+
+def test_a_branch_given_by_fields_is_left_to_an_injector_code():
+    """Magnets given as fields (ADR 0012) need the reference momentum at each: every engine refuses the
+    branch, for the same reason, and the machine's optics say so rather than invent them."""
+    from eicvibe.engines import machine_optics
+
+    b = LatticeBuilder("injector", ids=SequentialIds())
+    b.define("BEG", "BeginningEle", ReferenceP={"species_ref": "electron", "pc_ref": 0.65e6})
+    b.define("Q", "Quadrupole", length=0.1, MagneticMultipoleP={"Bn1": -1.72})
+    b.define("D", "Drift", length=0.5)
+    b.add_branch("line", "linac", ["BEG", "D", "Q", "D"])
+    lattice = b.build()
+    for name in ENGINES:
+        if engine(name).available():
+            with pytest.raises(UnsupportedRequest, match="given as fields"):
+                engine(name).open(lattice, "line")
+    notes = {}
+    assert machine_optics(engine("xsuite"), lattice, notes=notes) == {}
+    assert notes[lattice.layout("line").id].startswith("not for a lattice engine")

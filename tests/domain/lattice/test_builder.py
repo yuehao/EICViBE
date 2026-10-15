@@ -64,7 +64,7 @@ def test_definition_changes_are_checked_against_existing_overrides():
     b.define("K", "Kicker")
     b.add_branch("line", "linac", [])
     b.append("line", "K", MagneticMultipoleP={"Ks0L": 1e-4})
-    with pytest.raises(ValueError, match="integrated Kn0L/Ks0L"):
+    with pytest.raises(ValueError, match="Kn0/Ks0 and Kn0L/Ks0L"):
         b.update_element("K", MagneticMultipoleP={"Kn0": 1e-3})
 
 

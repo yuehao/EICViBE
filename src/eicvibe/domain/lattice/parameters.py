@@ -66,7 +66,8 @@ _POLES = ("dipole", "quadrupole", "sextupole", "octupole", "decapole", "dodecapo
 
 
 def _multipole_fields() -> dict[str, Any]:
-    """Fields of MagneticMultipoleP: KnN, KsN, KnNL, KsNL and tiltN for every order N."""
+    """Fields of MagneticMultipoleP for every order N: normalized strengths KnN, KsN, KnNL, KsNL;
+    fields BnN, BsN, BnNL, BsNL; and tiltN."""
     orders = range(MAX_MULTIPOLE_ORDER + 1)
     pole = [_POLES[n] if n < len(_POLES) else f"{2 * n + 2}-pole" for n in orders]
     fields: dict[str, Any] = {}
@@ -79,9 +80,41 @@ def _multipole_fields() -> dict[str, Any]:
             unit = {0: "rad", 1: "1/m"}.get(n, f"1/m^{n}")
             note = f"; > 0 kicks toward {kick}" if n == 0 else ""
             fields[f"K{part}{n}L"] = (Real, _field(0.0, unit, f"Integrated {side} {pole[n]} strength{note}"))
+    for part, side in (("n", "normal"), ("s", "skew")):
+        for n in orders:
+            unit = "T" if n == 0 else "T/m" if n == 1 else f"T/m^{n}"
+            fields[f"B{part}{n}"] = (Real, _field(0.0, unit, f"{side.capitalize()} {pole[n]} field"))
+            unit = "T m" if n == 0 else "T" if n == 1 else "T/m" if n == 2 else f"T/m^{n - 1}"
+            fields[f"B{part}{n}L"] = (Real, _field(0.0, unit, f"Integrated {side} {pole[n]} field"))
     for n in orders:
         fields[f"tilt{n}"] = (Real, _field(0.0, "rad", f"Rotation of the {pole[n]} about s"))
     return fields
+
+
+#: The forms a multipole order's strength takes: normalized per length and integrated, and the
+#: field per length and integrated. One order uses one form, for its normal and skew parts alike.
+STRENGTH_FORMS = (("K", ""), ("K", "L"), ("B", ""), ("B", "L"))
+
+
+def strength_parameter(group: MagneticMultipoleP | None, order: int, normal: bool = True) -> str:
+    """The parameter that holds a multipole order's strength: the form the element gives (normalized
+    or field, per length or integrated), else the normalized per-length one."""
+    side = "n" if normal else "s"
+    if group is not None:
+        for letter, suffix in STRENGTH_FORMS:
+            if getattr(group, f"{letter}n{order}{suffix}") or getattr(group, f"{letter}s{order}{suffix}"):
+                return f"{letter}{side}{order}{suffix}"
+    return f"K{side}{order}"
+
+
+def has_fields(group: MagneticMultipoleP | None) -> bool:
+    """Whether any order is given as a field (BnN, BnNL, ...): normalizing it needs the reference momentum."""
+    return group is not None and any(
+        getattr(group, f"B{side}{n}{suffix}")
+        for n in range(MAX_MULTIPOLE_ORDER + 1)
+        for side in ("n", "s")
+        for suffix in ("", "L")
+    )
 
 
 # The fields are generated so that MAX_MULTIPOLE_ORDER is the only place the order limit is set.
@@ -91,22 +124,29 @@ _MagneticMultipoleFields = create_model(
 
 
 class MagneticMultipoleP(_MagneticMultipoleFields):
-    """Normalized magnetic multipoles of orders 0 to ``MAX_MULTIPOLE_ORDER`` (see ``conventions``).
+    """Magnetic multipoles of orders 0 to ``MAX_MULTIPOLE_ORDER`` (see ``conventions``).
 
-    Each order N is given either per unit length (``KnN``, ``KsN``) or
-    integrated over the element (``KnNL``, ``KsNL``, which are ``length``
-    times ``KnN``, ``KsN``), not both. Zero-length elements need the
-    integrated form; a kicker's kick angles are ``Kn0L`` and ``Ks0L``.
-    ``tiltN`` rotates order N about s.
+    Each order N is given in one form: normalized per unit length (``KnN``,
+    ``KsN``) or integrated over the element (``KnNL``, ``KsNL``, which are
+    ``length`` times ``KnN``, ``KsN``); or as a field, per length (``BnN``,
+    ``BsN``) or integrated (``BnNL``, ``BsNL``). Normalized strengths are the
+    rule (ADR 0001); fields are for lines whose reference momentum along them
+    is not known, such as an injector accelerating from the gun (ADR 0012),
+    where a strength can only be normalized by tracking the beam. Zero-length
+    elements need an integrated form; a kicker's kick angles are ``Kn0L`` and
+    ``Ks0L``. ``tiltN`` rotates order N about s.
     """
 
     @model_validator(mode="after")
     def _one_form_per_order(self) -> Self:
         for n in range(MAX_MULTIPOLE_ORDER + 1):
-            per_length = getattr(self, f"Kn{n}") != 0.0 or getattr(self, f"Ks{n}") != 0.0
-            integrated = getattr(self, f"Kn{n}L") != 0.0 or getattr(self, f"Ks{n}L") != 0.0
-            if per_length and integrated:
-                raise ValueError(f"set either Kn{n}/Ks{n} or the integrated Kn{n}L/Ks{n}L, not both")
+            given = [
+                f"{letter}n{n}{suffix}/{letter}s{n}{suffix}"
+                for letter, suffix in STRENGTH_FORMS
+                if getattr(self, f"{letter}n{n}{suffix}") or getattr(self, f"{letter}s{n}{suffix}")
+            ]
+            if len(given) > 1:
+                raise ValueError(f"order {n} is given in one form only; got {' and '.join(given)}")
         return self
 
 
