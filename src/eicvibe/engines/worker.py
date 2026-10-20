@@ -18,7 +18,7 @@ import threading
 import uuid
 from concurrent.futures import Future, ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from eicvibe.domain.lattice import Lattice, Route
 
@@ -38,13 +38,21 @@ from .contracts import (
     UnsupportedRequest,
 )
 
+if TYPE_CHECKING:
+    from .remote import EngineHost, RemoteEngine
+
 
 class EngineWorker:
-    """One engine in its own process; requests run one at a time, in order."""
+    """One engine in its own process, here or on an engine host (:mod:`.remote`, ADR 0015); requests run
+    one at a time, in order."""
 
-    def __init__(self, name: str) -> None:
+    def __init__(self, name: str, host: EngineHost | None = None) -> None:
         self.name = name
-        self._pool: ProcessPoolExecutor | None = None
+        self.host = host
+        """Where the engine runs: None here, in a process of its own."""
+        self._pool: ProcessPoolExecutor | RemoteEngine | None = None
+        self._generation = 0
+        """How many processes the worker has started: a session lives in the one it was opened in."""
         self._lock = threading.Lock()
 
     def machine_optics(
@@ -115,23 +123,33 @@ class EngineWorker:
         """A session on one branch, open in the worker until closed."""
         key = uuid.uuid4().hex
         options = options or Options()
-        self._submit(
+        opened = self._submit(
             _open_session, key, self.name, lattice.to_json(), branch, options, dict(values or {})
-        ).result()
-        return RemoteSession(self, key, lattice.layout(branch).id)
+        )
+        generation = self._generation
+        opened.result()
+        return RemoteSession(self, key, lattice.layout(branch).id, generation)
 
-    def _submit(self, function, *args) -> Future:
+    def _submit(self, function, *args, generation: int | None = None) -> Future:
+        """Submit a call to the worker's process, starting one if there is none or it died; a session's
+        call (its ``generation``) fails with BrokenProcessPool instead once its process is gone."""
         with self._lock:
             for attempt in (1, 2):
+                if generation is not None and (self._pool is None or generation != self._generation):
+                    raise BrokenProcessPool(f"{self.name}: the engine's process is gone, and its session")
                 if self._pool is None:
-                    self._pool = ProcessPoolExecutor(
-                        max_workers=1, mp_context=multiprocessing.get_context("spawn")
-                    )
+                    self._generation += 1
+                    if self.host is not None:
+                        self._pool = self.host.connect()
+                    else:
+                        self._pool = ProcessPoolExecutor(
+                            max_workers=1, mp_context=multiprocessing.get_context("spawn")
+                        )
                 try:
                     return self._pool.submit(function, *args)
                 except BrokenProcessPool:  # the last worker died; start another once
                     self._pool = None
-                    if attempt == 2:
+                    if attempt == 2 or generation is not None:
                         raise
         raise AssertionError("unreachable")
 
@@ -145,14 +163,16 @@ class EngineWorker:
 class RemoteSession:
     """A session open in an engine worker, used as a local one (:class:`.model.Session`)."""
 
-    def __init__(self, worker: EngineWorker, key: str, branch: str) -> None:
+    def __init__(self, worker: EngineWorker, key: str, branch: str, generation: int = 0) -> None:
         self.worker = worker
         self.key = key
         self.engine = worker.name
         self.branch = branch
+        self.generation = generation
+        """The worker's process it lives in."""
 
     def _call(self, method: str, *args) -> Any:
-        return self.worker._submit(_call, self.key, method, *args).result()
+        return self.worker._submit(_call, self.key, method, *args, generation=self.generation).result()
 
     def update(self, values) -> None:
         self._call("update", dict(values))
@@ -175,12 +195,15 @@ class RemoteSession:
         start: str | None = None,
         end: str | None = None,
         ramps=(),
+        momentum=None,
     ) -> BeamTrack:
-        return self._call("track_beam", coordinates, turns, tuple(observe), options, start, end, tuple(ramps))
+        return self._call(
+            "track_beam", coordinates, turns, tuple(observe), options, start, end, tuple(ramps), momentum
+        )
 
     def close(self) -> None:
         try:
-            self.worker._submit(_close_session, self.key).result(timeout=60)
+            self.worker._submit(_close_session, self.key, generation=self.generation).result(timeout=60)
         except Exception:  # noqa: BLE001 - a dead worker has nothing left to close
             pass
 

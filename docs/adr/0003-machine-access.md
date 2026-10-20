@@ -62,7 +62,7 @@ A **power circuit** is one supply and the magnets it drives. A magnet powered on
 
 Strength = polarity × field / Bρ, with Bρ the reference rigidity of the magnet's branch, per length or integrated as the parameter is. The virtual accelerator runs this forward (current to strength). Setting a model strength, or comparing the model with the real machine, runs it backward within the supply's limits. A setting of a bend's `Kn0` gives its field explicitly, so whoever applies it also sets `Kn0_from_g_ref` false: then 0 A means no field. Since a string carries one current, `MachineRegistry.power_problems` reports a string whose magnets need different currents for their design values, for example after one magnet's measured curve replaced its placeholder. The viewer lists these under Notes.
 
-Generated circuits use linear placeholder transfer functions: 1 mT/A for dipoles, 0.1 T/m per A for quadrupoles, 1 T/m² per A for sextupoles, 1 mT·m/A for correctors. `source` marks each as `placeholder` until measured curves replace them magnet by magnet.
+Generated circuits use linear placeholder transfer functions: 1 mT/A for dipoles, 0.1 T/m per A for quadrupoles, 1 T/m² per A for sextupoles, 1 mT·m/A for correctors. `source` marks each as `placeholder` until measured curves replace them magnet by magnet; `design` marks one from the magnet's design, its coil and aperture, as its designers give it (amended 2026-10-16, ADR 0014).
 
 The registry is generated for the virtual accelerator from the imported lattice plus a device description: which supplies drive which magnets, where the BPMs are, which channels exist. Later it is reconciled against the real IOC database or ChannelFinder, and any difference is an error.
 

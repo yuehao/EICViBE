@@ -32,6 +32,7 @@ from eicvibe.domain.machine import MachineRegistry
 from eicvibe.domain.machine.power import design_value
 from eicvibe.engines.contracts import Fidelity, Options
 from eicvibe.engines.convert import reference
+from eicvibe.engines.remote import EngineHost
 from eicvibe.engines.worker import EngineWorker, RemoteSession
 from eicvibe.store.beams import DeliveredBeam
 
@@ -92,6 +93,7 @@ class RouteRun:
         shots: int | None = None,
         errors: MachineErrors | None = None,
         delivered: DeliveredBeam | None = None,
+        host: EngineHost | None = None,
     ) -> None:
         if problems := route_problems(lattice, route):
             raise ValueError(f"route {route.name} is not one pass: {'; '.join(problems)}")
@@ -99,6 +101,8 @@ class RouteRun:
         self.route = route
         self.directory = Path(directory)
         self.engine = engine or default_engine()
+        self.host = host
+        """Where the engine runs (ADR 0015): None here, in a process of its own."""
         self.options = Options(fidelity=fidelity)
         self.beam = beam or Beam()
         self.jitter = jitter or Jitter()
@@ -160,7 +164,7 @@ class RouteRun:
 
     def start(self) -> RouteRun:
         """Open a session per branch in one engine worker and start shooting in the background."""
-        self._worker = EngineWorker(self.engine)
+        self._worker = EngineWorker(self.engine, self.host)
         try:
             for segment in self.route.segments:
                 if segment.branch not in self._sessions:
@@ -181,6 +185,7 @@ class RouteRun:
             branch=self.route.name,
             branch_id=f"route:{self.route.name}",
             engine=self.engine,
+            host=self.host.name if self.host else None,
             fidelity=self.options.fidelity.value,
             effects=[],
             start=datetime.now(UTC),

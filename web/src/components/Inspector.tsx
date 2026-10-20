@@ -10,6 +10,7 @@ import { swatch } from "../model/kinds";
 import type { MachineEntry } from "../api/va";
 import type { Auth } from "./Auth";
 import { Setpoints } from "./Setpoints";
+import { BeyondLimits, SourceBadge } from "./SupplyMarks";
 
 interface Props {
   digest: string;
@@ -277,13 +278,12 @@ function PowerCircuit({ power, detail, describe }: { power: Power; detail: Occur
           </div>
           {power.transfer ? (
             <div>
-              {power.transfer.summary}{" "}
-              <span className={`badge ${power.transfer.source}`} title="Where the transfer function comes from">
-                {power.transfer.source}
-              </span>
+              {power.transfer.summary} <SourceBadge source={power.transfer.source} />
             </div>
           ) : null}
-          {power.design_current != null ? (
+          {power.design_current != null && power.beyond && power.limits ? (
+            <BeyondLimits current={power.design_current} limits={power.limits} unit={power.transfer?.engineering_unit ?? ""} />
+          ) : power.design_current != null ? (
             <div className="muted">
               design: {formatNumber(power.design_current, 6)} {power.transfer?.engineering_unit ?? ""}
             </div>

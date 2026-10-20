@@ -1,6 +1,7 @@
 """Shots along a route: every BPM's trajectory reading, shot after shot, as a real line records them."""
 
 import math
+import time
 
 import numpy as np
 import pytest
@@ -73,11 +74,15 @@ def test_a_corrector_moves_the_trajectory_downstream_as_linear_optics_predict(de
     run = shots(demo, tmp_path / "kick", beam=Beam(particles=1), chunk=1, **QUIET).start()
     run.wait(3)
     run.update({(corrector.id, "MagneticMultipoleP.Kn0L"): 1e-5})  # 1e-5 toward -x
-    run.wait(6)
-    run.stop()
     history = BpmHistory.open(tmp_path / "kick")
-    (event,) = [e for e in history.events() if e["kind"] == "settings"]
-    x = history.turn_by_turn(0, 6).x.position
+    for _ in range(200):  # taken up between shots, as soon as the run gets to it
+        if events := [e for e in history.events() if e["kind"] == "settings"]:
+            break
+        time.sleep(0.05)
+    (event,) = events
+    run.wait(event["turn"] + 2)
+    run.stop()
+    x = history.turn_by_turn(0, event["turn"] + 2).x.position
     before, after = x[:, event["turn"] - 1], x[:, event["turn"]]
     optics = route_optics(engine("xsuite"), lattice, route)
     k = optics.occurrences.index(corrector.id)

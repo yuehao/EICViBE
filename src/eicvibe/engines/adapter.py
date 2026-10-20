@@ -11,6 +11,7 @@ to the same standard by the conformance tests (``tests/engines/
 test_conformance.py``), which every registered engine passes (ADR 0006).
 """
 
+import math
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from typing import ClassVar
@@ -23,6 +24,7 @@ from .contracts import (
     BeamTrack,
     Capabilities,
     Computation,
+    Effect,
     EngineUnavailable,
     OpticsRequest,
     OpticsResult,
@@ -39,6 +41,21 @@ from .model import SETTINGS, Values, require, span
 
 #: Settings changed in place, by occurrence: occurrence -> parameter path -> value.
 Changes = dict[str, dict[str, float]]
+
+
+def rereferenced(coordinates, pc: float, to: float, mass: float) -> np.ndarray:
+    """Coordinates ``(x, px, y, py, zeta, delta)`` about a reference of momentum ``pc`` (eV), about one of
+    ``to`` instead: each particle's momentum kept, px and py rescaled by ``pc / to``, delta recomputed,
+    zeta / beta0 kept, as the engines do before each turn of a moving reference (ADR 0013)."""
+    c = np.array(coordinates, dtype=float).reshape(-1, 6)
+    if pc == to:
+        return c
+    ratio = pc / to
+    c[:, 1] *= ratio
+    c[:, 3] *= ratio
+    c[:, 5] = (1.0 + c[:, 5]) * ratio - 1.0
+    c[:, 4] *= (to / math.hypot(to, mass)) / (pc / math.hypot(pc, mass))  # beta0's
+    return c
 
 
 class EngineSession(ABC):
@@ -124,24 +141,55 @@ class EngineSession(ABC):
         start: str | None = None,
         end: str | None = None,
         ramps: Sequence[Ramp] = (),
+        momentum=None,
     ) -> BeamTrack:
         """Track a bunch (rows of x, px, y, py, zeta, delta) for ``turns`` turns, recording centroids.
 
         With ``start`` or ``end``, or on a line, once through that part, as a line. With ``ramps``
         (a ring's turns only), settings move turn by turn while it tracks; the session is left at
         their values after the last turn.
+
+        With ``momentum``, the reference momentum moves while a ring turns, as in a synchrotron's
+        ramp: ``pc`` (eV) during each turn, ``turns`` values (a numpy array). Magnets keep their
+        normalized strengths, so their fields follow the reference, as the magnets of a synchrotron
+        track its energy; before each turn the bunch is put about that turn's reference (px, py and
+        delta rescaled; zeta / beta0 kept). ``coordinates`` are about ``momentum[0]`` and the
+        result's ``final`` about ``momentum[-1]``: a ramp tracked call after call puts the bunch about
+        the next call's first reference in between (:func:`rereferenced`), as the engine does between
+        turns. The RF must act (effect longitudinal): it is what gives the bunch the energy (ADR 0013).
         """
         once = start is not None or end is not None or not self.layout.periodic
         if once and turns != 1:
             raise UnsupportedRequest(self.engine, ["a line, or part of a branch, is passed once: turns = 1"])
         if once and ramps:
             raise UnsupportedRequest(self.engine, ["settings ramp while a ring turns, not in one pass"])
-        self._require(options, Computation.TRACKING, TimeScale.SINGLE_PASS if once else TimeScale.TURNS)
+        if momentum is not None:
+            momentum = self._momentum(momentum, turns, once, options)
+        time_scale = TimeScale.SINGLE_PASS if once else TimeScale.TURNS
+        self._require(options, Computation.TRACKING, TimeScale.CYCLE if momentum is not None else time_scale)
         occurrences, _ = self._span(start, end)
         self._observed(observe, frozenset(occurrences))
         self.checked_ramps(ramps)
         coordinates = np.asarray(coordinates, dtype=float).reshape(-1, 6)
-        return self._track_beam(coordinates, turns, list(observe), options, occurrences, once, tuple(ramps))
+        return self._track_beam(
+            coordinates, turns, list(observe), options, occurrences, once, tuple(ramps), momentum
+        )
+
+    def _momentum(self, momentum, turns: int, once: bool, options: Options) -> np.ndarray:
+        """A tracking call's reference momenta, checked: one per turn of a ring, the RF acting."""
+        momentum = np.asarray(momentum, dtype=float).reshape(-1)
+        reasons = []
+        if once:
+            reasons.append("the reference moves while a ring turns, not in one pass")
+        if Effect.LONGITUDINAL not in options.effects:
+            reasons.append("a moving reference needs the RF to act (effect longitudinal)")
+        if len(momentum) != turns:
+            reasons.append(f"{len(momentum)} reference momenta for {turns} turns")
+        elif not (np.isfinite(momentum).all() and (momentum > 0).all()):
+            reasons.append("reference momenta are positive")
+        if reasons:
+            raise UnsupportedRequest(self.engine, reasons)
+        return momentum
 
     # -- the engine's own ------------------------------------------------------------------------
 
@@ -169,8 +217,10 @@ class EngineSession(ABC):
         occurrences: list[str],
         once: bool,
         ramps: tuple[Ramp, ...],
+        momentum: np.ndarray | None = None,
     ) -> BeamTrack:
-        """``once``: a line, or part of a branch, passed once; ``ramps`` only on a ring's turns."""
+        """``once``: a line, or part of a branch, passed once; ``ramps`` and ``momentum`` (the reference
+        during each turn, checked) only on a ring's turns."""
 
     @abstractmethod
     def close(self) -> None: ...

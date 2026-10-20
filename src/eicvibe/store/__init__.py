@@ -22,6 +22,7 @@ from .machine import (
     write_machine,
     write_settings,
 )
+from .ramps import read_ramps, write_ramp
 from .yamlio import FileError
 
 __all__ = [
@@ -38,10 +39,12 @@ __all__ = [
     "load_lattice",
     "load_machine",
     "name_ids",
+    "read_ramps",
     "read_settings",
     "set_design",
     "source_files",
     "update_names",
     "write_machine",
+    "write_ramp",
     "write_settings",
 ]

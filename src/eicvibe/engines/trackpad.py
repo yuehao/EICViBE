@@ -117,6 +117,7 @@ COLUMNS = (
     "a3",
     "order",
     "steps",
+    "closed",
     "xkick",
     "ykick",
     "ks",
@@ -139,6 +140,11 @@ COLUMNS = (
 )
 
 STEPS = {Fidelity.FAST: 2, Fidelity.STANDARD: 10, Fidelity.PRECISE: 40}
+"""Integration steps of a thick magnet at the precise fidelity, and of what the others integrate fully: a
+quadrupole with more than its gradient, or a pure one where TrackPad's LBend cannot radiate. Otherwise
+steps are chosen as Xsuite chooses its kicks (``_pieces``)."""
+KICKS_PER_STEP = 3  # TrackPad's Yoshida step kicks three times
+BEND_KICK = math.pi * 1e-3  # Xsuite's automatic mode: a bend kicks once per pi mrad of its angle
 TOP_ORDER = 3  # polynom_a and polynom_b hold dipole to octupole
 
 LATTICE_KINDS = frozenset(
@@ -162,16 +168,23 @@ LATTICE_KINDS = frozenset(
 
 NOTES = {
     "optics.longitudinal": "TrackPad's Twiss is 4D; its 6D closed orbit and tracking follow the RF",
-    Effect.RADIATION_DAMPING.value: "TrackPad gives radiation integrals; it does not track radiation",
-    Effect.QUANTUM_EXCITATION.value: "TrackPad does not track radiation",
+    Effect.RADIATION_DAMPING.value: "classical damping in bends and thick multipoles (rad=1, TrackPad since "
+    "607dc13); tracking and the closed orbit (the adapter's Newton search), not optics",
+    Effect.QUANTUM_EXCITATION.value: "Gaussian photon diffusion per slice (rad=2, Sands'), its random "
+    "numbers keyed by seed, turn, element, particle and slice; tracking only",
     Effect.SPACE_CHARGE.value: "in TrackPad (space-charge elements); not yet in this adapter",
     Effect.WAKEFIELDS.value: "in TrackPad (longitudinal wakes); not yet in this adapter",
     Effect.BEAM_BEAM.value: "in TrackPad (strong Gaussian beam); not yet in this adapter",
     Effect.APERTURES.value: "lattice apertures are not converted yet",
-    TimeScale.CYCLE.value: "quasi-static snapshots; TrackPad's time-dependent elements not used yet",
+    TimeScale.CYCLE.value: "tracking with a moving reference and settings, turn by turn (the adapter's "
+    "own loop); optics as quasi-static snapshots",
 }
 
 _julia_module = None
+
+#: Julia's threads in a process that tracks with TrackPad, a count or ``auto`` (a thread a core, the default):
+#: where TrackPad observes the BPMs itself, a bunch is spread over them (ADR 0006).
+THREADS = "EICVIBE_TRACKPAD_THREADS"
 
 
 def _point_juliacall_at_julia() -> None:
@@ -202,6 +215,9 @@ def _julia():
         if np is None or find_spec("juliacall") is None:
             raise EngineUnavailable("juliacall is not installed: pip install 'eicvibe[trackpad]'")
         _point_juliacall_at_julia()
+        os.environ.setdefault("PYTHON_JULIACALL_THREADS", os.environ.get(THREADS, "auto"))
+        if os.environ["PYTHON_JULIACALL_THREADS"] != "1":  # juliacall's condition for Julia's threads
+            os.environ.setdefault("PYTHON_JULIACALL_HANDLE_SIGNALS", "yes")
         try:
             from juliacall import Main as jl
 
@@ -240,13 +256,22 @@ class TrackPadEngine(EngineAdapter):
             version=_version(),
             computations=frozenset(Computation),
             fidelities=frozenset(STEPS),
-            effects={Effect.LONGITUDINAL: Support.NATIVE},
-            computation_gaps={Computation.OPTICS: frozenset({Effect.LONGITUDINAL})},
+            effects={
+                Effect.LONGITUDINAL: Support.NATIVE,
+                Effect.RADIATION_DAMPING: Support.NATIVE,
+                Effect.QUANTUM_EXCITATION: Support.NATIVE,
+            },
+            computation_gaps={
+                Computation.OPTICS: frozenset(
+                    {Effect.LONGITUDINAL, Effect.RADIATION_DAMPING, Effect.QUANTUM_EXCITATION}
+                ),
+                Computation.ORBIT: frozenset({Effect.QUANTUM_EXCITATION}),
+            },
             time_scales={
                 TimeScale.EQUILIBRIUM: Support.NATIVE,
                 TimeScale.SINGLE_PASS: Support.NATIVE,
                 TimeScale.TURNS: Support.NATIVE,
-                TimeScale.CYCLE: Support.APPROXIMATE,
+                TimeScale.CYCLE: Support.NATIVE,
             },
             kinds=LATTICE_KINDS,
             updatable=SETTINGS,
@@ -289,6 +314,8 @@ class TrackPadSession(EngineSession):
         )
         self.beam = jl.beam(particle["pc"], particle["mass"], particle["charge"])
         self.model = jl.lattice(*_arrays(pieces), self.beam, self.layout.periodic)
+        self._random = np.random.default_rng()
+        """Seeds of the quantum excitation's random numbers: a new one each call, whose turns count from 1."""
 
     def _pieces(self, placed: PlacedElement) -> list[tuple[str, str, dict[str, float]]]:
         return _pieces(placed, effective(placed, self.values), self._beta0, self._revolution, self._fidelity)
@@ -313,15 +340,20 @@ class TrackPadSession(EngineSession):
         kinds, names, _, rows = _arrays(pieces)
         return kinds, names.split("\n"), rows
 
-    def _ramped(self, ramps: Sequence[Ramp], turns: int, options: Options) -> tuple:
+    def _ramped(self, ramps: Sequence[Ramp], turns: int, options: Options, cavities: bool = False) -> tuple:
         """The ramps as the element groups trackpad.jl rebuilds turn by turn (see its ``centroids``).
 
         An occurrence's rows at the ramps' start, and each ramp's change of them at its end: element
         inputs are linear in the settings (strengths per length, rolls, RF voltage and phase), which a
         midpoint checks, so the rows before any turn are the start plus the fractions times the changes.
+        With ``cavities`` (a moving reference), every RF cavity is a group too, to be built anew with it.
         """
         longitudinal = Effect.LONGITUDINAL in options.effects
         moving: dict[str, list[tuple[int, str, float, float]]] = defaultdict(list)
+        if cavities:
+            for placed in self.layout.placements:
+                if placed.kind is ElementKind.RFCAVITY:
+                    moving[placed.id] = []
         for k, ramp in enumerate(ramps):
             for (occurrence, path), value in ramp.start.items():  # checked already (checked_ramps)
                 placed = self.lattice.placement(occurrence)
@@ -404,6 +436,23 @@ class TrackPadSession(EngineSession):
     def _model(self, options: Options):
         """The lattice, with RF cavities as drifts unless the longitudinal motion is wanted."""
         return self.model if Effect.LONGITUDINAL in options.effects else self.jl.transverse(self.model)
+
+    def _radiation(self, options: Options) -> int:
+        """TrackPad's ``rad`` for the options: 0 none, 1 damping, 2 damping and quantum excitation."""
+        mode = (
+            2
+            if Effect.QUANTUM_EXCITATION in options.effects
+            else int(Effect.RADIATION_DAMPING in options.effects)
+        )
+        if mode and not bool(self.jl.RADIATES):
+            raise UnsupportedRequest(
+                NAME,
+                ["this TrackPad does not radiate in its magnets: update it (607dc13, 2026-10-19, or later)"],
+            )
+        return mode
+
+    def _seed(self) -> int:
+        return int(self._random.integers(0, 2**63))
 
     def _part(self, options: Options, occurrences: list[str], partial: bool):
         """What to compute on: the lattice or part of it (as a line), its occurrences, and where they end.
@@ -530,13 +579,19 @@ class TrackPadSession(EngineSession):
     def _orbit(self, request: OrbitRequest, occurrences: list[str], partial: bool) -> OrbitResult:
         options = request.options
         model, occurrences, exits, _, partial = self._part(options, occurrences, partial)
+        radiating = self._radiation(options) > 0  # damping: an orbit has no quantum excitation
+        if radiating:
+            model = self.jl.radiating(model, 1)
         if self.layout.periodic and not partial:
             six = Effect.LONGITUDINAL in options.effects
-            start = self.jl.closed_orbit(model, self.beam, request.delta, six)
+            if radiating and six:  # where the energy loss puts it: TrackPad's own finders ignore rad
+                start = self.jl.closed_orbit_radiating(model, self.beam)
+            else:
+                start = self.jl.closed_orbit(model, self.beam, request.delta, six)
         else:
             x, px, y, py, zeta, delta = request.initial or (0.0, 0.0, 0.0, 0.0, 0.0, request.delta)
             start = self._to_trackpad(x, px, y, py, zeta, delta)
-        orbit = np.asarray(self.jl.along(model, self.beam, start))
+        orbit = np.asarray(self.jl.along(model, self.beam, start, radiating=radiating))
         self._check(orbit, occurrences, exits)
         return OrbitResult(
             engine=NAME,
@@ -560,7 +615,13 @@ class TrackPadSession(EngineSession):
         coords = np.array([self._to_trackpad(*p) for p in request.particles], dtype=float)
         model = self._model(options)
         record, lost = self.jl.observe(
-            model, self.beam, coords, request.turns, np.array(cuts, dtype=np.int64)
+            model,
+            self.beam,
+            coords,
+            request.turns,
+            np.array(cuts, dtype=np.int64),
+            rad=self._radiation(options),
+            seed=self._seed(),
         )
         record = np.asarray(record)  # (cut, turn, particle, coordinate)
         n = len(request.particles)
@@ -597,34 +658,43 @@ class TrackPadSession(EngineSession):
         occurrences: list[str],
         once: bool,
         ramps: tuple[Ramp, ...],
+        momentum: np.ndarray | None = None,
     ) -> BeamTrack:
         """Julia averages the bunch at every observation point, every turn, and with ``ramps`` rebuilds
-        the elements whose settings move before each turn they change."""
+        the elements whose settings move before each turn they change; with ``momentum`` it puts the
+        bunch about each turn's reference and rebuilds the cavities with it."""
         part = len(occurrences) < len(self._occurrence_ids)
         model, occurrences, exits, _, _ = self._part(options, occurrences, part)
         index = dict(zip(occurrences, exits, strict=True))
         cuts = sorted({index[o] for o in observe})
+        beam, beta_first, beta_last = self.beam, self._beta0, self._beta0
+        if momentum is not None:
+            particle = reference(NAME, self.lattice, self.branch)
+            beam = self.jl.beam(float(momentum[0]), particle["mass"], particle["charge"])
+            beta_first, beta_last = (p / math.hypot(p, particle["mass"]) for p in (momentum[0], momentum[-1]))
         initial = coordinates.copy()
-        initial[:, 4] = coordinates[:, 4] / self._beta0
-        initial[:, 5] = [float(self.jl.deltae(d, self.beam)) for d in coordinates[:, 5]]
-        if ramps:
-            groups = self._ramped(ramps, turns, options)
+        initial[:, 4] = coordinates[:, 4] / beta_first
+        initial[:, 5] = [float(self.jl.deltae(d, beam)) for d in coordinates[:, 5]]
+        radiation = {"rad": self._radiation(options), "seed": self._seed()}
+        if ramps or momentum is not None:
+            groups = self._ramped(ramps, turns, options, cavities=momentum is not None)
             x, y, count, final, lost = self.jl.centroids(
-                model, self.beam, initial, turns, np.array(cuts, dtype=np.int64), *groups
+                model, beam, initial, turns, np.array(cuts, dtype=np.int64), *groups, momentum, **radiation
             )
-            after: dict[tuple[str, str], float] = {}
-            for ramp in ramps:
-                after |= ramp.at(turns - 1)
-            self.update(after)  # the session goes on from where the ramps are
+            if ramps:
+                after: dict[tuple[str, str], float] = {}
+                for ramp in ramps:
+                    after |= ramp.at(turns - 1)
+                self.update(after)  # the session goes on from where the ramps are
         else:
             x, y, count, final, lost = self.jl.centroids(
-                model, self.beam, initial, turns, np.array(cuts, dtype=np.int64)
+                model, self.beam, initial, turns, np.array(cuts, dtype=np.int64), **radiation
             )
         rows = [cuts.index(index[o]) for o in observe]
         final = np.asarray(final).copy()
         energy = final[:, 5]
-        final[:, 4] *= self._beta0
-        final[:, 5] = np.sqrt(1.0 + 2.0 * energy / self._beta0 + energy * energy) - 1.0
+        final[:, 4] *= beta_last
+        final[:, 5] = np.sqrt(1.0 + 2.0 * energy / beta_last + energy * energy) - 1.0
         return BeamTrack(
             observe=tuple(observe),
             turns=turns,
@@ -703,8 +773,12 @@ def _pieces(
         ElementKind.FORK,
     ):
         return [(oid, "drift", {"L": length})] if length else [(oid, "marker", {})]
+    # Steps as Xsuite chooses its kicks, but at the precise fidelity (ADR 0006): a quadrupole's gradient in
+    # closed form (Xsuite's thick quadrupole map; TrackPad's LBend), one step for a sextupole or an
+    # octupole (Xsuite's one kick), and a bend's by its angle (_bend).
+    auto = fidelity is not Fidelity.PRECISE
     if kind is ElementKind.BEND:
-        return [(oid, *_bend(placed, groups, mm, steps, exact=fidelity is not Fidelity.FAST))]
+        return [(oid, *_bend(placed, groups, mm, steps, exact=fidelity is not Fidelity.FAST, auto=auto))]
     if kind in (ElementKind.QUADRUPOLE, ElementKind.SEXTUPOLE, ElementKind.OCTUPOLE):
         order = {ElementKind.QUADRUPOLE: 1, ElementKind.SEXTUPOLE: 2, ElementKind.OCTUPOLE: 3}[kind]
         roll = _placement(groups, common_tilt(NAME, mm, order))
@@ -713,7 +787,12 @@ def _pieces(
         strengths = _strengths(mm, length)
         strengths["order"] = max(strengths["order"], order)
         name = {1: "quadrupole", 2: "sextupole", 3: "octupole"}[order]
-        return [(oid, name, {"L": length, "steps": steps} | strengths | roll)]
+        values = {"L": length, "steps": steps} | strengths | roll
+        if auto and order == 1 and _only(strengths, "b1"):
+            values["closed"] = 1.0  # integrated in `steps` where TrackPad's LBend cannot radiate
+        elif auto and order > 1:
+            values["steps"] = 1
+        return [(oid, name, values)]
     if kind in (ElementKind.MULTIPOLE, ElementKind.KICKER):
         roll = _placement(groups, common_tilt(NAME, mm, 0))
         strengths = _strengths(mm, 0.0, thin=True)
@@ -756,13 +835,26 @@ def _centred(
     ]
 
 
+def _only(strengths: dict[str, float], name: str) -> bool:
+    """Whether ``name`` is the only multipole of the strengths (b0 to b3, a0 to a3) that is not zero."""
+    return all(strengths[f"{c}{n}"] == 0.0 for c in "ab" for n in range(TOP_ORDER + 1) if f"{c}{n}" != name)
+
+
 def _bend(
-    placed: PlacedElement, groups: dict[str, Any], mm: dict[str, Any], steps: int, *, exact: bool
+    placed: PlacedElement,
+    groups: dict[str, Any],
+    mm: dict[str, Any],
+    steps: int,
+    *,
+    exact: bool,
+    auto: bool = False,
 ) -> tuple[str, dict]:
     """TrackPad's exact sector bend (Forest's maps), or its AT-style bend (expanded body, linear edges).
 
     The AT-style body lacks the curvature terms of the kinetic energy, which carry much of
-    the chromaticity of strongly bent rings (half of it at rho ~ 5 m).
+    the chromaticity of strongly bent rings (half of it at rho ~ 5 m). With ``auto``, its steps are
+    Xsuite's kicks: one per pi mrad of its angle, three a step; none for an exact pure dipole, whose
+    body is exact.
     """
     bp = groups.get("BendP", {})
     length, angle = placed.length, bp.get("angle_ref", 0.0)
@@ -772,6 +864,9 @@ def _bend(
     strengths = _strengths(mm, length)
     strengths["b0"] = bend_field(bp, mm, length) - angle / length  # the field beyond the curvature
     strengths["order"] = highest_order({**mm, "Kn0": strengths["b0"], "Kn0L": 0.0}, length)
+    if auto:
+        kicks = max(1, int(abs(angle) / BEND_KICK))
+        steps = 0 if exact and _only(strengths, "") else math.ceil(kicks / KICKS_PER_STEP)
     shape = {"L": length, "angle": angle, "e1": e1, "e2": e2, "steps": steps}
     shape |= strengths | _placement(groups, bp.get("tilt_ref", 0.0))
     # The fringe is full gap x FINT = 2 HGAP x FINT in MAD-X's terms; the lattice stores HGAP x FINT.

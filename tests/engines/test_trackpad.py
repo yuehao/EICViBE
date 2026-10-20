@@ -225,7 +225,11 @@ def test_sampling_inside_magnets_adds_points_and_changes_nothing(ein, fidelity):
     profile = sampled.profile
     steps = {Fidelity.FAST: 2, Fidelity.PRECISE: 40}[fidelity]
     quadrupoles = [i for i, p in enumerate(ein.layout("bar").placements) if p.kind.value == "Quadrupole"]
-    assert all(profile.index.count(i) == steps for i in quadrupoles)  # one point per integrator step
+    counts = [profile.index.count(i) for i in quadrupoles]
+    if fidelity is Fidelity.PRECISE or not bool(session.jl.CLOSED_QUADRUPOLES):
+        assert all(c == steps for c in counts)  # integrated: one point per integrator step
+    else:  # in closed form (an LBend): sampled as TrackPad slices it
+        assert all(c >= 1 for c in counts)
     assert list(profile.index) == sorted(profile.index) and np.all(np.diff(profile.s) >= 0)
     ends = np.searchsorted(profile.index, np.arange(len(sampled.occurrences)), side="right")
     assert np.array(profile.beta_x)[ends] == pytest.approx(np.array(sampled.beta_x), abs=1e-12)
@@ -294,10 +298,35 @@ def test_the_longitudinal_motion_is_in_orbits_and_tracking_not_in_optics(ring):
     assert ours.delta == pytest.approx(theirs.delta, rel=1e-3)
     with pytest.raises(UnsupportedRequest, match="effect longitudinal in optics: none .TrackPad.s Twiss"):
         session.optics(OpticsRequest(options=six))
-    with pytest.raises(UnsupportedRequest, match="effect radiation_damping: none"):
-        TRACKPAD.open(ring, "ring", Options(effects=frozenset({Effect.RADIATION_DAMPING})))
+    # It radiates in tracking and the closed orbit (since TrackPad 607dc13), not in its optics.
+    with pytest.raises(UnsupportedRequest, match="effect radiation_damping in optics"):
+        session.optics(OpticsRequest(options=Options(effects=frozenset({Effect.RADIATION_DAMPING}))))
     with pytest.raises(UnsupportedRequest, match="no linear fidelity"):
         TRACKPAD.open(ring, "ring", Options(fidelity=Fidelity.LINEAR))
+
+
+def test_a_bunch_spread_over_julias_threads_tracks_as_on_one(ring):
+    """Where TrackPad observes the BPMs itself, a ring is tracked whole and its bunch spread over Julia's
+    threads: each particle the same, bit for bit, its BPMs' counts too, their centroids to rounding."""
+    jl = _julia()
+    if not bool(jl.OBSERVES) or int(jl.seval("Threads.nthreads()")) < 2:
+        pytest.skip("this TrackPad does not observe the bunch, or Julia has one thread")
+    bpms = tuple(p.id for p in ring.layout("ring").placements if p.kind.value == "Instrument")
+    bunch = np.random.default_rng(4).normal(0, 1, (64, 6)) * [1e-3, 1e-5, 5e-4, 1e-5, 1e-3, 1e-4]
+    damping = Options(
+        fidelity=Fidelity.PRECISE, effects=frozenset({Effect.LONGITUDINAL, Effect.RADIATION_DAMPING})
+    )
+    session = TRACKPAD.open(ring, "ring", damping)
+    try:
+        threaded = session.track_beam(bunch, 40, bpms, damping)
+        jl.THREADED.x = False
+        serial = session.track_beam(bunch, 40, bpms, damping)
+    finally:
+        jl.THREADED.x = True
+        session.close()
+    assert np.array_equal(threaded.final, serial.final) and np.array_equal(threaded.count, serial.count)
+    assert threaded.x == pytest.approx(serial.x, rel=1e-12, abs=1e-18)
+    assert threaded.y == pytest.approx(serial.y, rel=1e-12, abs=1e-18)
 
 
 def test_bunches_have_the_same_centroids_in_both_engines(ring):

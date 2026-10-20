@@ -11,6 +11,7 @@ applied to the live layer and then to the running engine. The machine files
 are never changed; resetting a machine drops its live layer.
 """
 
+import math
 import re
 import threading
 import uuid
@@ -48,7 +49,9 @@ class MachineSpec(BaseModel):
     name: str
     kind: Literal["ring", "route"]
     target: str = Field(description="The ring's branch name, or the route's name")
-    engine: str | None = Field(None, description="xsuite or trackpad; None: TrackPad when installed")
+    engine: str | None = Field(
+        None, description="xsuite or trackpad; None: TrackPad when installed, Xsuite for a ring with a ramp"
+    )
     fidelity: str = "standard"
     mode: str | None = Field(None, description="An operating mode of the machine files: settings/<mode>.yaml")
     shared: bool = True
@@ -81,6 +84,8 @@ class Source:
     """A machine folder, whose settings/ holds the modes; None for a lattice file."""
     beams: dict[str, Any] = field(default_factory=dict)
     """Beams delivered at branch starts (a machine folder's beams/), by branch name (ADR 0012)."""
+    ramps: dict[str, Any] = field(default_factory=dict)
+    """Rings' ramp profiles (a machine folder's ramps/), by the ring's branch name (ADR 0013)."""
 
     def modes(self) -> list[str]:
         if self.folder is None:
@@ -112,6 +117,7 @@ def load_source(path: str | Path) -> Source:
             {r.name: r for r in machine.routes},
             folder=path,
             beams=dict(machine.beams),
+            ramps={r.branch: r for r in machine.ramps.values()},
         )
     stem = path.name.removesuffix("_lattice.json")
     registry_path = path.with_name(f"{stem}_registry.json")
@@ -297,7 +303,14 @@ class VirtualAccelerator:
             "started": instance.started,
             "changes": len(live),
             "warnings": list(getattr(instance.run, "warnings", []) or []),
+            "ramp": self._ramp(instance.spec),
+            "cycle": getattr(instance.run, "cycle", None) if instance.state == "running" else None,
         }
+
+    def _ramp(self, spec: MachineSpec) -> str | None:
+        """The ramp profile a ring machine runs on command (ADR 0013); None for a route or a ring without."""
+        profile = self.source.ramps.get(spec.target) if spec.kind == "ring" else None
+        return profile.name if profile is not None else None
 
     def settings(self, machine_id: str, changed: bool = False) -> list[dict[str, Any]]:
         """Every setting channel: original (design and mode), live, the value now, who changed it."""
@@ -322,6 +335,8 @@ class VirtualAccelerator:
                     "by": entry["user"] if entry else None,
                     "at": entry["time"] if entry else None,
                     "occurrences": sorted({o for o, _ in s.keys}),
+                    "source": s.source,
+                    "beyond": s.beyond,
                 }
             )
         return rows
@@ -566,6 +581,7 @@ class VirtualAccelerator:
                 self.runs / run_id,
                 max_rate=spec.rate or self.ring_rate,
                 ramp_turns=spec.ramp_turns,
+                ramp=self.source.ramps.get(spec.target),
                 **common,
             )
         route = self.source.routes[spec.target]
@@ -702,7 +718,7 @@ class VirtualAccelerator:
     def beam(
         self, user: User, machine_id: str, action: str, x: float = 0.0, y: float = 0.0, reason: str = ""
     ) -> None:
-        """Kick (a pinger at the ring's start, rad) or inject a fresh bunch."""
+        """Kick (a pinger at the ring's start, rad), inject a fresh bunch, or ramp (ADR 0013)."""
         instance = self._instance(machine_id)
         self._may(user, instance, Role.OPERATOR)
         if instance.spec.kind != "ring":
@@ -713,8 +729,13 @@ class VirtualAccelerator:
             instance.run.kick(x, y)
         elif action == "inject":
             instance.run.inject()
+        elif action == "ramp":
+            try:
+                instance.run.ramp()
+            except RuntimeError as error:  # ramping already
+                raise Conflict(f"{machine_id}: {error}") from None
         else:
-            raise ValueError("the beam takes kick or inject")
+            raise ValueError("the beam takes kick, inject or ramp")
         self.store.act(
             user.name, action, machine_id, reason, x=x, y=y, run=instance.run_id, turn=instance.position
         )
@@ -891,6 +912,79 @@ class VirtualAccelerator:
             user.name, "verify proposal", row["machine"], "", proposal=ident, ok=verification["ok"]
         )
         return self.store.proposal(ident)
+
+    def ramp(self, machine_id: str, samples: int = 241) -> dict[str, Any]:
+        """A ring's ramp (ADR 0013): its profile and its programs (sampled in time over the ramp and the
+        flattop), where the ring is in it, what keeps it from ramping now, and the ramps of its run."""
+        from eicvibe.domain.machine.ramps import ramp_period
+        from eicvibe.engines.convert import reference
+
+        instance = self._instance(machine_id)
+        spec = instance.spec
+        profile = self.source.ramps.get(spec.target) if spec.kind == "ring" else None
+        if profile is None:
+            raise KeyError(f"{machine_id} has no ramp profile")
+        lattice = self.source.lattice
+        period = ramp_period(profile, lattice)
+        mass = reference("va", lattice, lattice.layout(spec.target).id)["mass"]
+        flattop, extraction = profile.ramp_turns(period), profile.extraction_turn(period)
+        rows = [profile.at(extraction * k / (samples - 1), period, mass) for k in range(samples)]
+        run = instance.run if instance.state == "running" else None
+        if run is None:
+            refusal = f"{machine_id} is {instance.state}: start it to ramp"
+        else:
+            refusal = run.ramp_refusal
+        return {
+            "machine": machine_id,
+            "ramp": profile.name,
+            "branch": profile.branch,
+            "energy": profile.energy.model_dump(),
+            "porch": profile.porch,
+            "flattop": profile.flattop,
+            "cycle_time": profile.cycle,
+            "period": period,
+            "flattop_turn": flattop,
+            "extraction_turn": extraction,
+            "source": profile.source,
+            "program": {
+                "time": [extraction * k / (samples - 1) * period * 1e3 for k in range(samples)],
+                "energy": [r["energy"] / 1e9 for r in rows],
+                "voltage": [r["voltage"] / 1e6 for r in rows],
+                "phase": [math.degrees(r["phase"]) for r in rows],
+            },
+            "cycle": run.cycle if run is not None else None,
+            "engine": run.engine if run is not None else spec.engine,
+            "refusal": refusal,
+            "ramps": self._ramps_done(instance),
+        }
+
+    def _ramps_done(self, instance: Instance, keep: int = 20) -> list[dict[str, Any]]:
+        """The ramps of a machine's latest run, newest first, from its events: when each began, reached
+        the flattop and extracted, the bunch it extracted (one under way has no extraction yet), and the
+        capture of its BPMs' readings, every turn, saved at extraction."""
+        from eicvibe.virtual import BpmHistory
+
+        if instance.run_id is None or not (self.runs / instance.run_id).is_dir():
+            return []
+        done: list[dict[str, Any]] = []
+        injected: int | None = None
+        for event in BpmHistory.open(self.runs / instance.run_id).events():
+            kind = event["kind"]
+            if kind == "inject":
+                injected = event.get("particles")
+            elif kind == "ramp":
+                done.append({"turn": event["turn"], "wall": event.get("wall"), "injected": injected})
+            elif kind == "flattop" and done:
+                done[-1]["flattop"] = event["turn"]
+            elif kind == "extract" and done:
+                detail = {k: event.get(k) for k in ("energy", "particles", "emittance_x", "emittance_y")}
+                detail |= {k: event.get(k) for k in ("sigma_delta", "delta", "sigma_zeta")}
+                done[-1] |= {"extracted": event["turn"], **detail}
+            elif kind == "capture" and event.get("of") == "ramp":  # dated at the ramp's start
+                for ramp in done:
+                    if ramp["turn"] == event["turn"]:
+                        ramp |= {"capture": event.get("id"), "capture_turns": event.get("turns")}
+        return done[::-1][:keep]
 
     def tunes(self, machine_id: str) -> dict[str, Any] | None:
         """The ring's tune monitor: fractional tunes (0 to 0.5), the turn, whether settled; None yet."""

@@ -78,7 +78,15 @@ const captureLabel = (c: CaptureEntry) =>
   `${CAPTURE_NAMES[c.kind] ?? c.kind} at turn ${c.trigger} (${c.turns} turns${c.partial ? ", partial" : ""})`;
 
 /** Events marked in the controls: what changed the beam. */
-const EVENT_NAMES: Record<string, string> = { kick: "kick", settings: "settings", inject: "injection", loss: "loss" };
+const EVENT_NAMES: Record<string, string> = {
+  kick: "kick",
+  settings: "settings",
+  inject: "injection",
+  loss: "loss",
+  ramp: "ramp",
+  flattop: "flattop",
+  extract: "extraction",
+};
 
 /** " · kick at 250, 2298 · loss at 31, 33 (+4)": the latest three of each kind. */
 function eventText(events: readonly { kind: string; turn: number }[]): string {
@@ -197,6 +205,7 @@ export function BpmView(props: Props) {
             previous.run === next.run &&
             previous.end_turn === next.end_turn &&
             previous.every === next.every &&
+            previous.state === next.state && // a run that stops records no turn more
             previous.turns.join() === next.turns.join()
               ? previous
               : next,

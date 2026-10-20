@@ -21,7 +21,14 @@ from pydantic import Field, model_validator
 from ..lattice import ALLOWED_GROUPS, Lattice, parameter_info
 from ..lattice._base import DomainModel, Id, Label, Real
 from .naming import EicName, NamingRepository, default_repository
-from .power import CalibrationSource, CircuitMagnet, PowerCircuit, TransferService, string_problems
+from .power import (
+    CalibrationSource,
+    CircuitMagnet,
+    PowerCircuit,
+    TransferService,
+    limit_problems,
+    string_problems,
+)
 
 
 class DeviceType(StrEnum):
@@ -292,12 +299,19 @@ class MachineRegistry(DomainModel):
     def power_problems(
         self, lattice: Lattice, services: dict[str, TransferService] | None = None
     ) -> list[str]:
-        """Strings whose magnets need different currents for their design values."""
+        """Strings whose magnets need different currents for their design values, and magnets whose
+        design values need a current beyond their supply's limits."""
         problems = []
         for circuit in self.circuits:
             setting = self.setting_of(circuit.id)
-            if circuit.series and setting is not None and setting.control_limits is not None:
-                problems += string_problems(lattice, circuit, setting.control_limits, services)
+            if setting is None or setting.control_limits is None:
+                continue
+            if circuit.series:
+                found = string_problems(lattice, circuit, (-1e12, 1e12), services)
+                if found:
+                    problems += found
+                    continue
+            problems += limit_problems(lattice, circuit, setting.control_limits, services)
         return problems
 
     @cached_property

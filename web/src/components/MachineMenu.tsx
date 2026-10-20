@@ -2,11 +2,12 @@
 // the inspector's setpoints and the Orbit tab follow it. A user may make a
 // sandbox of their own from it, to try changes without disturbing anyone, and
 // start, stop or remove their sandboxes, or give them other errors (ADR 0011);
-// doing so asks them to log in.
+// doing so asks them to log in. A ring with a ramp profile shows where it is in
+// its ramp, and an operator ramps it from here (ADR 0013).
 
 import { useState } from "react";
 
-import { atLeast, va, VaError, type MachineEntry } from "../api/va";
+import { atLeast, cycleText, va, VaError, type MachineEntry } from "../api/va";
 import { Cancelled, type Auth } from "./Auth";
 import { ErrorsEditor } from "./ErrorsEditor";
 
@@ -45,6 +46,9 @@ export function MachineMenu({ machines, chosen, auth, onChoose, onChanged, onNot
   const control = (action: () => Promise<unknown>) =>
     auth.withLogin("To change your sandbox, log in.", action).then(onChanged, fail);
   const running = chosen?.state === "running" || chosen?.state === "starting";
+  const ramp = () =>
+    chosen &&
+    auth.withLogin(`To ramp ${chosen.name}, log in.`, () => va.ramp(chosen.id, "ramp from the viewer")).then(onChanged, fail);
 
   return (
     <span className="machine-menu">
@@ -66,6 +70,16 @@ export function MachineMenu({ machines, chosen, auth, onChoose, onChanged, onNot
           </option>
         ))}
       </select>
+      {chosen && cycleText(chosen) ? (
+        <span className="muted" data-testid="machine-cycle" title={`${chosen.name}'s ramp ${chosen.ramp}`}>
+          {cycleText(chosen)}
+        </span>
+      ) : null}
+      {chosen?.ramp && chosen.cycle?.state === "injection" && (!me?.logged_in || atLeast(me.role, "operator")) ? (
+        <button type="button" onClick={ramp} title={`Ramp ${chosen.target} as its ramp ${chosen.ramp} says: to extraction, then a fresh bunch at injection`}>
+          Ramp
+        </button>
+      ) : null}
       {chosen && (!me?.logged_in || atLeast(me.role, "physicist")) ? (
         <button type="button" onClick={sandbox} title={`A machine of your own with ${chosen.name}'s settings now, to try changes without disturbing anyone`}>
           Sandbox

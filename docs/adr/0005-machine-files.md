@@ -29,7 +29,8 @@ beams/<branch>.yaml, .csv a bunch delivered at a branch's start by a code that t
 routes.yaml               the beam's paths through several branches, by branch name in beam order,
                           and the rings the beam is stored in on the way
 measurements/             reserved: the magnetic measurement database
-ramps/                    reserved: synchrotron ramp profiles
+ramps/<name>.yaml, .csv   a ring's ramp: its energy program (the designers' waveform, by its
+                          parameters) and RF program (a table in time) (ADR 0013)
 build/                    generated: lattice.json, registry.json, manifest.json
 ```
 
@@ -61,5 +62,5 @@ A measured curve is `{kind: table, file: transfer/b0-017.csv, field_unit: T, sou
 
 ## Not yet
 
-- Formats for `measurements/` (the magnetic measurement database: per-magnet measurement runs, harmonics, field maps) and `ramps/` (ramp profiles: time series of energy, RF and family currents). The plan is a YAML index with CSV series. They will be defined from real data, not ahead of it.
+- The format for `measurements/` (the magnetic measurement database: per-magnet measurement runs, harmonics, field maps). The plan is a YAML index with CSV series, defined from real data, not ahead of it. `ramps/` has its format from the RCS parameter database (ADR 0013, 2026-10-16): a YAML file with the energy program's parameters and a CSV with the RF program; family currents are not in it yet.
 - Rewriting a lattice file loses comments inside it; the device, naming and settings files are not rewritten.

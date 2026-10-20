@@ -36,6 +36,7 @@ from .power import (
     TransferFunction,
     TransferService,
 )
+from .ramps import EnergyRamp, RampProfile, RfProgram, ramp_cavities, ramp_period, ramp_problems
 from .registry import (
     Calibration,
     CalibrationSource,
@@ -63,6 +64,7 @@ __all__ = [
     "Device",
     "DeviceType",
     "EicName",
+    "EnergyRamp",
     "MachineDescription",
     "MachineRegistry",
     "Naming",
@@ -75,6 +77,8 @@ __all__ = [
     "ParsedName",
     "PolynomialTransfer",
     "PowerCircuit",
+    "RampProfile",
+    "RfProgram",
     "RfStation",
     "ServiceTransfer",
     "SharedMagnet",
@@ -97,6 +101,9 @@ __all__ = [
     "lattice_name",
     "non_lattice_name",
     "parse_name",
+    "ramp_cavities",
+    "ramp_period",
+    "ramp_problems",
     "ring_sectors",
     "slot_names",
 ]

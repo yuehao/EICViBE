@@ -55,6 +55,9 @@ test("an administrator starts a machine, changes a setting, and the log keeps it
 
   await row.getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Filter settings").fill("dr-t8-ps:sp:h");
+  // The demo's supplies have placeholder transfer functions: marked as such, and no design beyond its limits.
+  await expect(page.getByTestId("settings").getByTestId("source-badge")).toHaveText("placeholder");
+  await expect(page.getByTestId("settings").locator(".beyond")).toHaveCount(0);
   await page.getByLabel("New value of dr-t8-ps:sp:h").fill("1.5");
   await page.getByLabel("Reason").fill("e2e bump");
   await page.getByRole("button", { name: "Apply as one change" }).click();

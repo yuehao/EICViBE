@@ -15,6 +15,7 @@ import { useCallback, useEffect, useState } from "react";
 import { va, VaError, type MachineEntry, type SettingRow, type WriteResult } from "../api/va";
 import { formatNumber } from "../model/format";
 import { Cancelled, type Auth } from "./Auth";
+import { BeyondLimits, outside, SourceBadge } from "./SupplyMarks";
 
 let enabled: Promise<boolean> | null = null;
 /** Whether this server runs a virtual accelerator; asked once per page. */
@@ -147,13 +148,15 @@ export function Setpoints({ occurrence, machine, auth, describe }: Props) {
 function Value({ row }: { row: SettingRow }) {
   return (
     <>
-      <strong>{formatNumber(row.value, 6)}</strong> {row.unit}
+      <strong className={outside(row.value, row.limits) ? "beyond" : undefined}>{formatNumber(row.value, 6)}</strong> {row.unit}
+      <SourceBadge source={row.source} />
       {row.changed ? (
         <span className="muted">
           {" "}
           (original {formatNumber(row.original, 6)}; set by {row.by})
         </span>
       ) : null}
+      {row.beyond && row.limits ? <BeyondLimits current={row.original} limits={row.limits} unit={row.unit} /> : null}
     </>
   );
 }

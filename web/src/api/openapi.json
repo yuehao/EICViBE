@@ -438,7 +438,8 @@
      "action": {
       "enum": [
        "kick",
-       "inject"
+       "inject",
+       "ramp"
       ],
       "title": "Action",
       "type": "string"
@@ -2113,6 +2114,19 @@
       "title": "Changes",
       "type": "integer"
      },
+     "cycle": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "A running ring with a ramp: state (injection, ramping, flattop), energy (eV), and while ramping the turns since it began and to extraction",
+      "title": "Cycle"
+     },
      "engine": {
       "anyOf": [
        {
@@ -2193,6 +2207,18 @@
       ],
       "description": "Its run's turn (ring) or shot (route) now",
       "title": "Position"
+     },
+     "ramp": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "The ring's ramp profile, which a ramp command runs (ADR 0013)",
+      "title": "Ramp"
      },
      "ramp_turns": {
       "description": "Turns a ring's setting change ramps over; 0 steps",
@@ -3196,6 +3222,12 @@
    "Power": {
     "description": "One power circuit of a supply, seen from one occurrence.",
     "properties": {
+     "beyond": {
+      "default": false,
+      "description": "The design current is beyond the supply's limits: its supply cannot run it (ADR 0014)",
+      "title": "Beyond",
+      "type": "boolean"
+     },
      "circuit": {
       "title": "Circuit",
       "type": "string"
@@ -3211,6 +3243,21 @@
       ],
       "description": "Current giving this magnet its design value",
       "title": "Design Current"
+     },
+     "limits": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "number"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "The supply's limits, in its engineering unit",
+      "title": "Limits"
      },
      "magnets": {
       "title": "Magnets",
@@ -3734,6 +3781,343 @@
      "operation"
     ],
     "title": "ProposalRequest",
+    "type": "object"
+   },
+   "RampProgram": {
+    "description": "A ramp's programs in time, sampled over the ramp and the flattop.",
+    "properties": {
+     "energy": {
+      "description": "Total energy, GeV",
+      "items": {
+       "type": "number"
+      },
+      "title": "Energy",
+      "type": "array"
+     },
+     "phase": {
+      "description": "Synchronous phase from the zero crossing, deg",
+      "items": {
+       "type": "number"
+      },
+      "title": "Phase",
+      "type": "array"
+     },
+     "time": {
+      "description": "ms from the ramp's start",
+      "items": {
+       "type": "number"
+      },
+      "title": "Time",
+      "type": "array"
+     },
+     "voltage": {
+      "description": "RF voltage, all cavities, MV",
+      "items": {
+       "type": "number"
+      },
+      "title": "Voltage",
+      "type": "array"
+     }
+    },
+    "required": [
+     "time",
+     "energy",
+     "voltage",
+     "phase"
+    ],
+    "title": "RampProgram",
+    "type": "object"
+   },
+   "RampRecord": {
+    "description": "A ramp of the machine's run: when it began, reached the flattop and extracted, and the bunch.",
+    "properties": {
+     "capture": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "The capture of its BPMs' readings, every turn from its start to extraction",
+      "title": "Capture"
+     },
+     "capture_turns": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "The turns the capture holds",
+      "title": "Capture Turns"
+     },
+     "delta": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "The bunch's mean momentum deviation",
+      "title": "Delta"
+     },
+     "emittance_x": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "m rad, rms, at the ring's start",
+      "title": "Emittance X"
+     },
+     "emittance_y": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Emittance Y"
+     },
+     "energy": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "eV, at extraction",
+      "title": "Energy"
+     },
+     "extracted": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "The turn of extraction; null while it ramps",
+      "title": "Extracted"
+     },
+     "flattop": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Flattop"
+     },
+     "injected": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Particles of the bunch it ramped",
+      "title": "Injected"
+     },
+     "particles": {
+      "anyOf": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Particles extracted",
+      "title": "Particles"
+     },
+     "sigma_delta": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Sigma Delta"
+     },
+     "sigma_zeta": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Bunch length, m",
+      "title": "Sigma Zeta"
+     },
+     "turn": {
+      "description": "The turn it began at",
+      "title": "Turn",
+      "type": "integer"
+     },
+     "wall": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Wall"
+     }
+    },
+    "required": [
+     "turn"
+    ],
+    "title": "RampRecord",
+    "type": "object"
+   },
+   "RampView": {
+    "description": "A ring's ramp (ADR 0013): its profile, its programs, where it is, and its ramps so far.",
+    "properties": {
+     "branch": {
+      "title": "Branch",
+      "type": "string"
+     },
+     "cycle": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Where the running ring is in its ramp; null when stopped",
+      "title": "Cycle"
+     },
+     "cycle_time": {
+      "description": "s, the designers' whole cycle",
+      "title": "Cycle Time",
+      "type": "number"
+     },
+     "energy": {
+      "additionalProperties": true,
+      "description": "The energy waveform's parameters (eV, eV/s, turns)",
+      "title": "Energy",
+      "type": "object"
+     },
+     "engine": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Engine"
+     },
+     "extraction_turn": {
+      "description": "Turns from the ramp's start to extraction",
+      "title": "Extraction Turn",
+      "type": "integer"
+     },
+     "flattop": {
+      "description": "s at the extraction energy before extraction",
+      "title": "Flattop",
+      "type": "number"
+     },
+     "flattop_turn": {
+      "description": "Turns from the ramp's start to the flattop",
+      "title": "Flattop Turn",
+      "type": "integer"
+     },
+     "machine": {
+      "title": "Machine",
+      "type": "string"
+     },
+     "period": {
+      "description": "s, a turn",
+      "title": "Period",
+      "type": "number"
+     },
+     "porch": {
+      "description": "s at injection before the ramp, in the designers' cycle",
+      "title": "Porch",
+      "type": "number"
+     },
+     "program": {
+      "$ref": "#/components/schemas/RampProgram"
+     },
+     "ramp": {
+      "title": "Ramp",
+      "type": "string"
+     },
+     "ramps": {
+      "description": "Its run's ramps, newest first",
+      "items": {
+       "$ref": "#/components/schemas/RampRecord"
+      },
+      "title": "Ramps",
+      "type": "array"
+     },
+     "refusal": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Why it cannot ramp now; null when it can",
+      "title": "Refusal"
+     },
+     "source": {
+      "additionalProperties": true,
+      "title": "Source",
+      "type": "object"
+     }
+    },
+    "required": [
+     "machine",
+     "ramp",
+     "branch",
+     "energy",
+     "porch",
+     "flattop",
+     "cycle_time",
+     "period",
+     "flattop_turn",
+     "extraction_turn",
+     "source",
+     "program",
+     "cycle",
+     "engine",
+     "refusal",
+     "ramps"
+    ],
+    "title": "RampView",
     "type": "object"
    },
    "Reason": {
@@ -4294,6 +4678,12 @@
       ],
       "title": "At"
      },
+     "beyond": {
+      "default": false,
+      "description": "Its original value (the design current) is beyond its limits: its supply cannot run it",
+      "title": "Beyond",
+      "type": "boolean"
+     },
      "by": {
       "anyOf": [
        {
@@ -4348,6 +4738,18 @@
       "description": "From the machine files: design, and the mode",
       "title": "Original",
       "type": "number"
+     },
+     "source": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "A supply's transfer functions: placeholder, design or measured, the least sure of its magnets' (ADR 0014); null for other channels",
+      "title": "Source"
      },
      "unit": {
       "title": "Unit",
@@ -4589,7 +4991,7 @@
       "type": "string"
      },
      "source": {
-      "description": "placeholder or measured",
+      "description": "placeholder, design (the magnet's coil and aperture, ADR 0014) or measured",
       "title": "Source",
       "type": "string"
      },
@@ -6625,6 +7027,49 @@
      }
     },
     "summary": "Propose",
+    "tags": [
+     "virtual accelerator"
+    ]
+   }
+  },
+  "/api/v1/va/machines/{machine}/ramp": {
+   "get": {
+    "description": "A ring's ramp (ADR 0013): its profile and programs, where the ring is in it, what keeps it\nfrom ramping now, and its run's ramps. A ramp starts with POST /machines/{machine}/beam.",
+    "operationId": "ramp_api_v1_va_machines__machine__ramp_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "machine",
+      "required": true,
+      "schema": {
+       "title": "Machine",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/RampView"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Ramp",
     "tags": [
      "virtual accelerator"
     ]

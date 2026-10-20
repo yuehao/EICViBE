@@ -36,7 +36,7 @@ from eicvibe.domain.machine import (
     TuneMonitor,
 )
 
-from .yamlio import FileError, block, flow, mapping, read_table, read_yaml, write_table, write_yaml
+from .yamlio import FileError, block, comment, flow, mapping, read_table, read_yaml, write_table, write_yaml
 
 NAMING_FILE = "naming.yaml"
 POWER_FILE = "devices/power.yaml"
@@ -165,7 +165,7 @@ def _write_power(supplies, refs: References, folder: Path) -> list[Path]:
             base = f"service-{transfer.magnet}".lower().replace("/", "-")
         else:
             base = _KIND_OF_UNIT.get((transfer.field_unit, transfer.integrated), "magnet")
-            base += "-placeholder" if transfer.source.value == "placeholder" else "-measured"
+            base += f"-{transfer.source.value}"
         name, n = base, 2
         while name in library:
             name, n = f"{base}-{n}", n + 1
@@ -285,6 +285,46 @@ def rename_references(folder: Path, renames: Mapping[str, str]) -> list[Path]:
             path.write_text(text)
             changed.append(path)
     return changed
+
+
+def set_supplies(
+    folder: Path,
+    transfers: Mapping[str, tuple[PolynomialTransfer, str]],
+    circuits: Mapping[tuple[str, str | None], tuple[str, tuple[float, float]]],
+) -> Path:
+    """Give supplies' circuits transfer functions and limits, in the power file, in place.
+
+    ``transfers`` are named transfer functions with a note each, added under ``transfer:`` (or
+    replacing one of the same name); ``circuits`` maps a supply's key and circuit (its plane, or None
+    for a supply of one circuit) to the transfer function's name and the limits it takes. A magnet
+    entry with a transfer function of its own keeps it. Everything else in the file, comments
+    included, stays as people wrote it. Returns the file.
+    """
+    path = Path(folder) / POWER_FILE
+    data = read_yaml(path)
+    if not isinstance(data, Mapping) or not isinstance(data.get("supplies"), Mapping):
+        raise FileError(path, "no supplies to set")
+    if data.get("transfer") is None:
+        data["transfer"] = mapping()
+    library = data["transfer"]
+    for name, (transfer, note) in transfers.items():
+        library[name] = _transfer_spec(transfer, name, Path(folder), [], lambda t: t)
+        if note:
+            comment(library, name, note)
+    supplies = data["supplies"]
+    for (key, plane), (name, limits) in circuits.items():
+        if key not in supplies:
+            raise FileError(path, f"no supply {key}")
+        entry = supplies[key]
+        if plane is not None:
+            entry = (entry.get("circuits") or {}).get(plane)
+            if entry is None:
+                raise FileError(path, f"supply {key} has no circuit {plane}")
+        if name not in library:
+            raise FileError(path, f"supply {key}: no transfer function {name!r}")
+        entry["transfer"] = name
+        entry["limits"] = flow([float(v) for v in limits])
+    return write_yaml(path, data)
 
 
 def add_bpms(folder: Path, bpms: Sequence[str], branches: Sequence[str]) -> Path | None:

@@ -336,3 +336,33 @@ def test_a_route_may_go_round_a_ring_and_be_accelerated_in_it(folder):
     )
     with pytest.raises(FileError, match="whole number"):
         load_machine(folder)
+
+
+def test_supplies_take_transfer_functions_and_limits_in_place(folder):
+    from eicvibe.domain.machine import PolynomialTransfer
+    from eicvibe.domain.machine.power import CalibrationSource
+    from eicvibe.store.device_files import set_supplies
+
+    power = folder / "devices" / "power.yaml"
+    before = power.read_text()
+    machine = load_machine(folder)
+    string = next(s for s in machine.description.supplies if len(s.circuits[0].magnets) > 1)
+    corrector = next(s for s in machine.description.supplies if len(s.circuits) == 2)
+    design = PolynomialTransfer(coefficients=(0.0, 0.0628), field_unit="T/m", source=CalibrationSource.DESIGN)
+    set_supplies(
+        folder,
+        {"quadrupole-10-turns": (design, "10 turns a pole, 2 cm bore")},
+        {(string.key, None): ("quadrupole-10-turns", (0.0, 150.0))},
+    )
+    after = power.read_text()
+    spec = "{kind: polynomial, coefficients: [0.0, 0.0628], field_unit: T/m, source: design}"
+    assert f"quadrupole-10-turns: {spec}" in after
+    assert "# 10 turns a pole, 2 cm bore" in after
+    assert after.splitlines()[:8] == before.splitlines()[:8]  # its header, as people wrote it
+    machine = load_machine(folder)
+    [circuit] = next(s for s in machine.description.supplies if s.key == string.key).circuits
+    assert circuit.limits == (0.0, 150.0) and circuit.magnets[0].transfer == design
+    with pytest.raises(FileError, match="has no circuit x"):
+        set_supplies(folder, {}, {(corrector.key, "x"): ("quadrupole-10-turns", (-1.0, 1.0))})
+    with pytest.raises(FileError, match="no transfer function 'missing'"):
+        set_supplies(folder, {}, {(string.key, None): ("missing", (0.0, 1.0))})

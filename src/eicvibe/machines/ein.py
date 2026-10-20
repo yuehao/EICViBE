@@ -87,6 +87,7 @@ from eicvibe.domain.machine import (
     NamingArea,
     NamingRepository,
     NamingScheme,
+    RampProfile,
     SharedMagnet,
     assemble_registry,
     default_repository,
@@ -95,6 +96,7 @@ from eicvibe.domain.machine import (
 from eicvibe.engines.match import Matched
 from eicvibe.importers.bmad import BmadConversion, BmadTools, bmad_to_madx
 from eicvibe.importers.madx import ImportNote, import_madx
+from eicvibe.importers.rcs_database import read_rcs_ramp
 from eicvibe.store import (
     FileError,
     check_machine,
@@ -108,6 +110,7 @@ from eicvibe.store.beams import DeliveredBeam, file_source, write_beam
 from eicvibe.store.device_files import add_bpms, read_devices, rename_references, write_devices
 from eicvibe.store.lattice_files import branch_order, write_lattice
 from eicvibe.store.machine import eic_names, read_index, write_index, write_routes
+from eicvibe.store.ramps import write_ramp
 
 from .preinjector import (
     BRANCHES as PREINJECTOR_BRANCHES,
@@ -161,6 +164,10 @@ PREINJECTOR = PreinjectorSources()
 #: (RCS parameter database), as pinned in EIN_connection.ipynb.
 RCS_INJECTION_ENERGY = 0.75e9
 RCS_INJECTION_RF_VOLTAGE = 1.69758e6
+
+#: The RCS parameter database, whose "9GeV Lat" and "RF Ramp 9GeV Lat" sheets are the 40-cell ring's
+#: ramp (ADR 0013).
+RCS_DATABASE = "einlattices/03_RCS Parameter Database.xlsx"
 
 #: Temporary EIC area prefixes of the EIN branches, until SEG assigns them. Override any of them.
 TEMPORARY_AREAS: Mapping[str, str] = MappingProxyType(
@@ -454,9 +461,12 @@ def ein_source(ein: Ein) -> dict:
 
 
 def write_ein_machine(
-    ein: Ein, folder: str | Path, description: MachineDescription | None = None
+    ein: Ein,
+    folder: str | Path,
+    description: MachineDescription | None = None,
+    ramp: RampProfile | None = None,
 ) -> list[Path]:
-    """Write a new EIN machine folder: lattice and device files, and the routes.
+    """Write a new EIN machine folder: lattice and device files, the routes, and the RCS's ``ramp``.
 
     The device files start from :func:`ein_description`; from then on people
     edit them, and :func:`update_ein_machine` never touches them.
@@ -467,7 +477,24 @@ def write_ein_machine(
         written.append(routes)
     if "preinjector_beam" in ein.sources:
         written += write_beam(folder, ein_delivered_beam(ein.sources["preinjector_beam"], ein.lattice))
+    if ramp is not None:
+        written += write_ramp(folder, ramp)
     return written
+
+
+def ein_ramp(folder: str | Path) -> RampProfile | None:
+    """The 40-cell RCS's ramp, from the RCS parameter database under the EIN ``folder``; None without it."""
+    database = Path(folder) / RCS_DATABASE
+    return read_rcs_ramp(database) if database.is_file() else None
+
+
+def add_ein_ramp(machine: str | Path, folder: str | Path) -> list[Path]:
+    """Add the RCS's ramp to an EIN machine folder, or replace it, from the RCS parameter database
+    (ADR 0013): ramps/rcs.yaml and ramps/rcs.csv; no other file changes. Returns the files written."""
+    ramp = ein_ramp(folder)
+    if ramp is None:
+        raise FileNotFoundError(f"no RCS parameter database at {Path(folder) / RCS_DATABASE}")
+    return write_ramp(Path(machine), ramp)
 
 
 def ein_delivered_beam(path: Path, lattice: Lattice, charge: float = PREINJECTOR.charge) -> DeliveredBeam:
@@ -839,8 +866,32 @@ def main(argv: list[str] | None = None) -> int:
         "--no-match", action="store_true", help="import the design files' strengths as they are"
     )
     parser.add_argument("--engine", default="xsuite", help="the engine that matches: xsuite or trackpad")
+    parser.add_argument(
+        "--ramp",
+        action="store_true",
+        help=f"add or replace the RCS ramp (ramps/rcs) from {RCS_DATABASE}, changing no other file",
+    )
+    parser.add_argument(
+        "--magnets",
+        action="store_true",
+        help="give the supplies the parameter databases' transfer functions and limits (ADR 0014), "
+        "changing devices/power.yaml only",
+    )
     args = parser.parse_args(argv)
     machine = args.machine or args.folder / MACHINE_DIR
+    if args.magnets:
+        if not is_machine(machine):
+            parser.error(f"{machine} is not a machine folder yet: import the EIN first")
+        return _magnets(machine, args.folder)
+    if args.ramp:
+        if not is_machine(machine):
+            parser.error(f"{machine} is not a machine folder yet: import the EIN first")
+        for path in add_ein_ramp(machine, args.folder):
+            print(f"wrote {path}")
+        problems = check_machine(machine)
+        for problem in problems:
+            print(f"  {problem}")
+        return 1 if problems else 0
     if args.match:
         if not is_machine(machine):
             parser.error(f"{machine} is not a machine folder yet: import the EIN first")
@@ -867,7 +918,7 @@ def main(argv: list[str] | None = None) -> int:
         print("matched the design (--no-match imports it as it is):")
         print("\n".join(_match_report(found, ein.lattice)))
     if not is_machine(machine):
-        written = write_ein_machine(ein, machine)
+        written = write_ein_machine(ein, machine, ramp=ein_ramp(args.folder))
         print(f"wrote a new machine folder, {machine} ({len(written)} files)")
     else:
         changes = update_ein_machine(ein, machine, write=args.write, devices=args.devices)
@@ -891,6 +942,28 @@ def main(argv: list[str] | None = None) -> int:
     except FileError as error:
         print(f"error: {error}")
         return 1
+    for problem in problems:
+        print(f"  {problem}")
+    return 1 if problems else 0
+
+
+def _magnets(machine: Path, folder: Path) -> int:
+    from .ein_magnets import apply_ein_magnets
+
+    path, plan = apply_ein_magnets(machine, folder)
+    print(f"wrote {path}: {len(plan.assignments)} circuits, {len(plan.transfers)} transfer functions")
+    for name, (transfer, note) in plan.transfers.items():
+        unit = f"{transfer.field_unit}/A"
+        print(f"  {name}: {transfer.coefficients[1]:.6g} {unit} ({note})")
+    differ = [c for c in plan.checks if c.difference > 2e-3]
+    print(
+        f"design currents against the databases': {len(plan.checks) - len(differ)} agree to 2e-3, "
+        f"{len(differ)} differ:"
+    )
+    for check in differ:
+        print(f"  {check.magnet}: {check.ours:.4g} A, the database's {check.note} {check.theirs:.4g} A")
+    print(f"{len(plan.left)} supplies keep their placeholders (no coil in the databases)")
+    problems = check_machine(machine)
     for problem in problems:
         print(f"  {problem}")
     return 1 if problems else 0

@@ -11,9 +11,14 @@ the readers of real BPM files give.
 
 Between chunks the run takes commands, as a machine takes them from its
 operators: kick the beam (a pinger), change settings (the session updates in
-place), inject a fresh bunch. Each is logged as an event with its turn. A
+place), inject a fresh bunch, ramp. Each is logged as an event with its turn. A
 bunch that is lost leaves the BPMs reading nothing (status NO_BEAM) until the
 next injection.
+
+A synchrotron with a ramp profile (ADR 0013) holds its beam at injection until
+it is told to ramp; then its energy and RF follow the profile turn by turn, the
+bunch is extracted after the flattop, and the ring is at injection again with a
+fresh bunch (its ramp down, which has no beam, is not tracked).
 """
 
 import json
@@ -37,10 +42,13 @@ from eicvibe.domain.lattice import ElementKind, Lattice
 from eicvibe.domain.lattice._base import DomainModel
 from eicvibe.domain.machine import MachineRegistry
 from eicvibe.domain.machine.power import design_value
+from eicvibe.domain.machine.ramps import RampProfile, ramp_cavities, ramp_period, ramp_problems
 from eicvibe.engines import engine as find_engine
-from eicvibe.engines.contracts import Effect, Fidelity, OpticsRequest, Options, OrbitRequest, Ramp
-from eicvibe.engines.convert import C_LIGHT, reference, rf_phase
+from eicvibe.engines.adapter import rereferenced
+from eicvibe.engines.contracts import Effect, Fidelity, OpticsRequest, Options, OrbitRequest, Ramp, Support
+from eicvibe.engines.convert import C_LIGHT, ZERO_PHASE, reference, rf_phase
 from eicvibe.engines.model import effective
+from eicvibe.engines.remote import EngineHost
 from eicvibe.engines.worker import EngineWorker, RemoteSession
 
 from .errors import BpmModel, MachineErrors, VirtualBpms
@@ -139,7 +147,7 @@ class RingRun:
         *,
         engine: str | None = None,
         fidelity: Fidelity = Fidelity.STANDARD,
-        effects: frozenset[Effect] = frozenset({Effect.LONGITUDINAL}),
+        effects: frozenset[Effect] | None = None,
         beam: Beam | None = None,
         bpm: BpmModel | None = None,
         chunk: int = 1024,
@@ -155,6 +163,8 @@ class RingRun:
         ramp_turns: int = 1024,
         call_seconds: float = 0.25,
         errors: MachineErrors | None = None,
+        ramp: RampProfile | None = None,
+        host: EngineHost | None = None,
     ) -> None:
         layout = lattice.layout(branch)
         if not layout.periodic:
@@ -164,8 +174,18 @@ class RingRun:
         self.lattice = lattice
         self.branch = layout.id
         self.directory = Path(directory)
-        self.engine = engine or default_engine()
+        self.ramp_profile = ramp
+        """The ring's ramp (ADR 0013), which :meth:`ramp` runs; None: it stays at injection."""
+        self.engine = engine or ("xsuite" if ramp is not None else default_engine())
+        self.host = host
+        """Where the engine runs (ADR 0015): None here, in a process of its own."""
+        if effects is None:  # the RF acts; a ring that ramps radiates, where its engine tracks radiation
+            effects = frozenset({Effect.LONGITUDINAL}) | (_radiation(self.engine) if ramp else frozenset())
         self.options = Options(fidelity=fidelity, effects=effects)
+        self._matching_options = Options(fidelity=fidelity, effects=effects - {Effect.QUANTUM_EXCITATION})
+        """A bunch's matching: quantum excitation, being random, has no closed orbit."""
+        self._cycle: dict[str, Any] | None = None
+        """The ramp under way: the turns it started at, reaches the flattop at and extracts at."""
         self.beam = beam or Beam()
         self.bpm = bpm or BpmModel()
         self.chunk = chunk
@@ -204,6 +224,9 @@ class RingRun:
         self.bpm_s = [b[2] for b in bpms]
         particle = reference("virtual ring", lattice, self.branch)
         self.revolution_period = layout.length / (particle["beta0"] * C_LIGHT)
+        self._design = (particle["pc"], particle["mass"])
+        self._pc = particle["pc"]
+        """The reference momentum the bunch's coordinates are about: the design's, or a ramp's turn's."""
         self._bpms = VirtualBpms(self.bpm, len(bpms), self.beam.particles, self.beam.charge)
         self._bunches = np.random.default_rng(self.beam.seed)
         self._commands: queue.Queue[Callable[[], None]] = queue.Queue()
@@ -234,7 +257,7 @@ class RingRun:
 
     def start(self) -> RingRun:
         """Open the engine, inject a bunch and start tracking in the background."""
-        self._worker = EngineWorker(self.engine)
+        self._worker = EngineWorker(self.engine, self.host)
         self._session = self._worker.open_session(
             self.lattice, self.branch, self.options, self._engine_values()
         )
@@ -249,6 +272,7 @@ class RingRun:
             branch=self.lattice.branch(self.branch).name,
             branch_id=self.branch,
             engine=self.engine,
+            host=self.host.name if self.host else None,
             fidelity=self.options.fidelity.value,
             effects=sorted(e.value for e in self.options.effects),
             start=datetime.now(UTC),
@@ -265,6 +289,7 @@ class RingRun:
             orbit_resolution=self.bpm.orbit_resolution,
             retention_bytes=self.retention_bytes,
             values={f"{o} {p}": v for (o, p), v in self.values.items()},
+            ramp=self._ramp_summary(),
         )
         self._writer = BpmHistory.create(self.directory, info)
         self._writer.slow_noise = self._bpms.orbit_noise
@@ -363,13 +388,13 @@ class RingRun:
         """Capture the buffer as it is: its latest turns (an acquisition on request)."""
         self._commands.put(lambda: self._trigger("request", self.buffer_turns))
 
-    def _trigger(self, kind: str, before: int, **detail: Any) -> None:
-        """Capture ``buffer_turns`` turns around the turn now, ``before`` of them before it."""
+    def _trigger(self, kind: str, before: int, turns: int | None = None, **detail: Any) -> None:
+        """Capture ``turns`` turns (``buffer_turns`` by default) around the turn now, ``before`` of them
+        before it; the buffer keeps them all until the capture is saved, however long it is."""
         trigger = self._turn
         first = max(trigger - before, self._writer.span()[0] if self._turn else 0)
-        self._pending.append(
-            {"kind": kind, "trigger": trigger, "first": first, "turns": self.buffer_turns, **detail}
-        )
+        turns = self.buffer_turns if turns is None else turns
+        self._pending.append({"kind": kind, "trigger": trigger, "first": first, "turns": turns, **detail})
         self._writer.protect_from = min(c["first"] for c in self._pending)
         self._save_captures()
 
@@ -419,6 +444,13 @@ class RingRun:
                 ramp_turns=self.ramp_turns,
                 **note,
             )
+            if self._cycle is not None and any(
+                (o, p) in values for o, _ in self._cycle["cavities"] for p in ("RFP.voltage", "RFP.phase")
+            ):
+                message = (
+                    "the RF follows the ramp's program until extraction; its settings apply at injection"
+                )
+                self._writer.event(now, "warning", message=message)
             if self._compaction is not None and any(p.startswith("RFP.") for _, p in values):
                 before, self.warnings = (
                     self.warnings,
@@ -455,11 +487,17 @@ class RingRun:
         """The settings moving during turns ``[first, first + turns)``, as the engine takes them: the
         changes ramping in, and the power supplies' noise about them, with the machine's errors."""
         ramps = []
+        owned = (
+            {(o, p) for o, _ in self._cycle["cavities"] for p in ("RFP.voltage", "RFP.phase")}
+            if self._cycle is not None
+            else set()
+        )  # while it ramps, its RF program sets the cavities
         for active in self._ramps:
             fraction = _shape((np.arange(first, first + turns) - active["from"]) / active["turns"])
-            ramps.append(
-                Ramp(self._engine_values(active["start"]), self._engine_values(active["end"]), fraction)
-            )
+            start = {k: v for k, v in active["start"].items() if k not in owned}
+            end = {k: v for k, v in active["end"].items() if k not in owned}
+            if start:
+                ramps.append(Ramp(self._engine_values(start), self._engine_values(end), fraction))
         if self._fluctuations is None:
             return ramps
         for supply, deviation in self._fluctuations.turns(first, turns):
@@ -497,12 +535,170 @@ class RingRun:
         return turns if self.turns is None else min(turns, self.turns - first)
 
     def inject(self) -> None:
-        """Replace the beam with a fresh bunch."""
-        self._commands.put(self._inject)
+        """Replace the beam with a fresh bunch (at injection: a ramping ring takes none)."""
+
+        def inject() -> None:
+            if self._cycle is not None:
+                self._writer.event(
+                    self._turn, "warning", message="the ring is ramping: it takes a bunch at injection"
+                )
+                return
+            self._inject()
+
+        self._commands.put(inject)
+
+    # -- the ramp (ADR 0013) ---------------------------------------------------------------
+
+    def ramp(self) -> None:
+        """Ramp the ring as its ramp profile says: the energy from injection to extraction, the magnets
+        following it (their normalized strengths kept) and the RF its program, turn by turn; then the
+        flattop, the bunch extracted, and the ring at injection again, with a fresh bunch.
+
+        Raises ValueError where the ring cannot ramp (no profile, one that does not fit it, or an engine
+        without the synchrotron radiation its RF program assumes) and RuntimeError while it is ramping.
+        """
+        if reason := self._cannot_ramp():
+            raise ValueError(reason)
+        if self._cycle is not None:
+            raise RuntimeError("the ring is ramping already")
+        self._commands.put(self._begin_ramp)
+
+    @property
+    def ramp_refusal(self) -> str | None:
+        """Why the ring cannot ramp now, or None: no profile, one that does not fit it, an engine without
+        the radiation its RF program assumes, or a ramp under way."""
+        if reason := self._cannot_ramp():
+            return reason
+        return "the ring is ramping" if self._cycle is not None else None
+
+    def _cannot_ramp(self) -> str | None:
+        profile = self.ramp_profile
+        name = self.lattice.branch(self.branch).name
+        if profile is None:
+            return f"{name} has no ramp profile (ramps/ in the machine folder)"
+        if problems := ramp_problems(profile, self.lattice):
+            return "; ".join(problems)
+        if Effect.LONGITUDINAL not in self.options.effects:
+            return "a ramp needs the RF to act (effect longitudinal)"
+        if Effect.RADIATION_DAMPING not in self.options.effects:
+            end = f"{profile.rf.voltage[-1] / 1e6:.4g} MV at {math.degrees(profile.rf.phase[-1]):.0f} degrees"
+            return (
+                f"the RF program of {profile.name} makes up for synchrotron radiation (it ends at {end}), "
+                f"which this run of {self.engine} leaves out: run the ring with radiation damping"
+            )
+        return None
+
+    def _ramp_summary(self) -> dict[str, Any] | None:
+        profile = self.ramp_profile
+        if profile is None:
+            return None
+        period = ramp_period(profile, self.lattice)
+        return {
+            "name": profile.name,
+            "injection": profile.energy.injection,
+            "extraction": profile.energy.extraction,
+            "flattop_turn": profile.ramp_turns(period),
+            "extraction_turn": profile.extraction_turn(period),
+            "period": period,
+        }
+
+    def _begin_ramp(self) -> None:
+        if self._cycle is not None:
+            return
+        profile, start = self.ramp_profile, self._turn
+        period = ramp_period(profile, self.lattice)
+        above = (
+            self._compaction is not None and self._compaction > 1.0 / _gamma(self.lattice, self.branch) ** 2
+        )
+        cavities = [
+            (p.id, p.element.RFP.zero_phase.value if p.element.RFP else "ACCELERATING")
+            for p in ramp_cavities(profile, self.lattice)
+        ]
+        self._cycle = {
+            "start": start,
+            "flattop": start + profile.ramp_turns(period),
+            "extraction": start + profile.extraction_turn(period),
+            "period": period,
+            "mass": reference("virtual ring", self.lattice, self.branch)["mass"],
+            "above": above,
+            "cavities": cavities,
+            "flat": False,
+        }
+        self._writer.event(
+            start,
+            "ramp",
+            ramp=profile.name,
+            injection=profile.energy.injection,
+            extraction=profile.energy.extraction,
+            flattop=self._cycle["flattop"],
+            extract=self._cycle["extraction"],
+        )
+        # The BPMs' readings of every turn of the ramp, its flattop and extraction, kept whole: a ramp is
+        # longer than the buffer, which keeps its turns until the capture is saved at extraction.
+        self._trigger("ramp", 0, self._cycle["extraction"] - start, ramp=profile.name)
+
+    def _program(self, first: int, turns: int) -> tuple[np.ndarray, list[Ramp]]:
+        """The ramp's reference momentum and RF over turns ``[first, first + turns)``: the momenta, and
+        the cavities' voltage and phase settings as ramps (each its values, turn by turn)."""
+        cycle, profile = self._cycle, self.ramp_profile
+        rows = [
+            profile.at(n - cycle["start"], cycle["period"], cycle["mass"])
+            for n in range(first, first + turns)
+        ]
+        at = {key: np.array([row[key] for row in rows]) for key in ("pc", "voltage", "phase")}
+        share = at["voltage"] / len(cycle["cavities"])
+        # The stable side of the zero crossing: pi - phi_s above transition, phi_s below (MAD-X's phase).
+        phase = math.pi - at["phase"] if cycle["above"] else at["phase"]
+        ramps = []
+        for occurrence, zero in cycle["cavities"]:
+            for path, values in (("RFP.voltage", share), ("RFP.phase", phase - ZERO_PHASE[zero])):
+                ramps.append(Ramp({(occurrence, path): 0.0}, {(occurrence, path): 1.0}, values))
+        return at["pc"], ramps
+
+    def _after_ramp_chunk(self, first: int) -> None:
+        """The flattop reached, or extraction: the bunch leaves and the ring is at injection again."""
+        cycle, profile = self._cycle, self.ramp_profile
+        if not cycle["flat"] and self._turn >= cycle["flattop"]:
+            cycle["flat"] = True
+            self._writer.event(cycle["flattop"], "flattop", energy=profile.energy.extraction)
+        if self._turn < cycle["extraction"]:
+            return
+        bunch = self._coordinates
+        self._writer.event(self._turn, "extract", energy=profile.energy.extraction, **_bunch_summary(bunch))
+        self._coordinates = np.zeros((0, 6))
+        self._cycle = None
+        rf = {(o, p) for o, _ in cycle["cavities"] for p in ("RFP.voltage", "RFP.phase")}
+        self._session.update(self._engine_values({key: self._value(key, self._turn) for key in rf}))
+        self._writer.event(
+            self._turn,
+            "porch",
+            energy=profile.energy.injection,
+            note="the ramp down to injection has no beam and is not tracked",
+        )
+        self._inject()
+
+    @property
+    def cycle(self) -> dict[str, Any] | None:
+        """Where the ring is in its ramp: ``state`` (injection, ramping, flattop), ``energy`` (eV), and
+        while ramping the turns since it began and to extraction; None for a ring without a ramp."""
+        profile, cycle = self.ramp_profile, self._cycle
+        if profile is None:
+            return None
+        if cycle is None:
+            return {"ramp": profile.name, "state": "injection", "energy": profile.energy.injection}
+        turn = self._turn - cycle["start"]
+        return {
+            "ramp": profile.name,
+            "state": "flattop" if self._turn >= cycle["flattop"] else "ramping",
+            "energy": float(profile.energy.energy(turn, cycle["period"])),
+            "turn": turn,
+            "extraction": cycle["extraction"] - cycle["start"],
+        }
 
     def _inject(self, matching: Matching | None = None) -> None:
         matching = matching or self._matching()
         self._coordinates = matching.bunch(self._bunches, self.beam)
+        self._pc = self._design[0]
         qs = abs(matching.tunes[2]) % 1.0 if len(matching.tunes) > 2 else 0.0
         self._synchrotron = min(qs, 1.0 - qs)  # the tune of the line a spectrum shows
         self._centroids = np.zeros((2, 0, 0))  # a new bunch: the tune monitor starts again
@@ -524,14 +720,14 @@ class RingRun:
         """
         where = f"{self.lattice.branch(self.branch).name}'s start"
         try:
-            return _matched(self._session, self.options, where)
+            return _matched(self._session, self._matching_options, where)
         except Exception as error:  # noqa: BLE001 - the engines' own errors, whichever engine
             if self.errors is None:
                 raise
             reason = str(error).splitlines()[0][:160]
         design = self._worker.open_session(self.lattice, self.branch, self.options, self.values)
         try:
-            matching = _matched(design, self.options, where)
+            matching = _matched(design, self._matching_options, where)
         finally:
             design.close()
         name = self.lattice.branch(self.branch).name
@@ -599,6 +795,8 @@ class RingRun:
     def _chunk(self) -> None:
         first, n_bpm = self._turn, len(self.observe)
         turns = self._call_turns(first)
+        if self._cycle is not None:  # a call ends where the bunch is extracted
+            turns = max(1, min(turns, self._cycle["extraction"] - first))
         started = time.time()
         if len(self._coordinates) == 0:  # no beam: the BPMs read nothing
             time.sleep(0.05)
@@ -610,11 +808,23 @@ class RingRun:
             self._centroids, self.tunes = np.zeros((2, 0, 0)), None
             self._turn += turns
             self._advance(self._turn)
+            if self._cycle is not None:
+                self._after_ramp_chunk(first)
             self._save_captures()
             return
+        momentum, program = self._program(first, turns) if self._cycle is not None else (None, [])
+        # The bunch about this call's first reference: the last call's was a turn's step below it.
+        to = float(momentum[0]) if momentum is not None else self._design[0]
+        self._coordinates = rereferenced(self._coordinates, self._pc, to, self._design[1])
+        self._pc = to
         try:
             track = self._session.track_beam(
-                self._coordinates, turns, self.observe, self.options, ramps=self._ramps_for(first, turns)
+                self._coordinates,
+                turns,
+                self.observe,
+                self.options,
+                ramps=self._ramps_for(first, turns) + program,
+                momentum=momentum,
             )
         except BrokenProcessPool:  # the engine's worker died: start another and go on from the same beam
             self._session = self._worker.open_session(
@@ -644,10 +854,13 @@ class RingRun:
         rate = turns / max(finished - started, 1e-6)
         self._rate = rate if self._rate is None else 0.7 * self._rate + 0.3 * rate
         self._coordinates = remaining
+        self._pc = float(momentum[-1]) if momentum is not None else self._design[0]
         self._turn += turns
         self._advance(self._turn)
         if lost:
             self._writer.event(self._turn, "loss", particles=lost, remaining=len(self._coordinates))
+        if self._cycle is not None:
+            self._after_ramp_chunk(first)
         self._save_captures()
 
     def _tune_monitor(self, x: np.ndarray, y: np.ndarray, end: int) -> None:
@@ -677,6 +890,38 @@ def _matched(session, options: Options, where: str) -> Matching:
     orbit = session.orbit(OrbitRequest(options=options))
     closed = np.array([orbit.x[-1], orbit.px[-1], orbit.y[-1], orbit.py[-1], orbit.zeta[-1], orbit.delta[-1]])
     return ring_matching(session, closed, options, where)
+
+
+def _radiation(engine: str) -> frozenset[Effect]:
+    """The synchrotron radiation an engine tracks: mean damping, and quantum excitation with it."""
+    effects = find_engine(engine).capabilities().effects
+    wanted = (Effect.RADIATION_DAMPING, Effect.QUANTUM_EXCITATION)
+    return frozenset(e for e in wanted if effects.get(e) is Support.NATIVE)
+
+
+def _gamma(lattice: Lattice, branch: str) -> float:
+    beta = reference("virtual ring", lattice, branch)["beta0"]
+    return 1.0 / math.sqrt(1.0 - beta * beta)
+
+
+def _bunch_summary(bunch: np.ndarray) -> dict[str, Any]:
+    """What an extracted bunch is like: particles, rms emittances (m rad, at the ring's start, with
+    dispersion), momentum spread and offset, bunch length (m)."""
+    if len(bunch) < 2:
+        return {"particles": len(bunch)}
+
+    def emittance(u, up):
+        u, up = u - u.mean(), up - up.mean()
+        return float(math.sqrt(max((u * u).mean() * (up * up).mean() - (u * up).mean() ** 2, 0.0)))
+
+    return {
+        "particles": len(bunch),
+        "emittance_x": emittance(bunch[:, 0], bunch[:, 1]),
+        "emittance_y": emittance(bunch[:, 2], bunch[:, 3]),
+        "sigma_delta": float(bunch[:, 5].std()),
+        "delta": float(bunch[:, 5].mean()),
+        "sigma_zeta": float(bunch[:, 4].std()),
+    }
 
 
 def _shape(u):

@@ -18,6 +18,7 @@ eicvibe = "eicvibe.store.cli:main"
 eicvibe-web = "eicvibe.api.__main__:main"
 eicvibe-virtual = "eicvibe.virtual.__main__:main"
 eicvibe-va = "eicvibe.va.__main__:main"
+eicvibe-engine = "eicvibe.engines.remote:main"
 
 [project.optional-dependencies]
 hdf5 = [

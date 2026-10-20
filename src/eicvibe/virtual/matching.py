@@ -160,10 +160,14 @@ def ring_matching(session, closed: np.ndarray, options: Options, where: str = ""
     With the longitudinal effect and RF on its stable side, from the 6D map: three normal modes.
     Otherwise (no RF, the effect off, or RF that holds no bunch) from the map with RF off: two
     transverse modes and the dispersion. A 6D map's transverse block alone is not a map (the RF
-    couples x, through the path length, to the momentum), so it is never used by itself.
+    couples x, through the path length, to the momentum), so it is never used by itself. With
+    radiation, the modes are the map's without it, about ``closed`` (found with it: where the energy
+    loss puts the bunch): radiation damps the map a little, and normal modes are a symplectic map's.
     """
     to = f"the one-turn map at {where}".strip()
     note = ", 4D"
+    radiation = {Effect.RADIATION_DAMPING, Effect.QUANTUM_EXCITATION}
+    options = Options(**(options.model_dump() | {"effects": options.effects - radiation}))
     if Effect.LONGITUDINAL in options.effects:
         M = one_turn_matrix(session, closed, options)
         # Synchrotron motion turns the longitudinal pair: 2 cos(2 pi Qs) < 2. The margin keeps the

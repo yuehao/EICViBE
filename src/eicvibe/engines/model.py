@@ -96,12 +96,15 @@ class Session(Protocol):
         start: str | None = None,
         end: str | None = None,
         ramps: Sequence[Ramp] = (),
+        momentum: Any = None,
     ) -> BeamTrack:
         """Track particles (rows of x, px, y, py, zeta, delta) for ``turns`` turns, recording centroids.
 
         With ``start`` or ``end`` (occurrences), once through that part of the branch, as a line.
         With ``ramps`` (a ring's turns only), settings move turn by turn while it tracks; the session
-        is left at their values after the last turn.
+        is left at their values after the last turn. With ``momentum`` (a ring's turns, the RF acting),
+        the reference momentum moves, a synchrotron's ramp: ``pc`` (eV) during each turn; see
+        :meth:`~.adapter.EngineSession.track_beam`.
         """
         ...
 

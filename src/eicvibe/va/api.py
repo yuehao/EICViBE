@@ -124,6 +124,14 @@ class MachineEntry(BaseModel):
     started: str | None
     changes: int = Field(description="Setting channels away from their original values")
     warnings: list[str] = Field(description="What the run found wrong, e.g. an RF phase that holds no bunch")
+    ramp: str | None = Field(
+        None, description="The ring's ramp profile, which a ramp command runs (ADR 0013)"
+    )
+    cycle: dict[str, Any] | None = Field(
+        None,
+        description="A running ring with a ramp: state (injection, ramping, flattop), energy (eV), and while "
+        "ramping the turns since it began and to extraction",
+    )
 
 
 class NewMachine(BaseModel):
@@ -185,6 +193,15 @@ class SettingRow(BaseModel):
     by: str | None
     at: str | None
     occurrences: list[str] = Field(description="Lattice occurrences it sets")
+    source: str | None = Field(
+        None,
+        description="A supply's transfer functions: placeholder, design or measured, the least sure of its "
+        "magnets' (ADR 0014); null for other channels",
+    )
+    beyond: bool = Field(
+        False,
+        description="Its original value (the design current) is beyond its limits: its supply cannot run it",
+    )
 
 
 class Change(BaseModel):
@@ -231,7 +248,7 @@ class SnapshotEntry(BaseModel):
 
 
 class BeamRequest(BaseModel):
-    action: Literal["kick", "inject"]
+    action: Literal["kick", "inject", "ramp"]
     x: float = Field(0.0, description="Kick angle, rad")
     y: float = 0.0
     reason: str = ""
@@ -380,6 +397,59 @@ class ProposalEntry(BaseModel):
     applied_turn: int | None
     correlation: str | None
     verification: dict[str, Any] | None
+
+
+class RampProgram(BaseModel):
+    """A ramp's programs in time, sampled over the ramp and the flattop."""
+
+    time: list[float] = Field(description="ms from the ramp's start")
+    energy: list[float] = Field(description="Total energy, GeV")
+    voltage: list[float] = Field(description="RF voltage, all cavities, MV")
+    phase: list[float] = Field(description="Synchronous phase from the zero crossing, deg")
+
+
+class RampRecord(BaseModel):
+    """A ramp of the machine's run: when it began, reached the flattop and extracted, and the bunch."""
+
+    turn: int = Field(description="The turn it began at")
+    wall: str | None = None
+    injected: int | None = Field(None, description="Particles of the bunch it ramped")
+    flattop: int | None = None
+    extracted: int | None = Field(None, description="The turn of extraction; null while it ramps")
+    energy: float | None = Field(None, description="eV, at extraction")
+    particles: int | None = Field(None, description="Particles extracted")
+    emittance_x: float | None = Field(None, description="m rad, rms, at the ring's start")
+    emittance_y: float | None = None
+    sigma_delta: float | None = None
+    delta: float | None = Field(None, description="The bunch's mean momentum deviation")
+    sigma_zeta: float | None = Field(None, description="Bunch length, m")
+    capture: str | None = Field(
+        None, description="The capture of its BPMs' readings, every turn from its start to extraction"
+    )
+    capture_turns: int | None = Field(None, description="The turns the capture holds")
+
+
+class RampView(BaseModel):
+    """A ring's ramp (ADR 0013): its profile, its programs, where it is, and its ramps so far."""
+
+    machine: str
+    ramp: str
+    branch: str
+    energy: dict[str, Any] = Field(description="The energy waveform's parameters (eV, eV/s, turns)")
+    porch: float = Field(description="s at injection before the ramp, in the designers' cycle")
+    flattop: float = Field(description="s at the extraction energy before extraction")
+    cycle_time: float = Field(description="s, the designers' whole cycle")
+    period: float = Field(description="s, a turn")
+    flattop_turn: int = Field(description="Turns from the ramp's start to the flattop")
+    extraction_turn: int = Field(description="Turns from the ramp's start to extraction")
+    source: dict[str, Any]
+    program: RampProgram
+    cycle: dict[str, Any] | None = Field(
+        description="Where the running ring is in its ramp; null when stopped"
+    )
+    engine: str | None
+    refusal: str | None = Field(description="Why it cannot ramp now; null when it can")
+    ramps: list[RampRecord] = Field(description="Its run's ramps, newest first")
 
 
 class TuneReading(BaseModel):
@@ -592,6 +662,12 @@ def va_router(get: Callable[[], VirtualAccelerator | None]) -> APIRouter:
         va = service()
         changes = {c.channel: c.value for c in body.changes}
         return WriteResult(**call(lambda: va.write(me, machine, changes, body.reason, atomic=body.atomic)))
+
+    @router.get("/machines/{machine}/ramp", response_model=RampView)
+    def ramp(machine: str) -> RampView:
+        """A ring's ramp (ADR 0013): its profile and programs, where the ring is in it, what keeps it
+        from ramping now, and its run's ramps. A ramp starts with POST /machines/{machine}/beam."""
+        return RampView(**call(lambda: service().ramp(machine)))
 
     @router.get("/machines/{machine}/tunes", response_model=TuneReading)
     def tunes(machine: str) -> TuneReading:

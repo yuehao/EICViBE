@@ -36,6 +36,19 @@ class Setting:
     original: float
     keys: tuple[tuple[str, str], ...]
     """The (occurrence, parameter) pairs it sets."""
+    source: str | None = None
+    """Where a supply's transfer functions come from, the least sure of its magnets': placeholder,
+    design or measured (ADR 0014); None for a channel that is not a supply's current."""
+
+    @property
+    def beyond(self) -> bool:
+        """Whether its original value (its magnets' design current) is beyond its limits: a design its
+        supply cannot run (ADR 0014)."""
+        if self.limits is None:
+            return False
+        low, high = self.limits
+        margin = 1e-9 * max(abs(low), abs(high), 1.0)
+        return not low - margin <= self.original <= high + margin
 
 
 class MachineSettings:
@@ -63,6 +76,7 @@ class MachineSettings:
                 limits=tuple(channel.control_limits) if channel.control_limits else None,
                 original=_clean(self._original(channel)),
                 keys=keys,
+                source=self._source(channel),
             )
         self._by_key: dict[tuple[str, str], list[str]] = {}
         for name, setting in self.settings.items():
@@ -96,6 +110,13 @@ class MachineSettings:
         if key in self.mode:
             return self.mode[key]
         return design_value(self.lattice.placement(key[0]), key[1])
+
+    def _source(self, channel: Channel) -> str | None:
+        """The least sure source of a supply circuit's transfer functions."""
+        if channel.binding.kind != "circuit":
+            return None
+        sources = {m.transfer.source.value for m in self.registry.circuit(channel.binding.circuit).magnets}
+        return next(s for s in ("placeholder", "design", "measured") if s in sources)
 
     def _original(self, channel: Channel) -> float:
         binding = channel.binding

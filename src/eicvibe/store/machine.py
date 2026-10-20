@@ -12,8 +12,9 @@
     devices/rf.yaml           RF stations
     routes.yaml               the beam's paths through several branches, by branch name
     settings/*.yaml           operating settings, e.g. a mode's magnet strengths
+    beams/<branch>.yaml, .csv the beam delivered at a branch's start (ADR 0012)
+    ramps/<name>.yaml, .csv   a ring's ramp: its energy and RF programs (ADR 0013)
     measurements/             reserved: the magnetic measurement database
-    ramps/                    reserved: synchrotron ramp profiles
     build/                    written by ``eicvibe build``; never edited
 
 :func:`load_machine` reads the lattice and assembles the registry from these
@@ -30,6 +31,7 @@ from typing import Any
 
 from eicvibe.domain.lattice import ElementKind, Lattice, Route, design_values, route_through
 from eicvibe.domain.machine import MachineDescription, MachineRegistry, assemble_registry
+from eicvibe.domain.machine.ramps import RampProfile, ramp_problems
 
 from .beams import BEAMS_DIR, DeliveredBeam, read_beams
 from .device_files import References, read_devices, write_devices
@@ -42,6 +44,7 @@ from .lattice_files import (
     read_lattice,
     write_lattice,
 )
+from .ramps import RAMPS_DIR, read_ramps
 from .yamlio import FileError, block, flow, mapping, read_yaml, write_yaml
 
 MACHINE_FILE = "machine.yaml"
@@ -58,7 +61,8 @@ validates them and `eicvibe build` writes build/ (never edit build/).
   devices/diagnostics.yaml  BPMs and tune monitors
   devices/rf.yaml           RF stations
   settings/*.yaml           operating settings, e.g. a mode's magnet strengths
-  measurements/, ramps/     reserved: magnetic measurements, ramp profiles"""
+  beams/, ramps/            beams delivered at branch starts; rings' ramps (energy and RF programs)
+  measurements/             reserved: magnetic measurements"""
 
 _SETTINGS_HEADER = """{description}
 Values replace the lattice's: occurrence (branch/name) -> parameter -> value, in lattice units."""
@@ -82,9 +86,11 @@ class Machine:
     source: dict[str, Any]
     """Provenance of the lattice, as machine.yaml records it."""
     routes: tuple[Route, ...] = ()
+    """The beam's paths through several branches (routes.yaml)."""
     beams: dict[str, DeliveredBeam] = field(default_factory=dict)
     """Beams delivered at branch starts (beams/), by branch name (ADR 0012)."""
-    """The beam's paths through several branches (routes.yaml)."""
+    ramps: dict[str, RampProfile] = field(default_factory=dict)
+    """Rings' ramps (ramps/), by name (ADR 0013)."""
 
 
 ROUTES_FILE = "routes.yaml"
@@ -215,7 +221,11 @@ def load_machine(folder: Path) -> Machine:
         raise FileError(
             folder / BEAMS_DIR, f"beams delivered to no branch of the lattice: {', '.join(unknown)}"
         )
-    return Machine(folder, lattice, description, registry, dict(index.get("source") or {}), routes, beams)
+    ramps = read_ramps(folder)
+    if unknown := sorted({r.branch for r in ramps.values()} - {b.name for b in lattice.branches}):
+        raise FileError(folder / RAMPS_DIR, f"ramps of no branch of the lattice: {', '.join(unknown)}")
+    source = dict(index.get("source") or {})
+    return Machine(folder, lattice, description, registry, source, routes, beams, ramps)
 
 
 def write_machine(
@@ -233,7 +243,7 @@ def write_machine(
     written += write_lattice(lattice, folder, order, names)
     if description is not None:
         written += write_devices(description, lattice, folder)
-    for reserved in ("measurements", "ramps"):
+    for reserved in ("measurements", RAMPS_DIR):
         (folder / reserved).mkdir(parents=True, exist_ok=True)
     return written
 
@@ -336,6 +346,7 @@ def check_machine(folder: Path) -> list[str]:
     problems = [f"lattice: {d}" for d in machine.lattice.diagnose()]
     problems += [f"registry: {p}" for p in machine.registry.check_against(machine.lattice)]
     problems += [f"power: {p}" for p in machine.registry.power_problems(machine.lattice)]
+    problems += [f"ramps: {p}" for r in machine.ramps.values() for p in ramp_problems(r, machine.lattice)]
     stale = [c for c in update_names(folder, machine, write=False) if c.startswith("eic ")]
     if stale:
         problems.append(

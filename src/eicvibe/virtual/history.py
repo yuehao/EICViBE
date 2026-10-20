@@ -57,6 +57,7 @@ class RunInfo(BaseModel):
     branch: str
     branch_id: str
     engine: str
+    host: str | None = Field(None, description="The engine host it ran on (ADR 0015); None: here")
     fidelity: str
     effects: list[str]
     start: datetime = Field(description="When turn 0 was, on the run's own clock")
@@ -83,6 +84,11 @@ class RunInfo(BaseModel):
         default_factory=dict,
         description="Settings it started with, beyond the lattice's: 'occurrence parameter' to value, as the "
         "settings events give changes",
+    )
+    ramp: dict[str, Any] | None = Field(
+        None,
+        description="A ring's ramp profile, which a ramp command runs (ADR 0013): its name, energies (eV), "
+        "turns to the flattop and to extraction; the 'ramp' events give the turns it started at",
     )
 
 

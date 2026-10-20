@@ -5,8 +5,9 @@ references that do not come from an engine: a ring and a line of FODO cells of t
 quadrupoles and drifts, whose optics the transfer matrices give exactly, and the
 contract's own conventions (a positive Kn0L deflects toward -x, a positive Ks0L toward
 +y; a session updated in place is the session opened with those values; a ramp leaves
-the settings at its end). An engine joins ``ENGINES`` when it passes. Comparisons of
-engines with each other, and with MAD-X, are in the engines' own tests.
+the settings at its end; a reference momentum that moves as a cavity gives the energy keeps the
+bunch on it and damps its betatron action as 1/p). An engine joins ``ENGINES`` when it passes.
+Comparisons of engines with each other, and with MAD-X, are in the engines' own tests.
 """
 
 import math
@@ -17,7 +18,9 @@ import pytest
 from eicvibe.diagnostics.analysis import tune_of
 from eicvibe.domain.lattice import LatticeBuilder, SequentialIds
 from eicvibe.engines import ENGINES, EngineAdapter, EngineSession, engine
+from eicvibe.engines.adapter import rereferenced
 from eicvibe.engines.contracts import (
+    Effect,
     EngineUnavailable,
     Fidelity,
     OpticsRequest,
@@ -31,6 +34,7 @@ from eicvibe.engines.contracts import (
 from eicvibe.engines.model import SETTINGS
 
 PRECISE = Options(fidelity=Fidelity.PRECISE)
+SIX = Options(fidelity=Fidelity.PRECISE, effects=frozenset({Effect.LONGITUDINAL}))
 CELLS = 6
 L_QUAD, K1, L_DRIFT = 0.5, 0.7, 2.0
 KICK = 1e-5
@@ -286,6 +290,129 @@ def test_a_ramp_moves_a_setting_turn_by_turn_and_leaves_it_at_its_end(fodo, name
         end.close()
 
 
+MASS, ENERGY, GAIN, VOLTAGE = 510998.95069, 1e9, 5e4, 1e6  # eV, eV, eV a turn, V
+
+
+@pytest.fixture(scope="module")
+def rf_ring():
+    """The ring's cells with a thin cavity whose synchronous particle gains GAIN a turn (no bends: below
+    transition, so the stable phase is asin(GAIN / VOLTAGE) from the zero crossing)."""
+    b = LatticeBuilder("rf", ids=SequentialIds())
+    pc = math.sqrt(ENERGY**2 - MASS**2)
+    b.define("BEG", "BeginningEle", ReferenceP={"species_ref": "electron", "pc_ref": pc})
+    b.define("QF", "Quadrupole", length=L_QUAD, MagneticMultipoleP={"Kn1": K1})
+    b.define("QD", "Quadrupole", length=L_QUAD, MagneticMultipoleP={"Kn1": -K1})
+    b.define("D", "Drift", length=L_DRIFT)
+    rf = {
+        "harmon": 10,
+        "voltage": VOLTAGE,
+        "phase": math.asin(GAIN / VOLTAGE),
+        "zero_phase": "BELOW_TRANSITION",
+    }
+    b.define("CAV", "RFCavity", RFP=rf)
+    b.add_branch("ring", "periodic", ["BEG", *(["QF", "D", "QD", "D"] * CELLS), "CAV"])
+    return b.build()
+
+
+def test_a_moving_reference_is_a_synchrotrons_ramp(name, rf_ring):
+    turns = 200
+    energy = ENERGY + GAIN * np.arange(turns)  # the reference rises as the cavity gives the energy
+    momentum = np.sqrt(energy**2 - MASS**2)
+    session = engine(name).open(rf_ring, "ring", SIX)
+    try:
+        # On the axis, and with a betatron amplitude (whose longer path slips it in phase: no bends, no
+        # phase focusing; so its energy is not the reference's to the same precision).
+        start = np.array([[0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [1e-4, 0.0, 5e-5, 0.0, 0.0, 0.0]])
+        moved = session.track_beam(start, turns, [], SIX, momentum=momentum)
+        still = session.track_beam(start, turns, [], SIX, momentum=np.full(turns, momentum[0]))
+        plain = session.track_beam(start, turns, [], SIX)
+        optics = session.optics(OpticsRequest(options=PRECISE)).start
+    finally:
+        session.close()
+    axis, final = np.asarray(moved.final)
+    # It keeps up: after the last turn's cavity it is that turn's gain above that turn's reference.
+    assert axis[5] == pytest.approx(GAIN / momentum[-1], rel=1e-5)
+
+    def action(c, beta, alpha, i):  # the Courant-Snyder invariant at the ring's start
+        x, p = c[i], c[i + 1]
+        return ((1 + alpha**2) / beta) * x * x + 2 * alpha * x * p + beta * p * p
+
+    for i, beta, alpha in ((0, optics.beta_x, optics.alpha_x), (2, optics.beta_y, optics.alpha_y)):
+        ratio = action(final, beta, alpha, i) / action(start[1], beta, alpha, i)
+        assert ratio == pytest.approx(momentum[0] / momentum[-1], abs=2e-4)  # adiabatic damping: 1 - 1 %
+    assert np.asarray(still.final) == pytest.approx(np.asarray(plain.final), abs=1e-15)
+
+
+def test_a_ramp_tracked_call_after_call_is_the_ramp_tracked_at_once(name, rf_ring):
+    """A virtual ring tracks its ramp a chunk at a time; between calls the bunch is put about the next
+    call's first reference (``rereferenced``), as the engine does between turns."""
+    turns, cut = 200, 70
+    energy = ENERGY + GAIN * np.arange(turns)
+    momentum = np.sqrt(energy**2 - MASS**2)
+    session = engine(name).open(rf_ring, "ring", SIX)
+    try:
+        start = np.array([[1e-4, 2e-6, 5e-5, -1e-6, 1e-3, 2e-4], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]])
+        once = np.asarray(session.track_beam(start, turns, [], SIX, momentum=momentum).final)
+        first = np.asarray(session.track_beam(start, cut, [], SIX, momentum=momentum[:cut]).final)
+        between = rereferenced(first, momentum[cut - 1], momentum[cut], MASS)
+        then = np.asarray(session.track_beam(between, turns - cut, [], SIX, momentum=momentum[cut:]).final)
+        unmoved = np.asarray(session.track_beam(first, turns - cut, [], SIX, momentum=momentum[cut:]).final)
+    finally:
+        session.close()
+    assert then == pytest.approx(once, rel=1e-9, abs=1e-15)
+    # Without it, each call would start a turn's energy step below the reference.
+    assert abs(unmoved[1, 5] - once[1, 5]) > 0.5 * GAIN / ENERGY
+
+
+RADIUS, RADIATING = 10.0, 3e9  # m, eV: an electron ring's bends and energy
+R_E, HBAR_C = 2.8179403262e-15, 1.973269804593025e-7  # m, eV m
+
+
+@pytest.fixture(scope="module")
+def bent_ring():
+    """An isomagnetic electron ring of 16 FODO cells at 3 GeV, its bends of radius 10 m."""
+    cells = 16
+    angle = math.pi / cells
+    b = LatticeBuilder("bent", ids=SequentialIds())
+    b.define(
+        "BEG",
+        "BeginningEle",
+        ReferenceP={"species_ref": "electron", "pc_ref": math.sqrt(RADIATING**2 - MASS**2)},
+    )
+    b.define("QF", "Quadrupole", length=L_QUAD, MagneticMultipoleP={"Kn1": K1})
+    b.define("QD", "Quadrupole", length=L_QUAD, MagneticMultipoleP={"Kn1": -K1})
+    b.define("B", "Bend", length=RADIUS * angle, BendP={"angle_ref": angle})
+    b.define("D", "Drift", length=0.5)
+    b.add_branch("ring", "periodic", ["BEG", *(["QF", "D", "B", "D", "QD", "D", "B", "D"] * cells)])
+    return b.build()
+
+
+def test_radiation_takes_the_energy_and_spreads_it_as_sands_says(name, bent_ring):
+    """One turn on the axis: the mean loss is U0 = (4 pi / 3) r_e m c^2 gamma^4 / rho, and quantum
+    excitation spreads delta by 2 Cq gamma^2 (U0 / E) / rho in variance (Sands' photon diffusion)."""
+    gamma = RADIATING / MASS
+    loss = 4 * math.pi / 3 * R_E * MASS * gamma**4 / RADIUS / RADIATING  # U0 / E: 2.4e-4
+    cq = 55 / (32 * math.sqrt(3)) * HBAR_C / MASS
+    spread = math.sqrt(2 * cq * gamma**2 * loss / RADIUS)  # 2.5e-5
+    damping = Options(
+        fidelity=Fidelity.PRECISE, effects=frozenset({Effect.LONGITUDINAL, Effect.RADIATION_DAMPING})
+    )
+    quantum = Options(fidelity=Fidelity.PRECISE, effects=damping.effects | {Effect.QUANTUM_EXCITATION})
+    session = engine(name).open(bent_ring, "ring", damping)
+    try:
+        axis = np.zeros((4000, 6))
+        mean = np.asarray(session.track_beam(axis[:1], 1, [], damping).final)[0, 5]
+        excited = np.asarray(session.track_beam(axis, 1, [], quantum).final)[:, 5]
+        again = np.asarray(session.track_beam(axis, 1, [], quantum).final)[:, 5]
+        plain = np.asarray(session.track_beam(axis[:1], 1, [], PRECISE).final)[0, 5]
+    finally:
+        session.close()
+    assert mean == pytest.approx(-loss, rel=2e-3) and plain == 0.0
+    assert excited.mean() == pytest.approx(-loss, abs=4 * spread / math.sqrt(len(excited)))  # its noise
+    assert excited.std() == pytest.approx(spread, rel=0.06)
+    assert not np.array_equal(excited, again)  # each call draws its own photons
+
+
 # -- what every engine refuses, and why --------------------------------------------------------------
 
 
@@ -313,6 +440,12 @@ def test_every_engine_refuses_the_same_requests_for_the_same_reasons(fodo, name,
         ),
         "outside the part tracked": lambda: line.track_beam(
             np.zeros((1, 6)), 1, [mk_line], PRECISE, start=first, end=cor
+        ),
+        "a moving reference needs the RF to act": lambda: ring.track_beam(
+            np.zeros((1, 6)), 2, [], PRECISE, momentum=[1e9, 1e9]
+        ),
+        "2 reference momenta for 3 turns": lambda: ring.track_beam(
+            np.zeros((1, 6)), 3, [], SIX, momentum=[1e9, 1e9]
         ),
     }
     try:

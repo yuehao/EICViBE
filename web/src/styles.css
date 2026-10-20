@@ -772,8 +772,19 @@ table.poses td {
 }
 
 .badge.placeholder {
-  background: var(--border);
-  color: var(--text);
+  background: #f59f00;
+  color: #1d2330;
+}
+
+/* A design current beyond its supply's limits (ADR 0014). */
+.beyond {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.badge.design {
+  background: #1971c2;
+  color: #fff;
 }
 
 .badge.measured {
@@ -1588,4 +1599,75 @@ input.error-number {
 
 input.error-number.error-seed {
   width: 9em;
+}
+
+/* The admin page's Ramp tab (ADR 0013). */
+.ramp-status {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0;
+}
+
+.ramp-state {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.ramp-badge {
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 12px;
+  background: var(--border);
+  color: var(--text);
+}
+
+.ramp-badge.ramping,
+.ramp-badge.flattop {
+  background: var(--accent);
+  color: #fff;
+}
+
+.ramp-progress {
+  position: relative;
+  height: 8px;
+  max-width: 640px;
+  border-radius: 4px;
+  background: var(--grid);
+  overflow: hidden;
+}
+
+.ramp-progress-ramp {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-right: 2px solid var(--muted);
+}
+
+.ramp-progress b {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--accent);
+}
+
+.ramp-control {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.ramp-control input {
+  min-width: 260px;
+}
+
+.ramp-charts {
+  padding: 4px 0 10px;
+}
+
+.ramp-tables {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: 10px 24px;
 }

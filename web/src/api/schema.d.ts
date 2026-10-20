@@ -583,6 +583,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/va/machines/{machine}/ramp": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Ramp
+         * @description A ring's ramp (ADR 0013): its profile and programs, where the ring is in it, what keeps it
+         *     from ramping now, and its run's ramps. A ramp starts with POST /machines/{machine}/beam.
+         */
+        get: operations["ramp_api_v1_va_machines__machine__ramp_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/va/machines/{machine}/reset": {
         parameters: {
             query?: never;
@@ -1140,7 +1161,7 @@ export interface components {
              * Action
              * @enum {string}
              */
-            action: "kick" | "inject";
+            action: "kick" | "inject" | "ramp";
             /**
              * Reason
              * @default
@@ -1901,6 +1922,13 @@ export interface components {
              * @description Setting channels away from their original values
              */
             changes: number;
+            /**
+             * Cycle
+             * @description A running ring with a ramp: state (injection, ramping, flattop), energy (eV), and while ramping the turns since it began and to extraction
+             */
+            cycle?: {
+                [key: string]: unknown;
+            } | null;
             /** Engine */
             engine: string | null;
             /** Error */
@@ -1929,6 +1957,11 @@ export interface components {
              * @description Its run's turn (ring) or shot (route) now
              */
             position: number | null;
+            /**
+             * Ramp
+             * @description The ring's ramp profile, which a ramp command runs (ADR 0013)
+             */
+            ramp?: string | null;
             /**
              * Ramp Turns
              * @description Turns a ring's setting change ramps over; 0 steps
@@ -2371,6 +2404,12 @@ export interface components {
          * @description One power circuit of a supply, seen from one occurrence.
          */
         Power: {
+            /**
+             * Beyond
+             * @description The design current is beyond the supply's limits: its supply cannot run it (ADR 0014)
+             * @default false
+             */
+            beyond: boolean;
             /** Circuit */
             circuit: string;
             /**
@@ -2378,6 +2417,11 @@ export interface components {
              * @description Current giving this magnet its design value
              */
             design_current: number | null;
+            /**
+             * Limits
+             * @description The supply's limits, in its engineering unit
+             */
+            limits?: number[] | null;
             /** Magnets */
             magnets: number;
             /**
@@ -2600,6 +2644,169 @@ export interface components {
              * @enum {string}
              */
             source: "measured" | "model";
+        };
+        /**
+         * RampProgram
+         * @description A ramp's programs in time, sampled over the ramp and the flattop.
+         */
+        RampProgram: {
+            /**
+             * Energy
+             * @description Total energy, GeV
+             */
+            energy: number[];
+            /**
+             * Phase
+             * @description Synchronous phase from the zero crossing, deg
+             */
+            phase: number[];
+            /**
+             * Time
+             * @description ms from the ramp's start
+             */
+            time: number[];
+            /**
+             * Voltage
+             * @description RF voltage, all cavities, MV
+             */
+            voltage: number[];
+        };
+        /**
+         * RampRecord
+         * @description A ramp of the machine's run: when it began, reached the flattop and extracted, and the bunch.
+         */
+        RampRecord: {
+            /**
+             * Capture
+             * @description The capture of its BPMs' readings, every turn from its start to extraction
+             */
+            capture?: string | null;
+            /**
+             * Capture Turns
+             * @description The turns the capture holds
+             */
+            capture_turns?: number | null;
+            /**
+             * Delta
+             * @description The bunch's mean momentum deviation
+             */
+            delta?: number | null;
+            /**
+             * Emittance X
+             * @description m rad, rms, at the ring's start
+             */
+            emittance_x?: number | null;
+            /** Emittance Y */
+            emittance_y?: number | null;
+            /**
+             * Energy
+             * @description eV, at extraction
+             */
+            energy?: number | null;
+            /**
+             * Extracted
+             * @description The turn of extraction; null while it ramps
+             */
+            extracted?: number | null;
+            /** Flattop */
+            flattop?: number | null;
+            /**
+             * Injected
+             * @description Particles of the bunch it ramped
+             */
+            injected?: number | null;
+            /**
+             * Particles
+             * @description Particles extracted
+             */
+            particles?: number | null;
+            /** Sigma Delta */
+            sigma_delta?: number | null;
+            /**
+             * Sigma Zeta
+             * @description Bunch length, m
+             */
+            sigma_zeta?: number | null;
+            /**
+             * Turn
+             * @description The turn it began at
+             */
+            turn: number;
+            /** Wall */
+            wall?: string | null;
+        };
+        /**
+         * RampView
+         * @description A ring's ramp (ADR 0013): its profile, its programs, where it is, and its ramps so far.
+         */
+        RampView: {
+            /** Branch */
+            branch: string;
+            /**
+             * Cycle
+             * @description Where the running ring is in its ramp; null when stopped
+             */
+            cycle: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Cycle Time
+             * @description s, the designers' whole cycle
+             */
+            cycle_time: number;
+            /**
+             * Energy
+             * @description The energy waveform's parameters (eV, eV/s, turns)
+             */
+            energy: {
+                [key: string]: unknown;
+            };
+            /** Engine */
+            engine: string | null;
+            /**
+             * Extraction Turn
+             * @description Turns from the ramp's start to extraction
+             */
+            extraction_turn: number;
+            /**
+             * Flattop
+             * @description s at the extraction energy before extraction
+             */
+            flattop: number;
+            /**
+             * Flattop Turn
+             * @description Turns from the ramp's start to the flattop
+             */
+            flattop_turn: number;
+            /** Machine */
+            machine: string;
+            /**
+             * Period
+             * @description s, a turn
+             */
+            period: number;
+            /**
+             * Porch
+             * @description s at injection before the ramp, in the designers' cycle
+             */
+            porch: number;
+            program: components["schemas"]["RampProgram"];
+            /** Ramp */
+            ramp: string;
+            /**
+             * Ramps
+             * @description Its run's ramps, newest first
+             */
+            ramps: components["schemas"]["RampRecord"][];
+            /**
+             * Refusal
+             * @description Why it cannot ramp now; null when it can
+             */
+            refusal: string | null;
+            /** Source */
+            source: {
+                [key: string]: unknown;
+            };
         };
         /** Reason */
         Reason: {
@@ -2907,6 +3114,12 @@ export interface components {
         SettingRow: {
             /** At */
             at: string | null;
+            /**
+             * Beyond
+             * @description Its original value (the design current) is beyond its limits: its supply cannot run it
+             * @default false
+             */
+            beyond: boolean;
             /** By */
             by: string | null;
             /** Changed */
@@ -2932,6 +3145,11 @@ export interface components {
              * @description From the machine files: design, and the mode
              */
             original: number;
+            /**
+             * Source
+             * @description A supply's transfer functions: placeholder, design or measured, the least sure of its magnets' (ADR 0014); null for other channels
+             */
+            source?: string | null;
             /** Unit */
             unit: string;
             /**
@@ -3049,7 +3267,7 @@ export interface components {
             kind: string;
             /**
              * Source
-             * @description placeholder or measured
+             * @description placeholder, design (the magnet's coil and aperture, ADR 0014) or measured
              */
             source: string;
             /**
@@ -4232,6 +4450,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProposalEntry"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ramp_api_v1_va_machines__machine__ramp_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                machine: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RampView"];
                 };
             };
             /** @description Validation Error */

@@ -13,9 +13,15 @@ pytest.importorskip("xtrack")
 from eicvibe.api.demo import demo_lattice  # noqa: E402
 from eicvibe.diagnostics import NO_BEAM, read_rhic, tune, write_rhic  # noqa: E402
 from eicvibe.domain.lattice import ElementKind  # noqa: E402
-from eicvibe.domain.machine import NamingArea, generate_machine_registry  # noqa: E402
+from eicvibe.domain.machine import (  # noqa: E402
+    EnergyRamp,
+    NamingArea,
+    RampProfile,
+    RfProgram,
+    generate_machine_registry,
+)
 from eicvibe.engines import engine  # noqa: E402
-from eicvibe.engines.contracts import Fidelity, OpticsRequest, Options  # noqa: E402
+from eicvibe.engines.contracts import Effect, Fidelity, OpticsRequest, Options  # noqa: E402
 from eicvibe.virtual import Beam, BpmHistory, BpmModel, RingRun, ring_bpms  # noqa: E402
 
 
@@ -219,3 +225,67 @@ def test_a_kick_a_request_and_a_beam_loss_freeze_the_buffer(demo, tmp_path):
     gone = pm["trigger"] - lost.first_turn
     assert np.isfinite(lost.x.position[:, : gone - 1]).all() and np.isnan(lost.x.position[:, gone:]).all()
     assert history.span()[1] - history.span()[0] <= 512 + 256  # only the buffer is kept turn by turn
+
+
+def demo_ramp(lattice) -> RampProfile:
+    """The demo ring from 2.000 to 2.010 GeV in 250 turns, its RF phase giving the energy and the
+    radiation loss (88.46 keV E[GeV]^4 / rho), and a 50-turn flattop."""
+    mass = 510998.95069
+    period = lattice.layout("ring").length / 299_792_458.0
+    start = math.hypot(2e9, mass)
+    energy = EnergyRamp(
+        injection=start, extraction=start + 1e7, linear_end=start + 8e6, rate=5e4 / period, smooth_turns=20
+    )
+    times = np.linspace(0.0, energy.turns(period) * period, 40)
+    energies = np.array([energy.energy(t / period, period) for t in times])
+    loss = 88.463e3 * (energies / 1e9) ** 4 / (2.0 / (math.pi / 12))
+    gain = np.gradient(energies, times) * period
+    rf = RfProgram(time=tuple(times), voltage=(5e5,) * 40, phase=tuple(np.arcsin((gain + loss) / 5e5)))
+    return RampProfile(name="demo", branch="ring", energy=energy, rf=rf, flattop=50 * period)
+
+
+def test_a_ring_ramps_on_command_then_extracts_and_takes_a_fresh_bunch(demo, tmp_path):
+    lattice, _, _ = demo
+    profile = demo_ramp(lattice)
+    ring = run(demo, tmp_path / "run", ramp=profile, turns=1000, buffer_turns=256)  # shorter than a ramp
+    assert {e.value for e in ring.options.effects} == {
+        "longitudinal",
+        "radiation_damping",
+        "quantum_excitation",
+    }
+    ring.start()
+    ring.wait(200)
+    assert ring.cycle == {"ramp": "demo", "state": "injection", "energy": profile.energy.injection}
+    ring.ramp()
+    ring.wait(1000)
+    ring.stop()
+    assert ring.error is None and ring.cycle["state"] == "injection"
+    events = [e for e in BpmHistory.open(tmp_path / "run").events() if e["kind"] != "capture"]
+    [start] = [e["turn"] for e in events if e["kind"] == "ramp"]
+    after = [(e["turn"] - start, e["kind"]) for e in events if e["turn"] >= start]
+    assert after == [(0, "ramp"), (250, "flattop"), (300, "extract"), (300, "porch"), (300, "inject")]
+    [extract] = [e for e in events if e["kind"] == "extract"]
+    assert extract["energy"] == profile.energy.extraction and extract["particles"] == 16  # none lost
+    assert abs(extract["delta"]) < 3e-3  # it kept up with the reference
+    assert BpmHistory.open(tmp_path / "run").info.ramp["extraction_turn"] == 300
+    # The BPMs' readings of every turn of the ramp, its flattop and extraction, kept whole though the
+    # buffer holds fewer turns.
+    history = BpmHistory.open(tmp_path / "run")
+    [capture] = [c for c in history.captures() if c["kind"] == "ramp"]
+    assert (capture["trigger"], capture["first"], capture["turns"]) == (start, start, 300)
+    assert capture["ramp"] == "demo" and "partial" not in capture
+    tbt = history.capture(capture["id"])
+    assert tbt.first_turn == start and tbt.turns == 300
+    assert np.isfinite(tbt.x.position).all() and (tbt.x.intensity > 0).all()  # a full bunch, every turn
+
+
+def test_a_ring_ramps_only_with_a_profile_and_an_engine_that_radiates(demo, tmp_path):
+    lattice, _, _ = demo
+    with pytest.raises(ValueError, match="has no ramp profile"):
+        run(demo, tmp_path / "plain").ramp()
+    flat = run(demo, tmp_path / "flat", ramp=demo_ramp(lattice), effects=frozenset({Effect.LONGITUDINAL}))
+    with pytest.raises(ValueError, match="which this run of xsuite leaves out: run the ring with radiation"):
+        flat.ramp()
+    # Both engines radiate (TrackPad since 607dc13): a ring with a profile ramps on either.
+    trackpad = run(demo, tmp_path / "trackpad", engine="trackpad", ramp=demo_ramp(lattice))
+    assert trackpad._cannot_ramp() is None and Effect.QUANTUM_EXCITATION in trackpad.options.effects

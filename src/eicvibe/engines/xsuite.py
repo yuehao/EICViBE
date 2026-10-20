@@ -14,12 +14,25 @@ part of bend edges and integrates bends in ten Yoshida kicks,
 chromaticity of strongly bent rings needs them), and
 ``precise`` uses the full bend model and exact drifts. Xsuite's expanded bend
 body is not used: it misses half the chromaticity of a ring with rho ~ 5 m.
+
+Bunches (``track_beam``, the virtual accelerator's tracking) are tracked where
+``EICVIBE_XSUITE_CONTEXT`` says: ``cpu``, the default, on one thread; ``cpu:N`` or
+``cpu:auto`` on OpenMP threads; ``cuda`` or ``cuda:N`` on a GPU, with CuPy, and
+``cuda:N,M,...`` on several, a share of a large bunch each. Threads and GPUs share
+out the particles, so they speed up large bunches only. GPU kernels are compiled
+fully optimized unless ``XSUITE_CUDA_FAST_COMPILE`` says otherwise. The other
+computations track a particle or a few and stay on one thread. An engine host sets
+it (``eicvibe-engine serve --xsuite-context``, ADR 0015).
 """
 
 import itertools
+import os
 from collections import defaultdict
 from collections.abc import Sequence
-from contextlib import contextmanager
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager, nullcontext
+from dataclasses import dataclass
+from functools import cache
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
@@ -70,6 +83,9 @@ except ImportError:  # the engine reports itself unavailable
 
 NAME = "xsuite"
 
+#: The environment variable that says where bunches are tracked (the module's docstring).
+CONTEXT = "EICVIBE_XSUITE_CONTEXT"
+
 KINDS = frozenset(
     {
         ElementKind.DRIFT,
@@ -119,7 +135,7 @@ class XsuiteEngine(EngineAdapter):
                 TimeScale.EQUILIBRIUM: Support.NATIVE,
                 TimeScale.SINGLE_PASS: Support.NATIVE,
                 TimeScale.TURNS: Support.NATIVE,
-                TimeScale.CYCLE: Support.APPROXIMATE,
+                TimeScale.CYCLE: Support.NATIVE,
             },
             kinds=KINDS,
             updatable=SETTINGS,
@@ -130,7 +146,8 @@ class XsuiteEngine(EngineAdapter):
                 Effect.INTRABEAM_SCATTERING.value: "in Xsuite; not yet in this adapter",
                 Effect.SPIN.value: "in Xsuite; not yet in this adapter",
                 Effect.APERTURES.value: "lattice apertures are not converted yet",
-                TimeScale.CYCLE.value: "quasi-static snapshots (model.quasi_static); no time-dependent knobs",
+                TimeScale.CYCLE.value: "tracking with a moving reference and settings, turn by turn; "
+                "optics as quasi-static snapshots (model.quasi_static)",
                 Effect.QUANTUM_EXCITATION.value: "tracking only",
             },
         )
@@ -139,6 +156,119 @@ class XsuiteEngine(EngineAdapter):
         self, capabilities: Capabilities, lattice: Lattice, branch: str, options: Options, values: Values
     ) -> XsuiteSession:
         return XsuiteSession(capabilities, lattice, branch, options, values)
+
+
+#: Particles a GPU takes at least when a bunch is shared out: an A100 tracks 10 000 particles of the RCS in a
+#: sixth of the time of 100 000, so a smaller share gains little over one GPU (ADR 0015).
+PER_GPU = 25_000
+
+#: The GPU of each context made here, by its id: CuPy's current device is a thread's.
+_DEVICES: dict[int, int] = {}
+
+
+def compute_contexts(spec: str | None = None) -> tuple:
+    """Xsuite's contexts for tracking bunches, from ``spec`` or ``EICVIBE_XSUITE_CONTEXT``: ``(None,)`` for
+    one CPU thread (Xsuite's default context), else contexts kept for the process, their kernels compiled
+    once; several for ``cuda:N,M,...``, which share out a large bunch."""
+    spec = (os.environ.get(CONTEXT, "") if spec is None else spec).strip().lower()
+    return (None,) if spec in ("", "cpu") else _contexts(spec)
+
+
+def compute_context(spec: str | None = None):
+    """The first of :func:`compute_contexts`: None for one CPU thread."""
+    return compute_contexts(spec)[0]
+
+
+def describe_context(context) -> str:
+    """Where contexts track: ``cpu``, ``cpu, 32 threads``, ``cuda:1, NVIDIA A100-SXM4-40GB``,
+    ``cuda:1,3, 2 NVIDIA A100-SXM4-40GB``."""
+    contexts = context if isinstance(context, tuple) else (context,)
+    first = contexts[0]
+    if first is None:
+        return "cpu"
+    threads = getattr(first, "omp_num_threads", None)
+    if threads is not None:
+        return f"cpu, {threads} threads" if threads != "auto" else "cpu, a thread per core"
+    import cupy
+
+    devices = [_DEVICES[id(c)] for c in contexts]
+    name = cupy.cuda.runtime.getDeviceProperties(devices[0])["name"]
+    name = name.decode() if isinstance(name, bytes) else name
+    many = f"{len(devices)} " if len(devices) > 1 else ""
+    return f"cuda:{','.join(map(str, devices))}, {many}{name}"
+
+
+@cache
+def _contexts(spec: str) -> tuple:
+    import xobjects as xo
+
+    kind, _, count = spec.partition(":")
+    if kind == "cpu":
+        return (xo.ContextCpu(omp_num_threads="auto" if count == "auto" else _count(spec, count, 1)),)
+    if kind == "cuda":
+        devices = [_count(spec, d, 0) for d in (count or "0").split(",")]
+        if len(set(devices)) < len(devices):
+            raise ValueError(f"{CONTEXT}={spec}: a GPU named twice")
+        try:
+            import cupy  # noqa: F401 - Xsuite's GPU context needs it
+        except ImportError:
+            raise ValueError(f"{CONTEXT}={spec}: CuPy is not installed (pip install cupy-cuda12x)") from None
+        if "XSUITE_CUDA_FAST_COMPILE" not in os.environ:
+            # Optimized kernels track 1.3 to 1.8 times as fast on an A100; they compile once, in minutes,
+            # and CuPy keeps them (ADR 0015).
+            xo.settings.cuda_fast_compile = False
+        contexts = []
+        for device in devices:
+            context = xo.ContextCupy(device=device)
+            _DEVICES[id(context)] = device
+            contexts.append(context)
+        return tuple(contexts)
+    raise ValueError(f"{CONTEXT}={spec}: expected cpu, cpu:N, cpu:auto, cuda, cuda:N or cuda:N,M,...")
+
+
+def _wait(context) -> None:
+    """Wait for ``context``'s GPU to finish what it was given, letting other threads run meanwhile: reading
+    its arrays would wait too, but holding them back (CuPy's copies keep Python's lock)."""
+    device = _DEVICES.get(id(context))
+    if device is not None:
+        import cupy
+
+        cupy.cuda.Device(device).synchronize()
+
+
+def _on(context):
+    """Where ``context``'s arrays and kernels are: its GPU made the thread's current device; nothing else for
+    a CPU's."""
+    device = _DEVICES.get(id(context))
+    if device is None:
+        return nullcontext()
+    import cupy
+
+    return cupy.cuda.Device(device)
+
+
+def _count(spec: str, text: str, least: int) -> int:
+    if not text.isdigit() or int(text) < least:
+        raise ValueError(f"{CONTEXT}={spec}: {text or 'nothing'} is not a count from {least}")
+    return int(text)
+
+
+@dataclass
+class _Monitored:
+    """A copy of the branch's line with beam monitors, kept for the tracking calls that observe the same
+    points with the same options: building one takes a quarter of a second on the RCS, about as long as
+    tracking it 30 turns."""
+
+    line: Any
+    monitors: dict[str, Any]
+    turns: int
+    particles: int
+    longitudinal: bool
+    context: Any = None
+
+
+#: Monitored lines a session keeps, the most recently used.
+_KEPT = 2
 
 
 class XsuiteSession(EngineSession):
@@ -156,10 +286,13 @@ class XsuiteSession(EngineSession):
         )
         self._exit: dict[str, str] = {}
         self._pieces: dict[str, list[str]] = {}
+        self._kept: dict[tuple, _Monitored] = {}
+        self._contexts = compute_contexts()  # where bunches are tracked: a share of one each
         self.line = self._line(options)
 
-    def _line(self, options: Options, monitors: dict[str, Any] | None = None):
-        """The branch as a new Xsuite line, with ``monitors`` (by occurrence) after their occurrences."""
+    def _line(self, options: Options, monitors: dict[str, Any] | None = None, context=None):
+        """The branch as a new Xsuite line, with ``monitors`` (by occurrence) after their occurrences, in
+        ``context`` (Xsuite's default: one CPU thread)."""
         monitors = monitors or {}
         names, elements = [], []
         for placed in self.layout.placements:
@@ -175,13 +308,18 @@ class XsuiteSession(EngineSession):
         particle = self._particle
         line.particle_ref = xt.Particles(p0c=particle["pc"], mass0=particle["mass"], q0=particle["charge"])
         _configure(line, options)
-        line.build_tracker()
+        if context is None:
+            line.build_tracker()
+        else:
+            line.build_tracker(_context=context)
         return line
 
     # -- settings ----------------------------------------------------------------
 
     def _update(self, changes: Changes) -> None:
-        """Change parameter values in place; a parameter that would change the line's structure is refused."""
+        """Change parameter values in place, in the session's line and the monitored lines it keeps; a
+        parameter that would change the line's structure is refused."""
+        lines = [(self.line, True), *((kept.line, kept.longitudinal) for kept in self._kept.values())]
         for occurrence, paths in changes.items():
             placed = self.lattice.placement(occurrence)
             self.values.update({(occurrence, p): v for p, v in paths.items()})
@@ -190,10 +328,56 @@ class XsuiteSession(EngineSession):
                 raise UnsupportedRequest(
                     NAME, [f"{placed.name}: the change alters its structure; open a new session"]
                 )
-            for name, element in pieces:
-                target = self.line[name]
-                for field, value in _fields(element).items():
-                    setattr(target, field, value)
+            for line, longitudinal in lines:
+                if placed.kind is ElementKind.RFCAVITY and not longitudinal:
+                    continue  # its voltage stays 0: the RF does not act
+                with _on(line._context):
+                    for name, element in pieces:
+                        target = line[name]
+                        for field, value in _fields(element).items():
+                            _assign(target, field, value)
+
+    def _monitored(
+        self, options: Options, observe: list[str], turns: int, particles: int, share: int = 0
+    ) -> _Monitored:
+        """The line with beam monitors after ``observe``, for ``turns`` turns of ``particles`` particles, in
+        the context of ``share``: a line kept from earlier calls, its monitors cleared, or a new one (with
+        room to spare)."""
+        key = (tuple(observe), options, share)
+        context = self._contexts[share]
+        kept = self._kept.pop(key, None)
+        if kept is not None and kept.turns >= turns and kept.particles >= particles:
+            with _on(context):
+                # Only the sums read: Xsuite's clear resets every statistic, on a GPU a launch each.
+                for monitor in kept.monitors.values():
+                    for field in _SUMS:
+                        getattr(monitor.data, field)[...] = 0
+        else:
+            turns = max(turns, kept.turns if kept else 0, 64)
+            turns = 1 << (turns - 1).bit_length()  # a power of two: calls vary in length
+            particles = max(particles, kept.particles if kept else 0)
+            monitors = {
+                occurrence: xt.BeamStatsMonitor(
+                    start_at_turn=0,
+                    stop_at_turn=turns,
+                    particle_id_range=(0, particles),
+                    stats=["mean_x", "mean_y", "num_particles"],
+                )
+                for occurrence in observe
+            }
+            longitudinal = Effect.LONGITUDINAL in options.effects
+            with _on(context):
+                line = self._line(options, monitors, context)
+                _radiation(line, options)
+                if not longitudinal:
+                    for element in line.elements:
+                        if isinstance(element, xt.Cavity):
+                            element.voltage = 0.0
+            kept = _Monitored(line, monitors, turns, particles, longitudinal, context)
+        self._kept[key] = kept  # the most recent last
+        while len(self._kept) > _KEPT * len(self._contexts):
+            self._kept.pop(next(iter(self._kept)))
+        return kept
 
     def _set(self, line, values: Values, longitudinal: bool = True) -> None:
         """Set the elements of ``line`` (a tracking call's) to ``values`` on top of the session's."""
@@ -209,7 +393,7 @@ class XsuiteSession(EngineSession):
             for name, element in pieces:
                 target = line[name]
                 for field, value in _fields(element).items():
-                    setattr(target, field, value)
+                    _assign(target, field, value)
 
     def _ramp_fields(self, line, ramps: Sequence[Ramp], longitudinal: bool) -> tuple[list, set[str]]:
         """The element fields ``ramps`` move, each as ``(element, field, base, [(ramp, delta)])``: before
@@ -428,27 +612,77 @@ class XsuiteSession(EngineSession):
         occurrences: list[str],
         once: bool,
         ramps: tuple[Ramp, ...],
+        momentum: np.ndarray | None = None,
     ) -> BeamTrack:
         """Xsuite's beam monitors average the bunch at every observation point, every turn. With ``ramps``
-        the line is tracked a turn at a time while settings move, its elements set before each turn."""
+        or ``momentum`` the line is tracked a turn at a time while they move, its elements set and the
+        bunch put about the reference before each turn (as Xsuite's own energy programs do: Xsuite's
+        magnet strengths are normalized to the particles' reference). Several GPUs track a share of a
+        large bunch each, at once; their monitors' counts and means are combined."""
         n = len(coordinates)
-        monitors = {
-            occurrence: xt.BeamStatsMonitor(
-                start_at_turn=0,
-                stop_at_turn=turns,
-                particle_id_range=(0, n),
-                stats=["mean_x", "mean_y", "num_particles"],
-            )
-            for occurrence in observe
-        }
-        line = self._line(options, monitors)
-        _radiation(line, options)
-        if Effect.LONGITUDINAL not in options.effects:
-            for element in line.elements:
-                if isinstance(element, xt.Cavity):
-                    element.voltage = 0.0
+        shares = min(len(self._contexts), max(1, n // PER_GPU))
+        bounds = list(itertools.pairwise(np.linspace(0, n, shares + 1).astype(int)))
+        kept = [self._monitored(options, observe, turns, int(b - a), k) for k, (a, b) in enumerate(bounds)]
+
+        def track(k: int):
+            a, b = bounds[k]
+            with _on(kept[k].context):
+                return self._track_kept(
+                    kept[k], coordinates[a:b], turns, observe, options, occurrences, once, ramps, momentum
+                )
+
+        try:
+            if shares == 1:
+                results = [track(0)]
+            else:
+                with ThreadPoolExecutor(shares, thread_name_prefix="xsuite gpu") as pool:
+                    results = list(pool.map(track, range(shares)))
+        except BaseException:
+            if ramps or momentum is not None:  # their elements are part-way through the ramps: not to be kept
+                self._kept = {key: v for key, v in self._kept.items() if all(v is not k for k in kept)}
+            raise
+        if ramps:
+            after: dict[tuple[str, str], float] = {}
+            for ramp in ramps:
+                after |= ramp.at(turns - 1)
+            self.update(after)  # the session goes on from where the ramps are
+        count = sum(r[2] for r in results)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            x = sum(np.nan_to_num(r[0]) * r[2] for r in results) / count
+            y = sum(np.nan_to_num(r[1]) * r[2] for r in results) / count
+        return BeamTrack(
+            observe=tuple(observe),
+            turns=turns,
+            x=np.where(count > 0, x, np.nan),
+            y=np.where(count > 0, y, np.nan),
+            count=count.astype(int),
+            final=np.concatenate([r[3] for r in results]).reshape(-1, 6),
+            lost=np.concatenate([r[4] for r in results]),
+        )
+
+    def _track_kept(
+        self,
+        kept: _Monitored,
+        coordinates: np.ndarray,
+        turns: int,
+        observe: list[str],
+        options: Options,
+        occurrences: list[str],
+        once: bool,
+        ramps: tuple[Ramp, ...],
+        momentum: np.ndarray | None,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """A bunch (or a share of one) tracked on ``kept``'s line, its device current: the monitors' mean x
+        and y and counts (``[point, turn]``), and the final coordinates and losses, by particle."""
+        line, monitors = kept.line, kept.monitors
         c = coordinates.T
-        particles = line.build_particles(x=c[0], px=c[1], y=c[2], py=c[3], zeta=c[4], delta=c[5])
+        reference = None
+        if momentum is not None:
+            ref = self._particle
+            reference = xt.Particles(p0c=float(momentum[0]), mass0=ref["mass"], q0=ref["charge"])
+        particles = line.build_particles(
+            particle_ref=reference, x=c[0], px=c[1], y=c[2], py=c[3], zeta=c[4], delta=c[5]
+        )
         if once:
             positions = {name: i for i, name in enumerate(line.element_names)}
             last = self._exit[occurrences[-1]]
@@ -456,54 +690,77 @@ class XsuiteSession(EngineSession):
             line.track(
                 particles, ele_start=positions[self._pieces[occurrences[0]][0]], ele_stop=positions[after] + 1
             )
-        elif ramps:
+        elif ramps or momentum is not None:
             longitudinal = Effect.LONGITUDINAL in options.effects
-            fractions = np.array([np.asarray(r.fraction, dtype=float)[:turns] for r in ramps])
-            moves = [
-                0,
-                *(t for t in range(1, turns) if (fractions[:, t] != fractions[:, t - 1]).any()),
-                turns,
-            ]
+            fractions = np.array([np.asarray(r.fraction, dtype=float)[:turns] for r in ramps]).reshape(
+                len(ramps), turns
+            )
+            moved = (fractions[:, 1:] != fractions[:, :-1]).any(axis=0)
+            if momentum is not None:
+                moved |= momentum[1:] != momentum[:-1]
+            moves = [0, *(int(t) + 1 for t in np.flatnonzero(moved)), turns]
             fields, rebuilt = self._ramp_fields(line, ramps, longitudinal)
             for here, there in itertools.pairwise(moves):
+                if momentum is not None and here > 0:
+                    particles.update_p0c_and_energy_deviations(p0c=float(momentum[here]), update_pxpy=True)
                 f = fractions[:, here]
                 for element, field, base, deltas in fields:
-                    setattr(element, field, base + sum(f[r] * delta for r, delta in deltas))
+                    _assign(element, field, base + sum(f[r] * delta for r, delta in deltas))
                 if rebuilt:
                     values: dict[tuple[str, str], float] = {}
                     for ramp in ramps:
                         values |= ramp.at(here)
                     self._set(line, {k: v for k, v in values.items() if k[0] in rebuilt}, longitudinal)
                 line.track(particles, num_turns=there - here)
-            after: dict[tuple[str, str], float] = {}
-            for ramp in ramps:
-                after |= ramp.at(turns - 1)
-            self.update(after)  # the session goes on from where the ramps are
         else:
             line.track(particles, num_turns=turns)
-
-        def stat(name: str) -> np.ndarray:
-            return np.array([np.asarray(monitors[o].get(name), dtype=float)[:turns] for o in observe])
-
-        count = stat("num_particles")
-        x = np.where(count > 0, stat("mean_x"), np.nan)
-        y = np.where(count > 0, stat("mean_y"), np.nan)
-        order = np.argsort(particles.particle_id)
-        final = np.column_stack(
-            [np.asarray(getattr(particles, k))[order] for k in ("x", "px", "y", "py", "zeta", "delta")]
-        )
-        return BeamTrack(
-            observe=tuple(observe),
-            turns=turns,
-            x=x.reshape(len(observe), turns),
-            y=y.reshape(len(observe), turns),
-            count=count.reshape(len(observe), turns).astype(int),
-            final=final,
-            lost=np.asarray(particles.state)[order] <= 0,
-        )
+        _wait(kept.context)  # the GPU done before its monitors are read
+        count, x, y = _centroids(monitors, observe, turns)
+        host = _on_host(particles)
+        order = np.argsort(host("particle_id"))
+        final = np.column_stack([host(k)[order] for k in ("x", "px", "y", "py", "zeta", "delta")])
+        return x, y, count, final, host("state")[order] <= 0
 
     def close(self) -> None:
         self.line = None
+        self._kept.clear()
+
+
+#: The beam monitors' sums the BPMs read: particles counted, and their x and y added up.
+_SUMS = ("num_particles", "sum_x", "sum_y")
+
+
+def _centroids(monitors: dict[str, Any], observe: list[str], turns: int) -> tuple[np.ndarray, ...]:
+    """The monitors' particle counts and centroids (``[point, turn]``, NaN where none is left), their sums
+    read at once from wherever they are: Xsuite's own reading copies each statistic of each monitor apart,
+    a copy each from a GPU."""
+    if not observe:
+        empty = np.zeros((0, turns))
+        return empty, empty, empty
+    context = monitors[observe[0]]._context
+    rows = [_nplike(getattr(monitors[o].data, f))[:turns] for o in observe for f in _SUMS]
+    sums = np.asarray(context.nparray_from_context_array(context.nplike_lib.stack(rows)), dtype=float)
+    count, sum_x, sum_y = sums.reshape(len(observe), len(_SUMS), turns).transpose(1, 0, 2)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        return count, np.where(count > 0, sum_x / count, np.nan), np.where(count > 0, sum_y / count, np.nan)
+
+
+def _nplike(array):
+    """An xobjects array as its context's own (numpy's, CuPy's); a monitor's data may be one already."""
+    return array.to_nplike() if hasattr(array, "to_nplike") else array
+
+
+def _assign(element, field: str, value) -> None:
+    """Set an element's field, an array moved first to the element's context (a GPU's memory)."""
+    if isinstance(value, np.ndarray) and value.ndim:
+        value = element._context.nparray_to_context_array(value)
+    setattr(element, field, value)
+
+
+def _on_host(particles):
+    """The particles' fields as numpy arrays, from the context (CPU or GPU) that tracked them."""
+    context = particles._context
+    return lambda name: np.asarray(context.nparray_from_context_array(getattr(particles, name)))
 
 
 # -- conversion ------------------------------------------------------------------
@@ -542,8 +799,11 @@ def _rf(line, on: bool):
 
 
 def _radiation(line, options: Options) -> None:
+    """Synchrotron radiation in the line's magnets. Quantum excitation is Xsuite's ``quantum-kick``: the
+    photons a slice emits counted, their total energy drawn from tables, where ``quantum`` draws each
+    photon's; the same energy loss, ten times faster on a GPU (ADR 0015)."""
     if Effect.QUANTUM_EXCITATION in options.effects:
-        line.configure_radiation(model="quantum")
+        line.configure_radiation(model="quantum-kick")
     elif Effect.RADIATION_DAMPING in options.effects:
         line.configure_radiation(model="mean")
     else:

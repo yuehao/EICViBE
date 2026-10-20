@@ -44,6 +44,9 @@ from ..lattice.conventions import rigidity_from_P
 class CalibrationSource(StrEnum):
     PLACEHOLDER = "placeholder"
     """Generic value for a device type; not a property of the real device."""
+    DESIGN = "design"
+    """From the magnet's design, as its designers give it (its coil and aperture): this magnet type's,
+    not measured on the magnet (ADR 0014)."""
     MEASURED = "measured"
     """From magnet or device measurements."""
 
@@ -326,6 +329,36 @@ def string_problems(
             f"({first[0]} to {last[0]}), but a string carries one current"
         ]
     return []
+
+
+def limit_problems(
+    lattice: Lattice,
+    circuit: PowerCircuit,
+    limits: tuple[float, float],
+    services: dict[str, TransferService] | None = None,
+) -> list[str]:
+    """Magnets of a circuit whose design values need a current beyond its supply's ``limits``.
+
+    A supply cannot drive its magnets past its limits (its rating), so a design that needs more is one
+    the machine cannot run (ADR 0014).
+    """
+    problems = []
+    low, high = limits
+    margin = 1e-9 * max(abs(low), abs(high), 1.0)
+    for magnet in circuit.magnets:
+        placed = lattice.placement(magnet.occurrences[0])
+        value = design_value(placed, magnet.parameter)
+        try:
+            current = magnet_current(lattice, magnet, value, (-1e12, 1e12), services)
+        except (ValueError, LookupError) as error:
+            problems.append(f"{circuit.name}: {placed.name}: {error}")
+            continue
+        if not low - margin <= current <= high + margin:
+            problems.append(
+                f"{circuit.name}: {placed.name} needs {current:.4g} A for its design value, beyond its "
+                f"supply's limits [{low:g}, {high:g}]"
+            )
+    return problems
 
 
 def _integrated(parameter: str) -> bool:

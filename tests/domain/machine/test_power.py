@@ -230,3 +230,21 @@ def test_a_line_given_by_fields_has_supplies_that_set_fields():
     current = magnet_current(lattice, magnet, -1.72, (-1e3, 1e3))
     assert magnet_strength(lattice, magnet, magnet.occurrences[0], current) == pytest.approx(-1.72)
     assert abs(current) == pytest.approx(1.72 / magnet.transfer.coefficients[1])  # the field: no rigidity
+
+
+def test_a_design_beyond_its_supplys_limits_is_reported():
+    lattice = ring()
+    registry = generate_registry(lattice, series=(ElementKind.QUADRUPOLE,))
+    data = registry.model_dump()
+    alone = next(c for c in data["circuits"] if c["name"] == "ring/QT_1")
+    # A weaker magnet than its supply was sized for: its design needs more current than the supply gives.
+    alone["magnets"][0]["transfer"] = {
+        "kind": "polynomial",
+        "coefficients": [0.0, 0.001],
+        "field_unit": "T/m",
+        "source": "design",
+    }
+    problems = MachineRegistry.model_validate(data).power_problems(lattice)
+    assert len(problems) == 1 and problems[0].startswith("ring/QT_1: QT_1 needs")
+    assert "beyond its supply's limits [0, 100]" in problems[0]
+    assert CalibrationSource("design") is CalibrationSource.DESIGN

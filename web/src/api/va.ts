@@ -27,6 +27,7 @@ export type AiTest = Schemas["AiTest"];
 export type ProposalRequest = Schemas["ProposalRequest"];
 export type ProposalEntry = Schemas["ProposalEntry"];
 export type TuneReading = Schemas["TuneReading"];
+export type RampView = Schemas["RampView"];
 export type ErrorSpec = Schemas["ErrorSpec"];
 export type MagnetErrors = Schemas["MagnetErrors"];
 export type SupplyNoise = Schemas["SupplyNoise"];
@@ -86,6 +87,10 @@ export const va = {
   kick: (id: string, x: number, y: number, reason = "") =>
     call<void>("POST", `/machines/${enc(id)}/beam`, { action: "kick", x, y, reason }),
   inject: (id: string) => call<void>("POST", `/machines/${enc(id)}/beam`, { action: "inject", reason: "" }),
+  /** Ramp a ring as its ramp profile says, from injection to extraction (ADR 0013). */
+  ramp: (id: string, reason = "") => call<void>("POST", `/machines/${enc(id)}/beam`, { action: "ramp", reason }),
+  /** A ring's ramp: its profile and programs, where the ring is in it, and its run's ramps. */
+  rampView: (id: string) => call<RampView>("GET", `/machines/${enc(id)}/ramp`),
   acquire: (id: string) => call<void>("POST", `/machines/${enc(id)}/acquire`, { reason: "" }),
 
   settings: (id: string, changed = false) =>
@@ -133,6 +138,14 @@ export const ROLES = ["viewer", "physicist", "operator", "admin"] as const;
 /** Whether ``role`` is ``needed`` or above it. */
 export function atLeast(role: string, needed: (typeof ROLES)[number]): boolean {
   return ROLES.indexOf(role as (typeof ROLES)[number]) >= ROLES.indexOf(needed);
+}
+
+/** Where a ring with a ramp is in it, e.g. "ramping · 3.21 GeV"; empty for one without. */
+export function cycleText(machine: Pick<MachineEntry, "cycle">): string {
+  const cycle = machine.cycle;
+  if (!cycle) return "";
+  const state = cycle.state === "injection" ? "at injection" : String(cycle.state);
+  return `${state} · ${(Number(cycle.energy) / 1e9).toFixed(2)} GeV`;
 }
 
 /**

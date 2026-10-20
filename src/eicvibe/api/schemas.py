@@ -232,7 +232,9 @@ class Transfer(_Model):
     engineering_unit: str
     field_unit: str
     integrated: bool = Field(description="Field integrated over the magnet")
-    source: str = Field(description="placeholder or measured")
+    source: str = Field(
+        description="placeholder, design (the magnet's coil and aperture, ADR 0014) or measured"
+    )
 
 
 class Power(_Model):
@@ -248,6 +250,11 @@ class Power(_Model):
     polarity: int | None
     transfer: Transfer | None = Field(description="This magnet's transfer function")
     design_current: float | None = Field(description="Current giving this magnet its design value")
+    limits: list[float] | None = Field(None, description="The supply's limits, in its engineering unit")
+    beyond: bool = Field(
+        False,
+        description="The design current is beyond the supply's limits: its supply cannot run it (ADR 0014)",
+    )
 
 
 class Device(_Model):

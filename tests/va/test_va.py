@@ -106,6 +106,8 @@ def test_a_write_is_logged_with_the_old_value_and_reaches_the_running_engine(ser
     write = {"changes": [{"channel": row["channel"], "value": 2.0}], "reason": "bump at the septum"}
     result = people["ann"].post(f"/api/v1/va/machines/{ring['id']}/settings", json=write).json()
     assert result["applied"] and result["writes"][0]["old"] == row["original"] == 0.0
+    # The demo's supplies have placeholder transfer functions, and their designs are within their limits.
+    assert (row["source"], row["beyond"]) == ("placeholder", False)
     (logged,) = people["vic"].get("/api/v1/va/log", params={"correlation": result["correlation"]}).json()
     assert (logged["user"], logged["new"], logged["reason"], logged["applied"]) == (
         "ann",

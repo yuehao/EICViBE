@@ -478,15 +478,18 @@ class RevisionViews:
     def _power(self, circuit, placed: PlacedElement) -> schemas.Power:
         setting = self.registry.setting_of(circuit.id)
         magnet = next((m for m in circuit.magnets if placed.id in m.occurrences), None)
-        design = None
-        if magnet is not None and setting is not None and setting.control_limits is not None:
-            try:
-                value = design_value(placed, magnet.parameter)
-                design = magnet_current(
-                    self.lattice, magnet, value, setting.control_limits, occurrence=placed.id
-                )
-            except ValueError, LookupError:
-                design = None
+        design, beyond = None, False
+        limits = setting.control_limits if setting is not None else None
+        if magnet is not None and limits is not None:
+            value = design_value(placed, magnet.parameter)
+            for within in (limits, (-1e12, 1e12)):  # beyond the limits too: a design its supply cannot run
+                try:
+                    design = magnet_current(self.lattice, magnet, value, within, occurrence=placed.id)
+                    break
+                except ValueError, LookupError:
+                    continue
+            margin = 1e-9 * max(abs(limits[0]), abs(limits[1]), 1.0)
+            beyond = design is not None and not limits[0] - margin <= design <= limits[1] + margin
         return schemas.Power(
             circuit=circuit.id,
             name=circuit.name,
@@ -498,4 +501,6 @@ class RevisionViews:
             polarity=magnet.polarity if magnet else None,
             transfer=_transfer(magnet.transfer) if magnet else None,
             design_current=design,
+            limits=list(limits) if limits is not None else None,
+            beyond=beyond,
         )

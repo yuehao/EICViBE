@@ -2,7 +2,7 @@
 
     eicvibe-virtual ring MACHINE --branch bar --out runs/bar1 [--turns N] [--kick-x RAD] [--kick-every N]
                     [--set rfc:RFP.phase=3.14159] [--engine trackpad] [--fidelity standard] [--particles 100]
-                    [--errors errors.yaml]
+                    [--errors errors.yaml] [--ramp-at TURN]
     eicvibe-virtual route MACHINE --route bar --out runs/bar-route [--mode MODE] [--shots N] [--rate 2]
                     [--errors errors.yaml]
     eicvibe-virtual route LATTICE --through ltr,rcs --out runs/direct
@@ -11,8 +11,9 @@
 
 ``ring`` tracks until N turns (or Ctrl-C), recording every BPM every turn into
 the run folder, with the magnets', supplies' and BPMs' errors of ``--errors``
-(a YAML or JSON :class:`~.errors.ErrorSpec`, ADR 0011); ``route`` sends shots along a route of the machine's
-``routes.yaml`` (or through the branches given), recording every BPM every
+(a YAML or JSON :class:`~.errors.ErrorSpec`, ADR 0011), and from turn ``--ramp-at`` ramps the ring
+as the machine folder's ramp profile says (ramps/, ADR 0013); ``route`` sends shots along a route of
+the machine's ``routes.yaml`` (or through the branches given), recording every BPM every
 shot; ``show`` reads a run's folder, also while the run goes on; ``export``
 writes turns (or shots) in RHIC's turn-by-turn file layout, which tools made
 for RHIC's files read.
@@ -28,6 +29,7 @@ import numpy as np
 
 from eicvibe.diagnostics import amplitudes, closed_orbit, tune, write_rhic
 from eicvibe.engines.contracts import Fidelity
+from eicvibe.engines.remote import EngineHost
 
 from .errors import ErrorSpec, MachineErrors
 from .history import BpmHistory
@@ -99,6 +101,14 @@ def _beams(path: Path) -> dict:
     return read_beams(path) if is_machine(path) else {}
 
 
+def _ramp(path: Path, branch: str):
+    """The ramp profile a machine folder gives a ring (None for a lattice file, or a ring without)."""
+    from eicvibe.store import is_machine, read_ramps
+
+    ramps = read_ramps(path) if is_machine(path) else {}
+    return next((r for r in ramps.values() if r.branch == branch), None)
+
+
 def _load(path: Path):
     """A machine folder's, or a lattice file's, lattice, registry and routes.
 
@@ -138,6 +148,11 @@ def _delivered(beams: dict, lattice, route):
     return None
 
 
+def _host(command: str | None) -> EngineHost | None:
+    """An engine host from its command (ADR 0015): the engine runs where the command starts it."""
+    return EngineHost(command.split()[0], command) if command else None
+
+
 def ring(args: argparse.Namespace) -> None:
     lattice, registry, _ = _load(args.machine)
     run = RingRun(
@@ -154,8 +169,12 @@ def ring(args: argparse.Namespace) -> None:
         values=_values(args, lattice, [args.branch]),
         registry=registry,
         turns=args.turns,
+        ramp=_ramp(args.machine, args.branch) if args.ramp_at is not None else None,
+        host=_host(args.host),
         **_errors(args.errors, lattice, [args.branch], registry),
     )
+    if args.ramp_at is not None and run.ramp_profile is None:
+        raise SystemExit(f"{args.machine} has no ramp profile for {args.branch} (ramps/)")
     stopping = False
 
     def interrupt(*_):
@@ -174,6 +193,7 @@ def ring(args: argparse.Namespace) -> None:
         print(f"warning: {warning}", flush=True)
     started, shown = time.monotonic(), 0
     next_kick = args.kick_every if kicking and args.kick_every else None
+    ramp_at = args.ramp_at
     try:
         while not stopping and not run.done:
             if run.error is not None:
@@ -181,10 +201,15 @@ def ring(args: argparse.Namespace) -> None:
             if next_kick is not None and run.turn >= next_kick:
                 run.kick(args.kick_x, args.kick_y)
                 next_kick += args.kick_every
+            if ramp_at is not None and run.turn >= ramp_at:
+                run.ramp()
+                ramp_at = None
             if run.turn != shown:
                 shown = run.turn
                 rate = shown / max(time.monotonic() - started, 1e-9)
-                print(f"turn {shown:>10}  ({rate:,.0f} turns/s)", flush=True)
+                cycle = run.cycle
+                where = f"  {cycle['state']} {cycle['energy'] / 1e9:.4f} GeV" if cycle else ""
+                print(f"turn {shown:>10}  ({rate:,.0f} turns/s){where}", flush=True)
             time.sleep(0.2)
     finally:
         run.stop()
@@ -215,6 +240,7 @@ def route(args: argparse.Namespace) -> None:
         registry=registry,
         shots=args.shots,
         delivered=_delivered(_beams(args.machine), lattice, chosen),
+        host=_host(args.host),
         **_errors(args.errors, lattice, [s.branch for s in chosen.segments], registry),
     )
     stopping = False
@@ -326,6 +352,12 @@ def export(args: argparse.Namespace) -> None:
     )
 
 
+_HOST = (
+    "run the engine elsewhere: the command that starts its server there, "
+    "e.g. 'ssh aphpc /path/.venv/bin/eicvibe-engine serve --xsuite-context cuda:1' (ADR 0015)"
+)
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         prog="eicvibe-virtual", description="Virtual rings and routes and their BPM data."
@@ -336,6 +368,7 @@ def main(argv: list[str] | None = None) -> None:
     r.add_argument("--branch", required=True)
     r.add_argument("--out", type=Path, required=True, help="the run's folder (new)")
     r.add_argument("--engine", choices=["xsuite", "trackpad"], default=None)
+    r.add_argument("--host", default=None, help=_HOST)
     r.add_argument("--fidelity", choices=["fast", "standard", "precise"], default="standard")
     r.add_argument("--particles", type=int, default=100)
     r.add_argument(
@@ -357,6 +390,12 @@ def main(argv: list[str] | None = None) -> None:
     r.add_argument("--kick-x", type=float, default=0.0, help="kick at the start, rad")
     r.add_argument("--kick-y", type=float, default=0.0)
     r.add_argument("--kick-every", type=int, default=0, help="repeat the kick every N turns")
+    r.add_argument(
+        "--ramp-at",
+        type=int,
+        default=None,
+        help="ramp the ring at this turn, as the machine folder's ramp profile says (ramps/; Xsuite)",
+    )
     r.add_argument("--mode", default=None, help="an operating mode's settings, settings/<mode>.yaml")
     r.add_argument("--set", action="append", default=[], help="OCCURRENCE:Group.parameter=value")
     r.add_argument(
@@ -369,6 +408,7 @@ def main(argv: list[str] | None = None) -> None:
     o.add_argument("--through", default=None, help="or the branches it passes, in beam order: ltr,rcs")
     o.add_argument("--out", type=Path, required=True, help="the run's folder (new)")
     o.add_argument("--engine", choices=["xsuite", "trackpad"], default=None)
+    o.add_argument("--host", default=None, help=_HOST)
     o.add_argument("--fidelity", choices=["fast", "standard", "precise"], default="standard")
     o.add_argument("--particles", type=int, default=100)
     o.add_argument("--rate", type=float, default=2.0, help="shots per second, at most")

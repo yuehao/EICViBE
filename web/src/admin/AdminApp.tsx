@@ -12,6 +12,7 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNo
 
 import {
   atLeast,
+  cycleText,
   orbitLink,
   ROLES,
   va,
@@ -27,13 +28,16 @@ import {
   type WriteResult,
 } from "../api/va";
 import { ErrorsEditor } from "../components/ErrorsEditor";
+import { outside, SourceBadge } from "../components/SupplyMarks";
 import { AiPanel } from "./AiPanel";
+import { RampPanel } from "./RampPanel";
 
-type Tab = "machines" | "settings" | "errors" | "log" | "users" | "ai" | "account";
+type Tab = "machines" | "settings" | "ramp" | "errors" | "log" | "users" | "ai" | "account";
 
 const TABS: { key: Tab; label: string; role?: (typeof ROLES)[number]; login?: boolean }[] = [
   { key: "machines", label: "Machines" },
   { key: "settings", label: "Settings" },
+  { key: "ramp", label: "Ramp" },
   { key: "errors", label: "Errors", login: true },
   { key: "log", label: "Log" },
   { key: "users", label: "Users", role: "admin" },
@@ -136,7 +140,7 @@ export function AdminApp() {
           <strong>EICViBE</strong> <span>administration{source ? ` · ${source}` : ""}</span>
         </div>
         <nav className="admin-tabs" aria-label="Sections">
-          {TABS.filter((t) => (!t.role || atLeast(me.role, t.role)) && (!t.login || me.logged_in)).map((t) => (
+          {TABS.filter((t) => (!t.role || atLeast(me.role, t.role)) && (!t.login || me.logged_in) && (t.key !== "ramp" || machines.some((m) => m.ramp))).map((t) => (
             <button key={t.key} type="button" aria-current={t.key === tab ? "page" : undefined} onClick={() => setHash({ tab: t.key })}>
               {t.label}
             </button>
@@ -158,6 +162,15 @@ export function AdminApp() {
           <Machines me={me} machines={machines} options={options} onChanged={refresh} onError={fail} onOpen={(id, t) => setHash({ tab: t, machine: id })} />
         ) : tab === "settings" ? (
           <Settings me={me} machines={machines} machine={selected} onMachine={(id) => setHash({ machine: id })} onChanged={refresh} onError={fail} />
+        ) : tab === "ramp" ? (
+          <RampPanel
+            machines={machines}
+            machine={hash.machine ?? null}
+            mayControl={(m) => mayControl(me, m)}
+            onMachine={(id) => setHash({ machine: id })}
+            onChanged={refresh}
+            onError={fail}
+          />
         ) : tab === "errors" ? (
           <Errors machines={machines} machine={selected} onMachine={(id) => setHash({ machine: id })} onChanged={refresh} onError={fail} />
         ) : tab === "log" ? (
@@ -296,6 +309,7 @@ function Machines(props: {
                       {m.kind === "route" ? "shot" : "turn"} {m.position}
                     </span>
                   ) : null}
+                  {cycleText(m) ? <div className="muted" data-testid="machine-cycle">{cycleText(m)}</div> : null}
                   {m.error ? <div className="admin-error">{m.error}</div> : null}
                   {m.warnings.map((w) => (
                     <div key={w} className="admin-error">
@@ -310,6 +324,11 @@ function Machines(props: {
                   {control && m.kind === "ring" && m.state === "running" ? (
                     <button type="button" title={`Kick x by ${kick} mrad at the ring's start`} onClick={() => act(va.kick(m.id, Number(kick) * 1e-3, 0))}>
                       Kick
+                    </button>
+                  ) : null}
+                  {m.ramp ? (
+                    <button type="button" title={`${m.target}'s ramp ${m.ramp}: where it is, and the control that ramps it`} onClick={() => onOpen(m.id, "ramp")}>
+                      Ramp…
                     </button>
                   ) : null}
                   <button type="button" onClick={() => onOpen(m.id, "settings")}>Settings</button>
@@ -571,12 +590,15 @@ function Settings(props: {
               <tr key={r.channel} className={r.changed ? "changed" : ""}>
                 <td>
                   <code>{r.channel}</code>
-                  {r.limits ? <div className="muted">limits {r.limits[0]} – {r.limits[1]}</div> : null}
+                  <SourceBadge source={r.source} />
+                  {r.limits ? <div className={r.beyond ? "beyond" : "muted"}>limits {r.limits[0]} – {r.limits[1]}</div> : null}
                 </td>
                 <td>{r.unit}</td>
-                <td className="num">{number(r.original)}</td>
+                <td className={`num${r.beyond ? " beyond" : ""}`} title={r.beyond ? "The design asks more current than this supply's limits give" : undefined}>
+                  {number(r.original)}
+                </td>
                 <td className="num">
-                  <strong>{number(r.value)}</strong>
+                  <strong className={outside(r.value, r.limits) ? "beyond" : undefined}>{number(r.value)}</strong>
                 </td>
                 {writable ? (
                   <td>

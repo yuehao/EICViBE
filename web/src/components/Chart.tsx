@@ -129,8 +129,11 @@ export function Chart(props: Props) {
         ctx.fillStyle = t.dark ? m.darkColor : m.color;
         ctx.textBaseline = "top";
         ctx.textAlign = "left";
-        if (m.x !== undefined) ctx.fillText(m.label, toX(m.x) + 3, y0 + 2);
-        else if (m.y !== undefined) ctx.fillText(m.label, x0 + 4, toY(m.y) + 2);
+        if (m.x !== undefined) {
+          // Left of its line where the label would run past the plot's right edge.
+          const x = toX(m.x), w = ctx.measureText(m.label).width;
+          ctx.fillText(m.label, x + 3 + w > x1 ? x - 3 - w : x + 3, y0 + 2);
+        } else if (m.y !== undefined) ctx.fillText(m.label, x0 + 4, toY(m.y) + 2);
       }
     }
     for (const s of series) {
