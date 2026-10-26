@@ -4,6 +4,7 @@ drawn from its seed whenever it starts, hidden from everyone else and from the l
 import json
 import time
 
+import numpy as np
 import pytest
 
 pytest.importorskip("fastapi")
@@ -98,10 +99,27 @@ def test_a_machines_errors_are_its_configurers_to_see_and_change(server):
     admin.post(f"/api/v1/va/machines/{machine}/start", json={"reason": "errors"})
     assert wait(client, machine, "running")["state"] == "running"
     refused = admin.put(f"/api/v1/va/machines/{machine}/errors", json={"errors": ERRORS})
-    assert refused.status_code == 409 and "draws its errors when it starts" in refused.json()["detail"]
+    assert refused.status_code == 409 and "draws them as it starts" in refused.json()["detail"]
+
+    # Its BPMs' change while it runs: they read the beam and leave it alone. Each keeps its own offset,
+    # scaled; hidden.json keeps what they read with before, and the event says the new noise.
+    run = admin.get(f"/api/v1/va/machines/{machine}").json()["run"]
+    drawn = json.loads((va.runs / run / "hidden.json").read_text())
+    worse = smaller | {"bpms": smaller["bpms"] | {"offset_rms": 0.2, "resolution": 0.02}}
+    live = admin.put(f"/api/v1/va/machines/{machine}/errors", json={"errors": worse, "reason": "worse BPMs"})
+    assert live.status_code == 200 and live.json()["errors"]["bpms"]["offset_rms"] == 0.2
+    for _ in range(300):  # from the run's next turn
+        hidden = json.loads((va.runs / run / "hidden.json").read_text())
+        if "earlier" in hidden:
+            break
+        time.sleep(0.1)
+    assert hidden["earlier"][0]["offsets_mm"] == drawn["offsets_mm"] and hidden["earlier"][0]["until"] >= 0
+    assert np.allclose(hidden["offsets_mm"], 2 * np.array(drawn["offsets_mm"]))
+    events = [json.loads(line) for line in (va.runs / run / "events.jsonl").read_text().splitlines()]
+    assert any(e["kind"] == "bpms" and e["resolution"] == 0.02 for e in events)
+    assert "offsets" not in json.dumps([e for e in events if e["kind"] == "bpms"])  # those stay hidden
 
     # The run drew them: hidden.json has them and the BPMs' rolls; the run's settings do not.
-    run = admin.get(f"/api/v1/va/machines/{machine}").json()["run"]
     hidden = json.loads((va.runs / run / "hidden.json").read_text())
     assert hidden["errors"]["seed"] == seed and hidden["errors"]["magnets"]
     assert any(abs(r) > 0 for r in hidden["rolls_rad"])

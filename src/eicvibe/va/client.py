@@ -92,6 +92,15 @@ class Client:
         """The write log, newest first; filters: machine, user, channel, correlation, before, limit."""
         return self._call("GET", "/va/log", query=filters)
 
+    def ramp_view(self, machine: str) -> dict[str, Any]:
+        """A ring's ramp (ADR 0013), as the admin page's Ramp tab reads it: its profile and programs,
+        where the ring is in it (``cycle``), what keeps it from ramping now, and its run's ramps."""
+        return self._call("GET", f"/va/machines/{machine}/ramp")
+
+    def tunes(self, machine: str) -> dict[str, Any]:
+        """A running ring's tune monitor: fractional tunes folded into 0 to 0.5, and its turn."""
+        return self._call("GET", f"/va/machines/{machine}/tunes")
+
     def orbits(self, machine: str, every: int = 1, count: int = 1) -> dict[str, Any]:
         """The latest BPM orbits of a running machine (mm), as the Orbit tab reads them."""
         run = self.machine(machine)["run"]
@@ -137,6 +146,10 @@ class Client:
     def inject(self, machine: str, reason: str = "") -> None:
         self._call("POST", f"/va/machines/{machine}/beam", {"action": "inject", "reason": reason})
 
+    def ramp(self, machine: str, reason: str = "") -> None:
+        """Ramp a ring as its ramp profile says, from injection to extraction (ADR 0013)."""
+        self._call("POST", f"/va/machines/{machine}/beam", {"action": "ramp", "reason": reason})
+
     def acquire(self, machine: str, reason: str = "") -> None:
         """Capture a ring's BPM buffer now (``captures`` lists it once saved)."""
         self._call("POST", f"/va/machines/{machine}/acquire", {"reason": reason})
@@ -157,3 +170,7 @@ class Client:
 
     def stop(self, machine: str, reason: str = "") -> dict[str, Any]:
         return self._call("POST", f"/va/machines/{machine}/stop", {"reason": reason})
+
+    def remove(self, machine: str, reason: str = "") -> None:
+        """Remove a stopped machine: a sandbox of yours, or (an administrator) any."""
+        self._call("DELETE", f"/va/machines/{machine}", query={"reason": reason})

@@ -216,8 +216,7 @@ class RouteRun:
             values={f"{o} {p}": v for (o, p), v in self.values.items()},
         )
         self._writer = BpmHistory.create(self.directory, info)
-        hidden = self._bpms.hidden(self.bpm_names) | ({"errors": self.errors.hidden()} if self.errors else {})
-        (self.directory / "hidden.json").write_text(json.dumps(hidden), encoding="utf-8")
+        self._hide()
         self._writer.event(0, "start", engine=self.engine, route=list(self.route.branches))
         self._thread = threading.Thread(target=self._loop, name=f"route run {info.id}", daemon=True)
         self._thread.start()
@@ -282,6 +281,24 @@ class RouteRun:
             )
 
         self._commands.put(update)
+
+    def set_bpms(self, model: BpmModel) -> None:
+        """The BPMs read with ``model``'s errors and noise from the next shot on (ADR 0011): they read the
+        beam differently and leave it alone. The event says the noise, as ``run.json`` does; the errors
+        stay hidden, ``hidden.json`` keeping what they were before."""
+
+        def change() -> None:
+            self.bpm = model
+            self._bpms.remodel(model, self._shot)
+            self._hide()
+            self._writer.event(self._shot, "bpms", resolution=model.resolution)
+
+        self._commands.put(change)
+
+    def _hide(self) -> None:
+        """What the run's errors are, and its BPMs' were, into ``hidden.json``: not part of the data."""
+        hidden = self._bpms.hidden(self.bpm_names) | ({"errors": self.errors.hidden()} if self.errors else {})
+        (self.directory / "hidden.json").write_text(json.dumps(hidden), encoding="utf-8")
 
     def _to_sessions(self, values: Mapping[tuple[str, str], float]) -> None:
         """Values into the sessions of the branches they are on."""

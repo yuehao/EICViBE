@@ -2,7 +2,7 @@
 
 A :class:`TurnByTurn` acquisition holds, for each plane, the positions every
 BPM read on every turn: ``position[bpm, turn]`` in mm, as BPM systems report
-them (the RHIC turn-by-turn files, the ``:rdx``/``:rdy`` channels of ADR 0003),
+them (SDDS turn-by-turn files, the ``:rdx``/``:rdy`` channels of ADR 0003),
 with the BPMs' names and s positions, the sum signal and a status per
 reading. The planes have their own BPM lists, because single-plane BPMs exist
 (RHIC's are). An :class:`OrbitSeries` is the slow orbit: positions averaged over

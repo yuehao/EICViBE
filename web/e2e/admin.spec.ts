@@ -174,13 +174,20 @@ test("an administrator chooses a machine's errors, which it draws when it starts
   expect(stored.supplies[0]!.ripple).toEqual([{ frequency: 360, amplitude: 5e-6 }]);
   expect(stored.bpms.roll_rms).toBe(1e-3);
 
-  // Running, it has drawn them: they cannot change until it stops.
+  // Running, it has drawn its magnets' and supplies': they cannot change until it stops. Its BPMs',
+  // which read the beam and leave it alone, change from its next turn.
   await page.getByRole("button", { name: "Machines" }).click();
   await row.getByRole("button", { name: "Start" }).click();
   await expect(row.getByTestId("machine-state")).toHaveText("running", { timeout: 30_000 });
   await row.getByRole("button", { name: "Errors" }).click();
-  await expect(editor).toContainText("Stop Errors ring to change its errors");
-  await expect(editor.getByRole("button", { name: "Save errors" })).toBeDisabled();
+  await expect(editor).toContainText("Stop it to change its magnets' and supplies' errors");
+  await expect(editor.getByLabel("x offset µm, row 1")).toBeDisabled();
+  await expect(editor.getByRole("button", { name: "New draw" })).toBeDisabled();
+  await editor.getByLabel("BPM offsets µm").fill("250");
+  await editor.getByRole("button", { name: "Save errors" }).click();
+  await expect(page.getByTestId("errors-note")).toContainText("BPMs read with these errors from its next turn");
+  const live = (await (await request.get(`/api/v1/va/machines/${machine.id}/errors`)).json()) as { errors: { bpms: { offset_rms: number } } };
+  expect(live.errors.bpms.offset_rms).toBe(0.25);
   await request.post(`/api/v1/va/machines/${machine.id}/stop`, { data: { reason: "e2e" } });
 });
 
@@ -310,4 +317,35 @@ test("a magnet on a string shows its supply's setting, which only the supply's o
   await page.getByRole("option", { name: /\bQF_2\b/ }).first().click();
   await expect(setpoints).toContainText("27 A");
   await expect(setpoints).toContainText("set by e2e-string-physicist");
+});
+
+test("an administrator deletes a past run's BPM history from the History tab, and the log keeps it", async ({ page, request }) => {
+  test.setTimeout(90_000);
+  await asAdmin(request);
+  const made = await request.post("/api/v1/va/machines", {
+    data: { name: "History ring", kind: "ring", target: "ring", engine: "xsuite", fidelity: "fast", particles: 10, rate: 20000 },
+  });
+  expect(made.ok()).toBeTruthy();
+  const machine = (await made.json()) as { id: string };
+  const state = async () => ((await (await request.get(`/api/v1/va/machines/${machine.id}`)).json()) as { state: string; run: string | null });
+  expect((await request.post(`/api/v1/va/machines/${machine.id}/start`, { data: { reason: "e2e" } })).ok()).toBeTruthy();
+  await expect(async () => expect((await state()).state).toBe("running")).toPass({ timeout: 30_000 });
+  const run = (await state()).run!;
+  expect((await request.post(`/api/v1/va/machines/${machine.id}/stop`, { data: { reason: "e2e" } })).ok()).toBeTruthy();
+  await expect(async () => expect((await state()).state).toBe("stopped")).toPass({ timeout: 30_000 });
+
+  await adminLogin(page, "admin", ADMIN_PASSWORD);
+  await page.getByRole("button", { name: "History" }).click();
+  const history = page.getByTestId("history");
+  const row = history.getByTestId("runs").locator("tr", { hasText: run });
+  await expect(row).toContainText(machine.id);
+  await history.getByLabel("Reason").fill("e2e disk");
+  page.once("dialog", (dialog) => void dialog.accept());
+  await row.getByRole("button", { name: "Delete" }).click();
+  await expect(history.getByTestId("history-done")).toContainText(`Deleted ${run}`);
+  await expect(history.getByTestId("runs").locator("tr", { hasText: run })).toHaveCount(0);
+
+  const actions = (await (await request.get("/api/v1/va/actions")).json()) as { action: string; reason: string; detail: { runs?: string[] } }[];
+  expect(actions.some((a) => a.action === "delete runs" && a.reason === "e2e disk" && a.detail.runs?.includes(run))).toBeTruthy();
+  expect((await request.delete(`/api/v1/va/machines/${machine.id}`)).ok()).toBeTruthy();
 });

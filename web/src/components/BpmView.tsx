@@ -8,13 +8,15 @@
 // under its element, and the hover and selection of every view.
 //
 // The data are BPM readings as a BPM system gives them (mm, with each BPM's
-// offset and noise), read by the server from the run's folder; the page asks
-// for the few orbits it shows, never for the turn-by-turn history. Every user
-// sees the same runs: the server only reads them.
+// offset and noise), read by the server from the run's folder (in a notebook,
+// by the kernel: ADR 0016); the view asks for the few orbits it shows, never
+// for the turn-by-turn history. Every user sees the same runs: the server only
+// reads them.
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
-import { api, type CaptureEntry, type OrbitFrames, type RunEntry } from "../api/client";
+import type { CaptureEntry, OrbitFrames, RunEntry } from "../api/client";
+import type { ViewerData } from "../api/data";
 import { va, type MachineEntry } from "../api/va";
 import { occurrenceAt, type BranchModel } from "../model/branch";
 import { formatMetres, formatNumber, formatTick } from "../model/format";
@@ -38,6 +40,8 @@ const PLANES = [
 ];
 
 interface Props {
+  /** Where the orbits come from: the server, or a notebook's kernel. */
+  data: ViewerData;
   digest: string;
   latticeName: string;
   branch: BranchModel | null;
@@ -129,7 +133,7 @@ function WholeField(props: { value: number; max: number; label: string; onChange
 }
 
 export function BpmView(props: Props) {
-  const { digest, latticeName, branch, runs, selection, hover, range, band, history, scheme, onSelect } = props;
+  const { data, digest, latticeName, branch, runs, selection, hover, range, band, history, scheme, onSelect } = props;
   const [every, setEvery] = useState(5);
   const [count, setCount] = useState(5);
   const [live, setLive] = useState(true);
@@ -172,8 +176,8 @@ export function BpmView(props: Props) {
   }, [runId]);
   // A ring run's captures, as they come: a new one asked for here is shown once saved.
   const loadCaptures = useCallback(() => {
-    if (runId && ring) api.captures(runId).then(setCaptures, () => undefined);
-  }, [runId, ring]);
+    if (runId && ring) data.captures(runId).then(setCaptures, () => undefined);
+  }, [data, runId, ring]);
   useEffect(() => {
     if (!active) return;
     loadCaptures();
@@ -197,7 +201,7 @@ export function BpmView(props: Props) {
     let timer: number | undefined;
     const controller = new AbortController();
     const load = () =>
-      api.orbits(runId, every, count, live ? undefined : (end ?? undefined), controller.signal, source).then(
+      data.orbits(runId, every, count, live ? undefined : (end ?? undefined), controller.signal, source).then(
         (next) => {
           if (stop) return;
           setFrames((previous) =>
@@ -225,7 +229,7 @@ export function BpmView(props: Props) {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [runId, every, count, live, end, active]);
+  }, [data, runId, every, count, live, end, active, source]);
 
   const draw = useCallback(
     (ctx: CanvasRenderingContext2D, { width, height }: { width: number; height: number }) => {

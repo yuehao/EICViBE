@@ -13,7 +13,7 @@ from eicvibe.api import Catalog, create_app  # noqa: E402
 from eicvibe.api.demo import write_demo  # noqa: E402
 from eicvibe.api.runs import RunCatalog  # noqa: E402
 from eicvibe.va import VirtualAccelerator, load_source  # noqa: E402
-from tests.va.test_va import login  # noqa: E402
+from tests.va.test_va import login, serving  # noqa: E402
 from tests.virtual.test_ring import demo_ramp  # noqa: E402
 
 
@@ -107,3 +107,36 @@ def test_a_route_or_a_ring_without_a_ramp_cannot_ramp(server):
     assert refused.status_code == 422 and "for rings" in refused.json()["detail"]
     assert client.get(f"/api/v1/va/machines/{route['id']}/ramp").status_code == 404
     people["olga"].post(f"/api/v1/va/machines/{route['id']}/stop", json={"reason": "done"})
+
+
+def test_a_notebook_ramps_a_ring_and_reads_its_ramp_and_tunes(server):
+    from eicvibe.va.client import Client, VaError
+
+    client, people = server
+    body = {"name": "From a notebook", "kind": "ring", "target": "ring", "fidelity": "fast", "particles": 8}
+    made = people["admin"].post("/api/v1/va/machines", json=body | {"rate": 20000}).json()
+    token = people["olga"].post("/api/v1/va/me/tokens", json={"label": "notebook"}).json()["token"]
+    with serving(client.app, 8798) as url:
+        notebook = Client(url, token=token)
+        assert notebook.ramp_view(made["id"])["refusal"].endswith("start it to ramp")
+        notebook.start(made["id"], reason="from a notebook")
+        for _ in range(300):
+            if machine(client, made["id"])["state"] in ("running", "failed"):
+                break
+            time.sleep(0.1)
+        notebook.ramp(made["id"], reason="from a notebook")
+        for _ in range(600):
+            ramps = notebook.ramp_view(made["id"])["ramps"]
+            if ramps and ramps[0]["extracted"] is not None:
+                break
+            time.sleep(0.05)
+        assert ramps[0]["particles"] == 8
+        for _ in range(300):
+            try:
+                tunes = notebook.tunes(made["id"])
+                break
+            except VaError as error:
+                assert error.status == 404
+                time.sleep(0.05)
+        assert 0.0 <= tunes["x"] <= 0.5 and tunes["turns"] == 1024
+        notebook.stop(made["id"], reason="done")

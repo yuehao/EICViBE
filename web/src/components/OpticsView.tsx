@@ -5,13 +5,14 @@
 // the optics; they also share the hover and selection of every other view.
 //
 // Drag in either to zoom to an s range, right click to undo, shift-drag to
-// pan, double-click for the whole branch (sInteraction). An engine worker on
-// the server computes the optics, once per revision, engine and fidelity;
-// TrackPad starts Julia on its first use.
+// pan, double-click for the whole branch (sInteraction). The server's engine
+// worker computes the optics, once per revision, engine and fidelity (in a
+// notebook, the kernel: ADR 0016); TrackPad starts Julia on its first use.
 
 import { useCallback, useEffect, useImperativeHandle, useRef, useState, type ReactNode, type Ref } from "react";
 
-import { api, type EngineInfo } from "../api/client";
+import type { EngineInfo } from "../api/client";
+import type { ViewerData } from "../api/data";
 import { occurrenceAt, type BranchModel } from "../model/branch";
 import { formatMetres, formatNumber, formatTick } from "../model/format";
 import { isDrift } from "../model/kinds";
@@ -30,7 +31,6 @@ import {
 } from "../model/optics";
 import { isRoute } from "../model/route";
 import { sameTarget, useStoreSelect, type Store, type Target } from "../model/store";
-import { updateHash } from "../model/urlState";
 import { niceStep, S_MARGIN, sScale, type SRange, type ZoomHistory } from "../model/viewport";
 import { attachSInteraction } from "./sInteraction";
 import { readTheme, useCanvas, type Theme } from "./useCanvas";
@@ -49,7 +49,8 @@ export interface OpticsViewHandle {
 }
 
 interface Props {
-  digest: string;
+  /** Where the optics come from: the server, or a notebook's kernel. */
+  data: ViewerData;
   branch: BranchModel | null;
   selection: Target | null;
   hover: Store<Target | null>;
@@ -68,6 +69,8 @@ interface Props {
   /** The panel's tabs, first in the controls. */
   tabs?: ReactNode;
   onSelect(target: Target | null): void;
+  /** The engine, fidelity and settings chosen, as they change (the page keeps them in its URL). */
+  onChoice?(choice: { engine: string; fidelity: string; mode: string }): void;
   handle?: Ref<OpticsViewHandle>;
 }
 
@@ -113,7 +116,7 @@ function RangeReadout({ range, branch }: { range: Store<SRange | null>; branch: 
 }
 
 export function OpticsView(props: Props) {
-  const { digest, branch, selection, hover, range, band, history, scheme, onSelect } = props;
+  const { data, branch, selection, hover, range, band, history, scheme, onSelect } = props;
   const [engines, setEngines] = useState<EngineInfo[] | null>(null);
   const [engine, setEngine] = useState(props.initialEngine ?? "xsuite");
   const [fidelity, setFidelity] = useState(props.initialFidelity ?? "standard");
@@ -129,22 +132,25 @@ export function OpticsView(props: Props) {
   const state = useRef({ branch, selection, model: status.model, shown });
   state.current = { branch, selection, model: status.model, shown };
 
+  const onChoice = useRef(props.onChoice);
+  onChoice.current = props.onChoice;
+
   useEffect(() => {
-    api.engines().then(setEngines, () => setEngines([]));
-  }, []);
-  useEffect(() => updateHash({ engine, fidelity, mode: mode || undefined }), [engine, fidelity, mode]);
+    data.engines().then(setEngines, () => setEngines([]));
+  }, [data]);
+  useEffect(() => onChoice.current?.({ engine, fidelity, mode }), [engine, fidelity, mode]);
 
   const branchId = branch?.id ?? null;
   useEffect(() => {
     if (!branchId) return;
     let stop = false;
-    const key = `${digest}/${branchId}/${engine}/${fidelity}/${mode}`;
+    const key = `${branchId}/${engine}/${fidelity}/${mode}`;
     setStatus((s) => ({ key, model: s.model, loading: true, error: null }));
     setElapsed(0);
     const started = performance.now();
     const timer = window.setInterval(() => setElapsed(Math.round((performance.now() - started) / 1000)), 1000);
-    api
-      .optics(digest, branchId, engine, fidelity, mode)
+    data
+      .optics(branchId, engine, fidelity, mode)
       .then(
         (data) => {
           if (stop) return;
@@ -161,7 +167,7 @@ export function OpticsView(props: Props) {
       stop = true;
       window.clearInterval(timer);
     };
-  }, [digest, branchId, engine, fidelity, mode]);
+  }, [data, branchId, engine, fidelity, mode]);
 
   const draw = useCallback(
     (ctx: CanvasRenderingContext2D, { width, height }: { width: number; height: number }) => {

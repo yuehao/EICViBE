@@ -11,7 +11,7 @@ import pytest
 pytest.importorskip("xtrack")
 
 from eicvibe.api.demo import demo_lattice  # noqa: E402
-from eicvibe.diagnostics import NO_BEAM, read_rhic, tune, write_rhic  # noqa: E402
+from eicvibe.diagnostics import NO_BEAM, read_hdf5, read_sdds, tune, write_hdf5, write_sdds  # noqa: E402
 from eicvibe.domain.lattice import ElementKind  # noqa: E402
 from eicvibe.domain.machine import (  # noqa: E402
     EnergyRamp,
@@ -84,9 +84,11 @@ def test_a_ring_run_records_every_turn_as_bpms_read_it(demo, tmp_path):
     )
     assert tune(tbt, "x") == pytest.approx(fractional(optics.tune_x), abs=2e-3)
     assert tune(tbt, "y") == pytest.approx(fractional(optics.tune_y), abs=2e-3)
-    # Written in RHIC's layout and read back, it is analysed as a RHIC acquisition would be.
-    write_rhic(tbt, tmp_path / "acquisition.sdds")
-    assert tune(read_rhic(tmp_path / "acquisition.sdds"), "x") == pytest.approx(tune(tbt, "x"), abs=1e-6)
+    # Written to a file, HDF5 or SDDS, and read back, it is analysed as the run's own turns are.
+    write_hdf5(tbt, tmp_path / "acquisition.h5")
+    assert tune(read_hdf5(tmp_path / "acquisition.h5"), "x") == tune(tbt, "x")
+    write_sdds(tbt, tmp_path / "acquisition.sdds")
+    assert tune(read_sdds(tmp_path / "acquisition.sdds"), "x") == pytest.approx(tune(tbt, "x"), abs=1e-6)
     orbit = history.orbit()  # a sample per second of the run, the last one when it ended
     assert orbit.turn[0] == 0 and orbit.turns.sum() == 1280 and orbit.intensity[0, 0] == pytest.approx(1.0)
 

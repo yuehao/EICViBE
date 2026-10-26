@@ -10,14 +10,17 @@ for operators and administrators. A server without a virtual accelerator
 answers 404 here, except ``/va/status``.
 """
 
+import operator
 import time
 from collections.abc import Callable
+from functools import reduce
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, create_model
 
 from eicvibe.ai import PROVIDERS, AiConfig, AiUnavailable
+from eicvibe.operations.catalog import OPERATIONS, Operation
 from eicvibe.virtual.errors import ErrorSpec
 
 from .service import Conflict, Forbidden, VirtualAccelerator
@@ -329,25 +332,62 @@ class TokenEntry(BaseModel):
     kind: str = "api"
 
 
-class ProposalRequest(BaseModel):
-    """An operation to compute on a machine as it is set (ADR 0010); nothing is written."""
-
-    operation: Literal["orbit_correction", "local_bump", "tune_move"]
-    plane: Literal["x", "y"] = "x"
-    source: Literal["measured", "model"] = Field(
-        "measured", description="Orbit correction: the BPMs' latest slow orbit, or the model's own"
+def _proposal_request(declared: Operation) -> type[BaseModel]:
+    """The request for one operation: its name, its parameters beside it, and the reason for the log."""
+    return create_model(
+        "".join(word.title() for word in declared.name.split("_")) + "Request",
+        __base__=declared.parameters,
+        __doc__=f"{declared.label}: {declared.summary}. Computed on a machine as set; nothing is written.",
+        operation=(Literal[declared.name], ...),
+        reason=(str, ""),
     )
-    method: Literal["svd", "micado"] = "svd"
-    damping: float = Field(0.01, gt=0, description="SVD: Tikhonov damping, of the largest singular value")
-    count: int = Field(3, ge=1, le=50, description="MICADO: correctors to use")
-    at: str | None = Field(None, description="Bump: a BPM's name (or an element's)")
-    amplitude_mm: float | None = Field(None, description="Bump: the offset there, mm")
-    angle_mrad: float | None = Field(None, description="Bump: the angle there, mrad (four correctors)")
-    dqx: float = Field(0.0, description="Tune move: the change of the horizontal tune")
-    dqy: float = Field(0.0, description="Tune move: the change of the vertical tune")
-    correctors: list[str] | None = Field(None, description="Only these corrector channels")
-    quadrupoles: list[str] | None = Field(None, description="Tune move: only these quadrupole channels")
-    reason: str = ""
+
+
+#: An operation to compute on a machine as it is set (ADR 0010): one of the catalog's (ADR 0017).
+ProposalRequest = Annotated[
+    reduce(operator.or_, (_proposal_request(o) for o in OPERATIONS.values())),
+    Field(discriminator="operation"),
+]
+
+
+class RunRecord(BaseModel):
+    """A run's folder: its BPM history on disk."""
+
+    id: str
+    machine: str | None
+    engine: str | None
+    started: str | None = Field(description="Turn 0, on the run's own clock")
+    bytes: int = Field(description="Its folder's size on disk")
+    in_use: bool = Field(description="A running machine's run, which is not deleted")
+
+
+class HistoryView(BaseModel):
+    """What the service keeps besides its append-only logs, for administrators to clear."""
+
+    runs: list[RunRecord] = Field(description="Newest first")
+    proposals: dict[str, int] = Field(description="How many proposals each state has, every machine's")
+
+
+class RunsDeleted(BaseModel):
+    deleted: list[str]
+    bytes: int = Field(description="Freed on disk")
+
+
+class ProposalsDeleted(BaseModel):
+    deleted: int
+
+
+class OperationEntry(BaseModel):
+    """An operation the virtual accelerator computes (ADR 0017): the viewer's form is made from it."""
+
+    name: str
+    label: str
+    summary: str
+    machines: list[str] = Field(description="The kinds of machine it runs on: ring, route")
+    verified_by: str = Field(description="orbit (the BPMs' orbit) or tunes (the tune monitor)")
+    parameters: dict[str, Any] = Field(
+        description="Its parameters' JSON Schema, with x-form hints for a form"
+    )
 
 
 class ProposalChange(BaseModel):
@@ -581,6 +621,22 @@ def va_router(get: Callable[[], VirtualAccelerator | None]) -> APIRouter:
     def options() -> VaOptions:
         return VaOptions(**service().options())
 
+    @router.get("/operations", response_model=list[OperationEntry])
+    def operations() -> list[OperationEntry]:
+        """The operations a proposal can compute, with their parameters (ADR 0017)."""
+        service()  # a server without a virtual accelerator has none
+        return [
+            OperationEntry(
+                name=o.name,
+                label=o.label,
+                summary=o.summary,
+                machines=sorted(o.machines),
+                verified_by=o.verified_by,
+                parameters=o.parameters.model_json_schema(),
+            )  # fmt: skip
+            for o in OPERATIONS.values()
+        ]
+
     @router.get("/machines", response_model=list[MachineEntry])
     def machines() -> list[MachineEntry]:
         return [MachineEntry(**m) for m in service().machines()]
@@ -610,8 +666,9 @@ def va_router(get: Callable[[], VirtualAccelerator | None]) -> APIRouter:
 
     @router.put("/machines/{machine}/errors", response_model=ErrorsEntry)
     def set_errors(me: Caller, machine: str, body: ErrorsChange) -> ErrorsEntry:
-        """Other errors for a stopped machine, drawn when it starts; logged without their seed. A row
-        that chooses nothing on the machine is refused."""
+        """Other errors for a machine, logged without their seed: its magnets' and supplies' while it is
+        stopped (drawn when it starts), its BPMs' also while it runs (read with from its next turn). A
+        row that chooses nothing on the machine is refused."""
         va = service()
         return ErrorsEntry(**call(lambda: va.set_errors(me, machine, body.errors, body.reason)))
 
@@ -688,9 +745,15 @@ def va_router(get: Callable[[], VirtualAccelerator | None]) -> APIRouter:
         return ProposalEntry(**call(lambda: va.propose(me, machine, body.model_dump())))
 
     @router.get("/machines/{machine}/proposals", response_model=list[ProposalEntry])
-    def proposals(machine: str) -> list[ProposalEntry]:
+    def proposals(
+        machine: str,
+        waiting: Annotated[
+            bool, Query(description="Only those a person still has to apply or verify: proposed, or applied")
+        ] = False,
+    ) -> list[ProposalEntry]:
+        """A machine's latest proposals, newest first."""
         va = service()
-        return [ProposalEntry(**p) for p in call(lambda: va.proposals(machine))]
+        return [ProposalEntry(**p) for p in call(lambda: va.proposals(machine, waiting))]
 
     @router.get("/proposals/{proposal}", response_model=ProposalEntry)
     def proposal(proposal: str) -> ProposalEntry:
@@ -713,6 +776,43 @@ def va_router(get: Callable[[], VirtualAccelerator | None]) -> APIRouter:
     def discard(me: Caller, proposal: str, body: Reason | None = None) -> ProposalEntry:
         va = service()
         return ProposalEntry(**call(lambda: va.discard(me, proposal, (body or Reason()).reason)))
+
+    # -- what the service keeps besides its logs (administrators) -------------------------------
+
+    @router.get("/history", response_model=HistoryView)
+    def history(me: Caller) -> HistoryView:
+        """The runs' BPM histories on disk and the proposals, which an administrator may delete; the write
+        and action logs are append-only and are not."""
+        admin(me)
+        va = service()
+        return HistoryView(**call(lambda: va.history(me)))
+
+    @router.delete("/runs", response_model=RunsDeleted)
+    def delete_runs(me: Caller, reason: str = "") -> RunsDeleted:
+        """Delete every run's folder that no running machine uses (logged)."""
+        admin(me)
+        va = service()
+        return RunsDeleted(**call(lambda: va.delete_runs(me, None, reason)))
+
+    @router.delete("/runs/{run}", response_model=RunsDeleted)
+    def delete_run(me: Caller, run: str, reason: str = "") -> RunsDeleted:
+        """Delete one run's folder; a running machine's is refused (logged)."""
+        admin(me)
+        va = service()
+        return RunsDeleted(**call(lambda: va.delete_runs(me, [run], reason)))
+
+    @router.delete("/proposals", response_model=ProposalsDeleted)
+    def delete_proposals(
+        me: Caller,
+        waiting: Annotated[
+            bool, Query(description="Those still waiting for a person too: proposed, or applied")
+        ] = False,
+        reason: str = "",
+    ) -> ProposalsDeleted:
+        """Delete every machine's finished proposals (verified, discarded, stale) (logged)."""
+        admin(me)
+        va = service()
+        return ProposalsDeleted(**call(lambda: va.delete_proposals(me, waiting, reason)))
 
     @router.post("/machines/{machine}/reset", response_model=WriteResult)
     def reset(me: Caller, machine: str, body: ResetRequest) -> WriteResult:

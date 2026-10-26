@@ -8,6 +8,7 @@ authors = [
 ]
 requires-python = ">=3.14"
 dependencies = [
+    "h5py>=3.12",
     "numpy>=2",
     "pydantic>=2.12",
     "ruamel-yaml>=0.18",
@@ -21,11 +22,15 @@ eicvibe-va = "eicvibe.va.__main__:main"
 eicvibe-engine = "eicvibe.engines.remote:main"
 
 [project.optional-dependencies]
-hdf5 = [
-    "h5py>=3.12",
-]
 madx = [
     "cpymad>=1.19",
+]
+notebook = [
+    "anywidget>=0.9",
+    "ipykernel>=6.29",
+    "jupyterlab>=4.4",
+    "matplotlib>=3.10",
+    "pandas>=2.2",
 ]
 web = [
     "fastapi>=0.115",
@@ -48,10 +53,15 @@ build-backend = "uv_build"
 [dependency-groups]
 dev = [
     "cpymad>=1.19",
-    "eicvibe[web,xsuite,trackpad,hdf5]",
+    "eicvibe[web,xsuite,trackpad,notebook]",
     "httpx2>=2.13.1",
     "pytest>=9.1.1",
 ]
+
+[tool.uv]
+# uv's own Pythons, linked to OpenSSL 3: TrackPad's Julia (juliacall) needs Julia's OpenSSL to share
+# Python's major version, and Julia has no OpenSSL 4, which Homebrew's Python 3.14 is linked to.
+python-preference = "only-managed"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

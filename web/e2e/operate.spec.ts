@@ -48,11 +48,29 @@ test("a physicist proposes a closed bump in the Operate tab, applies it and veri
     await expect(card.getByTestId("verification")).toContainText("✓ Verified", { timeout: 1_000 });
   }).toPass({ timeout: 60_000 });
 
+  // The tab is for the next operation: once another is proposed, the one done leaves it (the log keeps it),
+  // and a discarded one leaves nothing waiting.
+  await operate.getByLabel("Amplitude").fill("0.5");
+  await operate.getByRole("button", { name: "Propose" }).click();
+  await expect(operate.getByTestId("proposal").first()).toContainText("A closed horizontal bump of +0.500 mm at dr-b41", { timeout: 30_000 });
+  await expect(operate.getByTestId("proposal")).toHaveCount(1);
+  await operate.getByTestId("proposal").first().getByRole("button", { name: "Discard" }).click();
+  await expect(operate.getByTestId("proposal")).toHaveCount(0);
+  await expect(operate).toContainText("Nothing waiting");
+
   // Stopped and removed, so that it is no one's default machine afterwards.
   expect((await request.post(`/api/v1/va/machines/${machine.id}/stop`, { data: { reason: "e2e done" } })).ok()).toBeTruthy();
   await expect(async () => {
     const state = ((await (await request.get(`/api/v1/va/machines/${machine.id}`)).json()) as { state: string }).state;
     expect(state).toBe("stopped");
   }).toPass({ timeout: 30_000 });
+  // A stopped ring has no tune monitor: the tab stops showing it, and stops asking for it.
+  await expect(operate.getByTestId("tune-monitor")).toHaveCount(0, { timeout: 15_000 });
+  let asked = 0;
+  page.on("request", (r) => {
+    if (r.url().endsWith("/tunes")) asked += 1;
+  });
+  await page.waitForTimeout(6_000);
+  expect(asked).toBe(0);
   expect((await request.delete(`/api/v1/va/machines/${machine.id}`)).ok()).toBeTruthy();
 });

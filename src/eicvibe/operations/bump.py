@@ -147,14 +147,35 @@ def local_bump(
 
     now = {k.channel: model.value(k.channel) for k in chosen}
     last = chosen[-1].occurrences[-1]
-    for attempt in range(4):
-        values = {k.channel: now[k.channel] + d for k, d in zip(chosen, delta, strict=True)}
-        _, pos, ang, dlt = measure(values)
-        got = conditions(pos, ang, dlt, last)
-        error = np.array(wanted) - np.array(got)
-        if np.max(np.abs(error)) < 1e-9 or attempt == 3:
-            break  # the values measured last are the ones proposed
-        delta = delta + np.linalg.solve(matrix, error)
+    # Each condition is judged by the orbit it moves: an offset as it is, an angle over ten metres (a
+    # betatron length), the energy through the ring's largest dispersion; met within 1e-4 of the bump.
+    # A further step is kept only if it brings the bump closer: where the full model departs from the
+    # response (the sextupoles, or an energy residual the correctors barely move), stepping on would
+    # chase it with ever larger kicks until the beam is lost.
+    reach = max(1e-9, 1e-4 * abs(amplitude))
+    dispersion = max(1e-3, float(np.max(np.abs(model.optics().eta_x)))) if energy else 1.0
+    scale = np.array([1.0, *([] if angle is None else [10.0]), 1.0, 10.0, *([dispersion] if energy else [])])
+
+    def miss(values: dict[str, float]):
+        measured = measure(values)
+        error = np.array(wanted) - np.array(conditions(*measured[1:], last))
+        return measured, error, float(np.max(np.abs(error * scale)))
+
+    values = {k.channel: now[k.channel] + d for k, d in zip(chosen, delta, strict=True)}
+    (_, pos, ang, dlt), error, worst = miss(values)
+    for _ in range(3):
+        if worst <= reach:
+            break
+        step = delta + np.linalg.solve(matrix, error)
+        trial = {k.channel: now[k.channel] + d for k, d in zip(chosen, step, strict=True)}
+        try:
+            measured, trial_error, trial_worst = miss(trial)
+        except Exception:  # noqa: BLE001 - the engine lost the beam: the step went too far
+            break
+        if trial_worst >= worst:
+            break  # no closer: the values measured before are the ones proposed
+        delta, values, error, worst = step, trial, trial_error, trial_worst
+        _, pos, ang, dlt = measured
 
     changes = [
         ChannelChange(

@@ -7,7 +7,7 @@ method, with references. A person, or an agent in its own sandbox, applies it
 (ADR 0010).
 """
 
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -36,7 +36,7 @@ class Check(BaseModel):
 
 
 class Proposal(BaseModel):
-    operation: Literal["orbit_correction", "local_bump", "tune_move"]
+    operation: str = Field(description="The operation's name, as the catalog declares it (ADR 0017)")
     machine: str = Field(description="The branch the operation is for")
     summary: str = Field(description="What it does, in one sentence with the numbers")
     changes: list[ChannelChange]

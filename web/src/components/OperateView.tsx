@@ -8,10 +8,20 @@
 // not apply); once the settings have ramped, Verify compares what the BPMs or
 // the tune monitor show with the prediction. Proposals an agent makes appear
 // here for a person to review.
+//
+// The tab is for the next operation, not for history: it shows only what still
+// waits for a person (proposed, or applied and not yet verified), and the
+// proposal verified here last, until the next is proposed. What was done is in
+// the log.
+//
+// The operations and their forms come from the virtual accelerator's catalog
+// (GET /operations, ADR 0017): each operation's parameters as a JSON Schema,
+// with x-form hints for how a field is shown. A new operation needs no change
+// here.
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 
-import { va, type MachineEntry, type ProposalEntry, type ProposalRequest, type TuneReading } from "../api/va";
+import { va, type MachineEntry, type OperationEntry, type ProposalEntry, type ProposalRequest, type TuneReading } from "../api/va";
 import { formatNumber } from "../model/format";
 import { CURVES } from "../model/optics";
 import type { Auth } from "./Auth";
@@ -21,13 +31,41 @@ const X = CURVES[0]!;
 const Y = CURVES[1]!;
 const GREY = { color: "#6b7280", darkColor: "#9ca3af" };
 
-type Operation = ProposalRequest["operation"];
+/** How a parameter is shown: text before and after its input, an enumeration's names, when it is shown. */
+interface FormHints {
+  prefix?: string;
+  unit?: string;
+  labels?: Record<string, string>;
+  placeholder?: string;
+  when?: Record<string, string>;
+  advanced?: boolean;
+}
 
-const OPERATIONS: { key: Operation; label: string; title: string }[] = [
-  { key: "orbit_correction", label: "Orbit correction", title: "SVD (damped) or MICADO on the model's orbit response matrix, from the BPMs' latest slow orbit" },
-  { key: "local_bump", label: "Local bump", title: "A closed bump: three correctors for an offset, four for an offset and an angle" },
-  { key: "tune_move", label: "Tune move", title: "The quadrupole knob that moves the tunes with the least beta-beating and dispersion change" },
-];
+/** A parameter's JSON Schema, as pydantic writes it, so far as the form reads it. */
+interface Parameter {
+  type?: string;
+  enum?: string[];
+  anyOf?: Parameter[];
+  title?: string;
+  description?: string;
+  default?: unknown;
+  examples?: unknown[];
+  minimum?: number;
+  maximum?: number;
+  "x-form"?: FormHints;
+}
+
+interface Parameters {
+  properties: Record<string, Parameter>;
+  required?: string[];
+}
+
+const kindOf = (p: Parameter): string => (p.enum ? "enum" : (p.type ?? p.anyOf?.find((a) => a.type !== "null")?.type ?? "string"));
+const nullable = (p: Parameter) => Boolean(p.anyOf?.some((a) => a.type === "null"));
+const initial = (p: Parameter) => {
+  const value = p.examples?.[0] ?? p.default;
+  return value === null || value === undefined ? "" : String(value);
+};
 
 const STATES: Record<string, string> = {
   proposed: "proposed",
@@ -47,38 +85,56 @@ interface Props {
 
 export function OperateView(props: Props) {
   const machine = props.machine;
-  const [operation, setOperation] = useState<Operation>("orbit_correction");
-  const [plane, setPlane] = useState<"x" | "y">("x");
-  const [source, setSource] = useState<"measured" | "model">("measured");
-  const [method, setMethod] = useState<"svd" | "micado">("svd");
-  const [count, setCount] = useState("3");
-  const [at, setAt] = useState("");
-  const [amplitude, setAmplitude] = useState("1");
-  const [angle, setAngle] = useState("");
-  const [dqx, setDqx] = useState("0.01");
-  const [dqy, setDqy] = useState("0");
+  const [operations, setOperations] = useState<OperationEntry[]>([]);
+  const [chosen, setChosen] = useState("");
+  const [values, setValues] = useState<Record<string, string>>({}); // by parameter, kept across operations
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [proposals, setProposals] = useState<ProposalEntry[]>([]);
+  const [proposals, setProposals] = useState<ProposalEntry[]>([]); // those waiting for a person
+  const [finished, setFinished] = useState<ProposalEntry | null>(null); // verified here, until the next proposal
   const [tunes, setTunes] = useState<TuneReading | null>(null);
   const [open, setOpen] = useState<string | null>(null);
 
   const id = machine?.id ?? null;
+  const running = machine?.state === "running";
   const refresh = useCallback(() => {
     if (!id) return;
-    va.proposals(id).then(setProposals, () => undefined);
-    va.tunes(id).then(setTunes, () => setTunes(null));
+    va.proposals(id, true).then(setProposals, () => undefined);
   }, [id]);
 
   useEffect(() => {
     setProposals([]);
-    setTunes(null);
+    setFinished(null);
     if (!props.active || !id) return;
     refresh();
     const timer = window.setInterval(refresh, 2000); // an agent's proposals appear as it makes them
     return () => window.clearInterval(timer);
   }, [props.active, id, refresh]);
+
+  // The tune monitor is a running ring's: a stopped one has none to ask for. Its reading changes every
+  // 1024 turns, so it is asked for less often than the proposals.
+  useEffect(() => {
+    setTunes(null);
+    if (!props.active || !id || !running) return;
+    const read = () => va.tunes(id).then(setTunes, () => setTunes(null));
+    read();
+    const timer = window.setInterval(read, 5000);
+    return () => window.clearInterval(timer);
+  }, [props.active, id, running]);
+
+  useEffect(() => {
+    if (props.active && operations.length === 0) va.operations().then(setOperations, (e) => setError(String(e)));
+  }, [props.active, operations.length]);
+
+  const usable = operations.filter((o) => machine && o.machines.includes(machine.kind));
+  const operation = usable.find((o) => o.name === chosen) ?? usable[0];
+  const parameters = (operation?.parameters ?? { properties: {} }) as unknown as Parameters;
+  const valueOf = (name: string) => values[name] ?? initial(parameters.properties[name] ?? {});
+  const shown = Object.entries(parameters.properties).filter(
+    ([, p]) => !p["x-form"]?.advanced && kindOf(p) !== "array" && Object.entries(p["x-form"]?.when ?? {}).every(([k, v]) => valueOf(k) === v),
+  );
+  const missing = (parameters.required ?? []).some((name) => shown.some(([n]) => n === name) && !valueOf(name).trim());
 
   const act = async (why: string, action: () => Promise<unknown>) => {
     setError(null);
@@ -94,17 +150,27 @@ export function OperateView(props: Props) {
   };
 
   const propose = () => {
-    if (!machine) return;
-    const request: Partial<ProposalRequest> & Pick<ProposalRequest, "operation"> = { operation, plane, reason };
-    if (operation === "orbit_correction") Object.assign(request, { source, method, count: Number(count) || 3 });
-    if (operation === "local_bump")
-      Object.assign(request, { at: at.trim(), amplitude_mm: Number(amplitude), angle_mrad: angle.trim() === "" ? null : Number(angle) });
-    if (operation === "tune_move") Object.assign(request, { dqx: Number(dqx) || 0, dqy: Number(dqy) || 0 });
+    if (!machine || !operation) return;
+    // The fields shown, as their types say; the others take their defaults.
+    const request: ProposalRequest = { operation: operation.name, reason };
+    for (const [name, p] of shown) {
+      const text = valueOf(name).trim();
+      if (text === "") {
+        if (nullable(p)) request[name] = null;
+        continue;
+      }
+      request[name] = kindOf(p) === "number" || kindOf(p) === "integer" ? Number(text) : text;
+    }
     void act(`To compute a proposal on ${machine.name}, log in.`, async () => {
       const made = await va.propose(machine.id, request);
+      setFinished(null);
       setOpen(made.id);
     });
   };
+
+  const listed = [...proposals.filter((p) => p.id !== finished?.id), ...(finished ? [finished] : [])].sort((a, b) =>
+    b.created.localeCompare(a.created),
+  );
 
   const bar = (
     <div className="optics-bar bpm-bar">
@@ -118,7 +184,7 @@ export function OperateView(props: Props) {
       ) : null}
     </div>
   );
-  if (!machine || machine.kind !== "ring")
+  if (!machine || (operations.length > 0 && usable.length === 0))
     return (
       <div className="bpm check">
         {bar}
@@ -126,7 +192,7 @@ export function OperateView(props: Props) {
           <div className="optics-message">
             <p>
               {machine
-                ? `${machine.name} runs a route; operations are for rings so far.`
+                ? `${machine.name} runs a ${machine.kind}; no operation runs on one so far.`
                 : "Operations work on a virtual accelerator's ring: choose a machine in the top bar."}
             </p>
           </div>
@@ -146,70 +212,27 @@ export function OperateView(props: Props) {
             propose();
           }}
         >
-          <select aria-label="Operation" value={operation} onChange={(e) => setOperation(e.target.value as Operation)}>
-            {OPERATIONS.map((o) => (
-              <option key={o.key} value={o.key} title={o.title}>
+          <select aria-label="Operation" value={operation?.name ?? ""} onChange={(e) => setChosen(e.target.value)}>
+            {usable.map((o) => (
+              <option key={o.name} value={o.name} title={o.summary}>
                 {o.label}
               </option>
             ))}
           </select>
-          {operation !== "tune_move" ? (
-            <select aria-label="Plane" value={plane} onChange={(e) => setPlane(e.target.value as "x" | "y")}>
-              <option value="x">horizontal</option>
-              <option value="y">vertical</option>
-            </select>
-          ) : null}
-          {operation === "orbit_correction" ? (
-            <>
-              <select aria-label="Orbit from" value={source} onChange={(e) => setSource(e.target.value as "measured" | "model")}>
-                <option value="measured">from the BPMs</option>
-                <option value="model">from the model</option>
-              </select>
-              <select aria-label="Method" value={method} onChange={(e) => setMethod(e.target.value as "svd" | "micado")}>
-                <option value="svd">SVD, damped</option>
-                <option value="micado">MICADO</option>
-              </select>
-              {method === "micado" ? (
-                <label>
-                  <input type="number" min={1} max={50} aria-label="Correctors" value={count} onChange={(e) => setCount(e.target.value)} /> correctors
-                </label>
-              ) : null}
-            </>
-          ) : null}
-          {operation === "local_bump" ? (
-            <>
-              <label>
-                at <input aria-label="Bump at" placeholder="a BPM's name" value={at} onChange={(e) => setAt(e.target.value)} />
-              </label>
-              <label>
-                <input type="number" step="any" aria-label="Amplitude" value={amplitude} onChange={(e) => setAmplitude(e.target.value)} /> mm
-              </label>
-              <label title="Leave empty for an offset alone (three correctors); an angle takes four">
-                <input type="number" step="any" aria-label="Angle" placeholder="angle" value={angle} onChange={(e) => setAngle(e.target.value)} /> mrad
-              </label>
-            </>
-          ) : null}
-          {operation === "tune_move" ? (
-            <>
-              <label>
-                ΔQx <input type="number" step="any" aria-label="Change of Qx" value={dqx} onChange={(e) => setDqx(e.target.value)} />
-              </label>
-              <label>
-                ΔQy <input type="number" step="any" aria-label="Change of Qy" value={dqy} onChange={(e) => setDqy(e.target.value)} />
-              </label>
-            </>
-          ) : null}
+          {shown.map(([name, p]) => (
+            <ParameterField key={name} parameter={p} value={valueOf(name)} onChange={(v) => setValues((all) => ({ ...all, [name]: v }))} />
+          ))}
           <input aria-label="Reason" placeholder="why (for the log)" value={reason} onChange={(e) => setReason(e.target.value)} />
-          <button type="submit" disabled={busy || (operation === "local_bump" && !at.trim())}>
+          <button type="submit" disabled={busy || !operation || missing}>
             {busy ? "Computing…" : "Propose"}
           </button>
         </form>
         {error ? <p className="admin-error" role="alert">{error}</p> : null}
-        {proposals.length === 0 ? (
-          <p className="muted">No proposals yet. Nothing is written until a person applies one.</p>
+        {listed.length === 0 ? (
+          <p className="muted">Nothing waiting. Propose an operation: nothing is written until a person applies it.</p>
         ) : null}
         <ul className="proposals">
-          {proposals.map((p) => (
+          {listed.map((p) => (
             <ProposalCard
               key={p.id}
               entry={p}
@@ -222,7 +245,11 @@ export function OperateView(props: Props) {
                 if (failed.length && !window.confirm(`Checks not passed: ${failed.join(", ")}. Apply anyway?`)) return;
                 void act(`To apply proposal ${p.id} to ${machine.name}, log in.`, () => va.apply(p.id, reason));
               }}
-              onVerify={() => void act(`To verify proposal ${p.id}, log in.`, () => va.verify(p.id).then((v) => setProposals((all) => all.map((q) => (q.id === v.id ? v : q)))))}
+              onVerify={() =>
+                void act(`To verify proposal ${p.id}, log in.`, () =>
+                  va.verify(p.id).then((v) => (v.state === "verified" ? setFinished(v) : setProposals((all) => all.map((q) => (q.id === v.id ? v : q))))),
+                )
+              }
               onDiscard={() => void act(`To discard proposal ${p.id}, log in.`, () => va.discard(p.id, reason))}
             />
           ))}
@@ -333,9 +360,45 @@ function ProposalCard(props: {
   );
 }
 
+/** One parameter's input, as its schema and x-form hints say: a select for an enumeration, else a number or text. */
+function ParameterField({ parameter: p, value, onChange }: { parameter: Parameter; value: string; onChange(value: string): void }) {
+  const hints = p["x-form"] ?? {};
+  const label = p.title ?? "";
+  const kind = kindOf(p);
+  const input = p.enum ? (
+    <select aria-label={label} value={value} onChange={(e) => onChange(e.target.value)}>
+      {p.enum.map((v) => (
+        <option key={v} value={v}>
+          {hints.labels?.[v] ?? v}
+        </option>
+      ))}
+    </select>
+  ) : (
+    <input
+      type={kind === "number" || kind === "integer" ? "number" : "text"}
+      step={kind === "number" ? "any" : undefined}
+      min={p.minimum}
+      max={p.maximum}
+      aria-label={label}
+      placeholder={hints.placeholder}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+    />
+  );
+  if (!hints.prefix && !hints.unit) return input;
+  return (
+    <label title={p.description}>
+      {hints.prefix ? `${hints.prefix} ` : null}
+      {input}
+      {hints.unit ? ` ${hints.unit}` : null}
+    </label>
+  );
+}
+
+/** What a proposal predicts, by what it holds: tunes, or the orbit at the BPMs (before and after, or its change). */
 function Prediction({ entry, scheme }: { entry: ProposalEntry; scheme: string }) {
   const predicted = entry.proposal.predicted as Record<string, unknown>;
-  if (entry.operation === "tune_move") {
+  if (Array.isArray(predicted.tunes)) {
     const pair = (v: unknown, i: number, digits: number) => {
       const row = (v as number[][])[i] ?? [];
       return `(${(row[0] ?? NaN).toFixed(digits)}, ${(row[1] ?? NaN).toFixed(digits)})`;
@@ -348,19 +411,20 @@ function Prediction({ entry, scheme }: { entry: ProposalEntry; scheme: string })
       </p>
     );
   }
+  if (!Array.isArray(predicted.bpms)) return null;
   const names = predicted.bpms as string[];
   const index = names.map((_, i) => i);
   const curve = predicted.plane === "y" ? Y : X;
-  const series =
-    entry.operation === "orbit_correction"
-      ? [
-          { label: "before", ...GREY, x: index, y: predicted.before as (number | null)[], style: "both" as const },
-          { label: "after", color: curve.color, darkColor: curve.darkColor, x: index, y: predicted.after as (number | null)[], style: "both" as const },
-        ]
-      : [{ label: "change", color: curve.color, darkColor: curve.darkColor, x: index, y: predicted.change as number[], style: "both" as const }];
+  const change = Array.isArray(predicted.change);
+  const series = change
+    ? [{ label: "change", color: curve.color, darkColor: curve.darkColor, x: index, y: predicted.change as number[], style: "both" as const }]
+    : [
+        { label: "before", ...GREY, x: index, y: predicted.before as (number | null)[], style: "both" as const },
+        { label: "after", color: curve.color, darkColor: curve.darkColor, x: index, y: predicted.after as (number | null)[], style: "both" as const },
+      ];
   return (
     <Chart
-      title={entry.operation === "orbit_correction" ? "Orbit at the BPMs, predicted" : "Orbit change at the BPMs, predicted (closed outside the bump)"}
+      title={change ? "Orbit change at the BPMs, predicted" : "Orbit at the BPMs, predicted"}
       xLabel="BPM, in beam order"
       yLabel={`${predicted.plane} (mm)`}
       series={series}

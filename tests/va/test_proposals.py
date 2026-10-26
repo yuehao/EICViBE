@@ -131,6 +131,22 @@ def test_a_bump_is_verified_by_the_bpms_and_a_stale_proposal_is_refused(server):
     assert check["ok"] and check["rms_predicted_change_mm"] > 0.1, check
 
 
+def test_the_operations_and_their_parameters_come_from_the_catalog(server):
+    s = server
+    ring, ann = s["ring"], s["ann"]
+    listed = s["client"].get(f"{VA}/operations").json()
+    assert [o["name"] for o in listed] == ["orbit_correction", "local_bump", "tune_move"]
+    bump = listed[1]
+    assert bump["verified_by"] == "orbit" and bump["machines"] == ["ring"]
+    assert set(bump["parameters"]["required"]) == {"at", "amplitude_mm"}
+    assert bump["parameters"]["properties"]["amplitude_mm"]["x-form"] == {"unit": "mm"}
+    # A request is checked against its operation's parameters before anything is computed.
+    missing = ann.post(f"{VA}/machines/{ring}/proposals", json={"operation": "local_bump", "plane": "x"})
+    assert missing.status_code == 422 and "amplitude_mm" in missing.text
+    unknown = ann.post(f"{VA}/machines/{ring}/proposals", json={"operation": "chromaticity_move"})
+    assert unknown.status_code == 422 and "tune_move" in unknown.text
+
+
 def test_a_tune_move_is_verified_by_the_tune_monitor(server):
     s = server
     ring, ann = s["ring"], s["ann"]
@@ -158,8 +174,36 @@ def test_an_agent_applies_in_its_own_sandbox_and_proposals_can_be_discarded(serv
     applied = agent.post(f"{VA}/proposals/{made['id']}/apply", json={"reason": "trying it"})
     assert applied.status_code == 200 and applied.json()["state"] == "applied"
     other = ann.post(f"{VA}/machines/{ring}/proposals", json=request).json()
+    waiting = {p["id"] for p in ann.get(f"{VA}/machines/{ring}/proposals", params={"waiting": True}).json()}
+    assert other["id"] in waiting
     assert agent.post(f"{VA}/proposals/{other['id']}/discard", json={}).json()["state"] == "discarded"
     assert ann.post(f"{VA}/proposals/{other['id']}/apply", json={}).status_code == 409
+    # What waits for a person is only what is proposed or applied; what was done stays to be read.
+    waiting = ann.get(f"{VA}/machines/{ring}/proposals", params={"waiting": True}).json()
+    assert other["id"] not in {p["id"] for p in waiting}
+    assert all(p["state"] in ("proposed", "applied") for p in waiting)
+    everything = ann.get(f"{VA}/machines/{ring}/proposals").json()
+    assert other["id"] in {p["id"] for p in everything} and {"verified", "discarded"} <= {
+        p["state"] for p in everything
+    }
     assert agent.post(f"{VA}/users", json={"name": "x", "role": "viewer"}).status_code == 403
     assert agent.post(f"{VA}/me/tokens", json={"label": "more"}).status_code == 403
     assert ann.delete(f"{VA}/machines/{sandbox['id']}").status_code == 204
+
+
+def test_an_operation_the_engine_cannot_compute_is_refused_with_the_engines_reason(server, monkeypatch):
+    from dataclasses import replace
+
+    from eicvibe.operations.catalog import OPERATIONS
+
+    def lost(model, parameters, measured):
+        raise RuntimeError("Particle lost, p.state = -1")  # as Xsuite's closed orbit search says it
+
+    monkeypatch.setitem(OPERATIONS, "tune_move", replace(OPERATIONS["tune_move"], propose=lost))
+    made = server["ann"].post(
+        f"{VA}/machines/{server['ring']}/proposals", json={"operation": "tune_move", "dqx": 0.01}
+    )
+    assert made.status_code == 422, made.text
+    assert (
+        "Tune move could not be computed in the model: RuntimeError: Particle lost" in made.json()["detail"]
+    )

@@ -1,29 +1,145 @@
-"""Turn-by-turn files of real BPM systems, read into and written from :class:`~.bpm.TurnByTurn`.
+"""Turn-by-turn BPM files, read into and written from :class:`~.bpm.TurnByTurn`.
 
-- **RHIC** (``read_rhic``, ``write_rhic``): the SDDS files RHIC's orbit system
-  writes for every turn-by-turn acquisition, e.g.
-  ``RunData/currentFill/RHIC/Orbit/TBT/Blue/tbt.<date>.sdds``. Parameters carry
-  the time, fill number and trigger; arrays the BPM names, gains and averaging
-  per plane; one row per reading, turn after turn, with s, position (mm), the
-  raw A and B signals and a status. Each plane has its own BPM list. Writing
-  a virtual ring's data in this layout lets tools made for RHIC's files read it.
-- **NSLS-II** (``read_nsls2``): the HDF5 files of turn-by-turn studies there,
-  matrices ``x0``/``y0`` (or ``X``/``Y``) of ``[bpm, turn]`` in nm, with the
-  beam current and a comment; they carry no BPM names.
+- **HDF5** (``write_hdf5``, ``read_hdf5``): EICViBE's own files, the default
+  wherever it writes BPM data. Per plane (groups ``x`` and ``y``) the BPMs'
+  names, s (m), the readings ``position[bpm, turn]`` (mm), the sum signal and
+  the status; the ring, first turn, time, revolution period, source and
+  metadata (JSON) as attributes of the file. An acquisition reads back as it
+  was written. ``read_hdf5`` also reads HDF5 files of plain matrices,
+  ``x0``/``y0`` (or ``X``/``Y``) of ``[bpm, turn]`` in nm, with the beam
+  current and a comment; those carry no BPM names.
+- **SDDS** (``read_sdds``, ``write_sdds``): turn-by-turn files in SDDS, the
+  self-describing data set format of Argonne's APS. Parameters carry the time,
+  fill number and trigger; arrays the BPM names, gains and averaging per plane;
+  one row per reading, turn after turn, with s, position (mm), the raw A and B
+  signals and a status. Each plane has its own BPM list. Writing an
+  acquisition in this layout lets tools made for these files read it.
 
-The SDDS reader handles the ASCII form of one page, which is what these files
-use; SDDS is APS's self-describing data set format.
+``read_sdds_page`` and ``write_sdds_page`` read and write the first page of any
+SDDS file in its ASCII form, which is what these files use.
 """
 
+import json
 import os
 import shlex
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import h5py
 import numpy as np
 
 from .bpm import NO_BEAM, VALID, PlaneData, TurnByTurn
+
+# -- EICViBE's turn-by-turn HDF5 ----------------------------------------------------------
+
+#: What an EICViBE turn-by-turn file says it is: its ``layout`` attribute.
+HDF5_LAYOUT = "eicvibe turn-by-turn"
+HDF5_VERSION = 1
+
+
+def _plain(value: Any) -> Any:
+    """What JSON cannot write as it is: numpy's numbers and arrays, times."""
+    if isinstance(value, np.generic | np.ndarray):
+        return value.tolist()
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return str(value)
+
+
+def write_hdf5(tbt: TurnByTurn, path: str | Path) -> None:
+    """A turn-by-turn acquisition in EICViBE's HDF5 layout, which ``read_hdf5`` reads back whole."""
+    temporary = Path(f"{path}.part")
+    with h5py.File(temporary, "w") as f:
+        f.attrs["layout"] = HDF5_LAYOUT
+        f.attrs["version"] = HDF5_VERSION
+        f.attrs["ring"] = tbt.ring
+        f.attrs["first_turn"] = tbt.first_turn
+        f.attrs["source"] = tbt.source
+        f.attrs["metadata"] = json.dumps(tbt.metadata, default=_plain)
+        if tbt.time is not None:
+            f.attrs["time"] = tbt.time.isoformat()
+        if tbt.revolution_period is not None:
+            f.attrs["revolution_period"] = tbt.revolution_period
+        for name in ("x", "y"):
+            data, group = tbt.plane(name), f.create_group(name)
+            group["bpms"] = np.array(data.bpms, dtype=h5py.string_dtype())
+            group["s"] = np.asarray(data.s, dtype=float)
+            group["s"].attrs["units"] = "m"
+            group["position"] = np.asarray(data.position, dtype=float)
+            group["position"].attrs["units"] = "mm"
+            if data.intensity is not None:
+                group["intensity"] = np.asarray(data.intensity, dtype=float)
+            if data.status is not None:
+                group["status"] = np.asarray(data.status)
+    os.replace(temporary, path)
+
+
+def read_hdf5(path: str | Path, *, bpms: list[str] | None = None, s: list[float] | None = None) -> TurnByTurn:
+    """A turn-by-turn HDF5 file: EICViBE's own, as ``write_hdf5`` wrote it, or plain matrices.
+
+    Matrices (``x0``/``y0``, ``X``/``Y`` or ``x``/``y``: nm, ``[bpm, turn]``) name no BPMs; give their
+    names and s if known, else they are ``bpm001``, ``bpm002``, ... An EICViBE file names its own.
+    """
+    with h5py.File(path, "r") as f:
+        if f.attrs.get("layout") == HDF5_LAYOUT:
+            return _eicvibe_layout(f)
+        return _matrices(f, path, bpms, s)
+
+
+def _eicvibe_layout(f: h5py.File) -> TurnByTurn:
+    planes = {}
+    for name in ("x", "y"):
+        group = f[name]
+        planes[name] = PlaneData(
+            tuple(group["bpms"].asstr()[()]),
+            group["s"][()],
+            group["position"][()],
+            group["intensity"][()] if "intensity" in group else None,
+            group["status"][()] if "status" in group else None,
+        )
+    a = f.attrs
+    return TurnByTurn(
+        ring=str(a["ring"]),
+        x=planes["x"],
+        y=planes["y"],
+        first_turn=int(a["first_turn"]),
+        time=datetime.fromisoformat(a["time"]) if "time" in a else None,
+        revolution_period=float(a["revolution_period"]) if "revolution_period" in a else None,
+        source=str(a["source"]),
+        metadata=json.loads(a["metadata"]),
+    )
+
+
+def _matrices(f: h5py.File, path: str | Path, bpms: list[str] | None, s: list[float] | None) -> TurnByTurn:
+    keys = next(
+        (
+            pair
+            for pair in (("x0", "y0"), ("X", "Y"), ("x", "y"))
+            if all(isinstance(f.get(k), h5py.Dataset) for k in pair)
+        ),
+        None,
+    )
+    if keys is None:
+        raise ValueError(f"{path} holds no turn-by-turn data: neither EICViBE's layout nor matrices x0, y0")
+    x, y = (np.asarray(f[k][()], dtype=float) * 1e-6 for k in keys)  # nm to mm
+    metadata = {
+        k: (f[k][()].decode() if isinstance(f[k][()], bytes) else f[k][()].item())
+        for k in ("Ib", "comment", "hor. volt", "ver. volt", "n")
+        if k in f and f[k].shape == ()
+    }
+    names = tuple(bpms or (f"bpm{i + 1:03d}" for i in range(x.shape[0])))
+    positions = np.asarray(s if s is not None else np.full(len(names), np.nan), dtype=float)
+    return TurnByTurn(
+        ring="",
+        x=PlaneData(names, positions, x),
+        y=PlaneData(names, positions, y),
+        first_turn=0,
+        time=None,
+        source=f"HDF5 turn-by-turn file {path}",
+        metadata=metadata,
+    )
+
 
 # -- SDDS (ASCII, one page) -------------------------------------------------------------
 
@@ -61,7 +177,7 @@ def _value(text: str, kind: str) -> Any:
     return text
 
 
-def read_sdds(path: str | Path) -> dict[str, Any]:
+def read_sdds_page(path: str | Path) -> dict[str, Any]:
     """The first page of an ASCII SDDS file: ``{"parameters": {...}, "arrays": {...}, "columns": {...}}``."""
     text = Path(path).read_text(encoding="latin-1")
     if not text.startswith("SDDS"):
@@ -119,14 +235,14 @@ def _format(value: Any, kind: str) -> str:
     return f'"{text}"' if (not text or " " in text) else text
 
 
-def write_sdds(
+def write_sdds_page(
     path: str | Path,
     definitions: list[tuple[str, dict[str, str]]],
     parameters: dict[str, Any],
     arrays: dict[str, Any],
     columns: dict[str, Any],
 ) -> None:
-    """One page of ASCII SDDS with these definitions (as ``read_sdds`` returns them) and values."""
+    """One page of ASCII SDDS with these definitions (as ``read_sdds_page`` returns them) and values."""
     out = ["SDDS1"]
     for kind, fields in definitions:
         items = ", ".join(
@@ -157,10 +273,10 @@ def write_sdds(
     os.replace(temporary, path)
 
 
-# -- RHIC turn-by-turn SDDS -----------------------------------------------------------
+# -- SDDS turn-by-turn ----------------------------------------------------------------
 
-#: The layout of RHIC's turn-by-turn files, as their headers define it.
-RHIC_DEFINITIONS: list[tuple[str, dict[str, str]]] = [
+#: The layout of the SDDS turn-by-turn files, as their headers define it.
+SDDS_DEFINITIONS: list[tuple[str, dict[str, str]]] = [
     ("parameter", {"name": "datatype", "type": "long"}),
     ("parameter", {"name": "timestamp", "type": "long"}),
     ("parameter", {"name": "timestampns", "type": "long"}),
@@ -216,7 +332,7 @@ RHIC_DEFINITIONS: list[tuple[str, dict[str, str]]] = [
 ]
 
 
-def _rhic_plane(data: dict[str, Any], plane: str) -> PlaneData:
+def _sdds_plane(data: dict[str, Any], plane: str) -> PlaneData:
     p, a, c = data["parameters"], data["arrays"], data["columns"]
     n, turns = int(p[f"nBpms{plane}"]), int(p[f"nTurns{plane}"])
     used = n * turns  # rows are turn after turn; the other plane's longer list pads this one's columns
@@ -224,19 +340,19 @@ def _rhic_plane(data: dict[str, Any], plane: str) -> PlaneData:
     def matrix(name: str, dtype=float) -> np.ndarray:
         return np.asarray(c[f"{name}{plane}"][:used], dtype=dtype).reshape(turns, n).T
 
-    # Positions are kept as read: what RHIC's status bits mean is the analysis's call.
+    # Positions are kept as read: what the status bits mean is the analysis's call.
     raw = matrix("araw") + matrix("braw")
     return PlaneData(
         tuple(a[f"swName{plane}"]), matrix("s")[:, 0], matrix("position"), raw, matrix("status", int)
     )
 
 
-def read_rhic(path: str | Path) -> TurnByTurn:
-    """A RHIC turn-by-turn file (SDDS)."""
-    data = read_sdds(path)
+def read_sdds(path: str | Path) -> TurnByTurn:
+    """An SDDS turn-by-turn file."""
+    data = read_sdds_page(path)
     p = data["parameters"]
     seconds = p.get("timestamp", 0) + p.get("timestampns", 0) * 1e-9
-    ring = (
+    ring = (  # the ring, where the file was saved under a folder named for it
         "Blue"
         if "/Blue/" in str(p.get("filename", ""))
         else "Yellow"
@@ -245,12 +361,12 @@ def read_rhic(path: str | Path) -> TurnByTurn:
     )
     return TurnByTurn(
         ring=ring,
-        x=_rhic_plane(data, "X"),
-        y=_rhic_plane(data, "Y"),
+        x=_sdds_plane(data, "X"),
+        y=_sdds_plane(data, "Y"),
         first_turn=0,
         time=datetime.fromtimestamp(seconds, UTC) if seconds else None,
         revolution_period=None,
-        source=f"RHIC turn-by-turn file {path}",
+        source=f"SDDS turn-by-turn file {path}",
         metadata={
             k: p[k]
             for k in ("rhicfillnum", "comment", "trigev", "trigevline", "bucket", "filename", "machine")
@@ -259,8 +375,8 @@ def read_rhic(path: str | Path) -> TurnByTurn:
     )
 
 
-def write_rhic(tbt: TurnByTurn, path: str | Path) -> None:
-    """A turn-by-turn acquisition in RHIC's file layout, so tools made for RHIC's files read it."""
+def write_sdds(tbt: TurnByTurn, path: str | Path) -> None:
+    """A turn-by-turn acquisition in the SDDS turn-by-turn layout, so tools made for those files read it."""
     stamp = tbt.time.timestamp() if tbt.time else 0.0
     meta = tbt.metadata
     parameters: dict[str, Any] = {
@@ -307,47 +423,12 @@ def write_rhic(tbt: TurnByTurn, path: str | Path) -> None:
             ("status", status),
         ):
             columns[f"{name}{plane}"] = _turn_after_turn(matrix, rows)
-    write_sdds(path, RHIC_DEFINITIONS, parameters, arrays, columns)
+    write_sdds_page(path, SDDS_DEFINITIONS, parameters, arrays, columns)
 
 
 def _turn_after_turn(matrix: np.ndarray, rows: int) -> np.ndarray:
-    """``[bpm, turn]`` as RHIC's rows (turn after turn, BPM after BPM), padded to ``rows``."""
+    """``[bpm, turn]`` as the file's rows (turn after turn, BPM after BPM), padded to ``rows``."""
     values = np.asarray(matrix, dtype=float).T.reshape(-1)
     out = np.zeros(rows)
     out[: len(values)] = values
     return out
-
-
-# -- NSLS-II turn-by-turn HDF5 -------------------------------------------------------
-
-
-def read_nsls2(
-    path: str | Path, *, bpms: list[str] | None = None, s: list[float] | None = None
-) -> TurnByTurn:
-    """An NSLS-II turn-by-turn study file (HDF5: ``x0``/``y0`` or ``X``/``Y``, nm, ``[bpm, turn]``).
-
-    The files name no BPMs; give their names and s if known, else they are ``bpm001``, ``bpm002``, ...
-    """
-    try:
-        import h5py
-    except ImportError as error:
-        raise ImportError("reading HDF5 needs h5py: pip install h5py") from error
-    with h5py.File(path, "r") as f:
-        keys = ("x0", "y0") if "x0" in f else ("X", "Y") if "X" in f else ("x", "y")
-        x, y = (np.asarray(f[k][()], dtype=float) * 1e-6 for k in keys)  # nm to mm
-        metadata = {
-            k: (f[k][()].decode() if isinstance(f[k][()], bytes) else f[k][()].item())
-            for k in ("Ib", "comment", "hor. volt", "ver. volt", "n")
-            if k in f and f[k].shape == ()
-        }
-    names = tuple(bpms or (f"bpm{i + 1:03d}" for i in range(x.shape[0])))
-    positions = np.asarray(s if s is not None else np.full(len(names), np.nan), dtype=float)
-    return TurnByTurn(
-        ring="",
-        x=PlaneData(names, positions, x),
-        y=PlaneData(names, positions, y),
-        first_turn=0,
-        time=None,
-        source=f"NSLS-II turn-by-turn file {path}",
-        metadata=metadata,
-    )

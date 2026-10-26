@@ -273,6 +273,20 @@ def test_a_bpms_roll_mixes_the_planes_and_its_closed_orbit_has_noise_of_its_own(
             assert spread < 1e-9  # no average of the turn-by-turn noise
 
 
+def test_bpms_remodelled_keep_their_own_errors_scaled_and_say_what_they_were():
+    """A BPM read twice (a route passing it on two turns) has one offset, before and after."""
+    bpms = VirtualBpms(BpmModel(offset_rms=0.1, gain_rms=0.01, roll_rms=1e-3), 3, 10, 1e-9, ["a", "b", "a"])
+    offsets, gains, rolls = bpms.offsets.copy(), bpms.gains.copy(), bpms.rolls.copy()
+    bpms.remodel(BpmModel(offset_rms=0.3, gain_rms=0.01, roll_rms=0.0, resolution=0.02), until=500)
+    assert bpms.offsets == pytest.approx(3 * offsets) and bpms.gains == pytest.approx(gains)
+    assert np.all(bpms.rolls == 0) and bpms.offsets[:, 0] == pytest.approx(bpms.offsets[:, 2])
+    assert bpms.model.resolution == 0.02  # the noise of the readings from now on
+    hidden = bpms.hidden(["a", "b", "a"])
+    assert hidden["offsets_mm"] == bpms.offsets.tolist() and hidden["earlier"] == [
+        {"offsets_mm": offsets.tolist(), "gains": gains.tolist(), "rolls_rad": rolls.tolist(), "until": 500}
+    ]
+
+
 def test_a_routes_supplies_jitter_shot_to_shot(tmp_path):
     lattice = demo_lattice()
     route = route_through(lattice, "transfer", ROUTES["transfer"])

@@ -10,12 +10,12 @@ A run's folder::
 
     run.json               what ran: lattice, branch, engine, fidelity, BPMs, beam, clock, buffer
     events.jsonl           kicks, setting changes, injections, losses, captures, errors, with their turn
-    tbt/<first>-<n>.npz    turn-by-turn readings, a chunk of n turns from turn <first>:
+    tbt/<first>-<n>.h5     turn-by-turn readings, a chunk of n turns from turn <first> (HDF5):
                            x, y (mm), intensity (nC), status ([bpm, turn]); float32 and uint8.
                            A ring keeps the chunks of its latest ``buffer_turns`` turns (the buffer)
     orbit.bin              the slow orbit: the mean of every BPM over each ``slow_period`` seconds of
                            the run (wall clock), or over each chunk (float64 records)
-    captures/<id>.npz      a capture: the turns around a trigger, as tbt chunks are; <id>.json what it is
+    captures/<id>.h5       a capture: the turns around a trigger, as tbt chunks are; <id>.json what it is
     hidden.json            the BPMs' hidden errors (offsets, gains): not part of the data
     state.json             running, stopped, done or failed, and the turn reached: for viewers
 
@@ -34,6 +34,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import h5py
 import numpy as np
 from pydantic import BaseModel, Field
 
@@ -152,7 +153,7 @@ class BpmHistory:
         if not self.writable:
             raise PermissionError("this history is open for reading")
         count = x.shape[1]
-        path = self.directory / "tbt" / f"{first:012d}-{count}.npz"
+        path = self.directory / "tbt" / f"{first:012d}-{count}.h5"
         _save(path, x, y, intensity, status)
         sx, sy = slow if slow is not None else (x, y)
         if self.info.slow_period > 0 and isinstance(wall, tuple):
@@ -239,7 +240,7 @@ class BpmHistory:
         ident = f"{trigger:012d}-{kind}"
         directory = self.directory / "captures"
         directory.mkdir(exist_ok=True)
-        _save(directory / f"{ident}.npz", tbt.x.position, tbt.y.position, tbt.x.intensity, tbt.x.status)
+        _save(directory / f"{ident}.h5", tbt.x.position, tbt.y.position, tbt.x.intensity, tbt.x.status)
         meta = {
             "id": ident,
             "kind": kind,
@@ -255,7 +256,7 @@ class BpmHistory:
         return meta
 
     def _retain_captures(self) -> None:
-        captures = sorted((self.directory / "captures").glob("*.npz"))
+        captures = sorted((self.directory / "captures").glob("*.h5"))
         sizes = [c.stat().st_size for c in captures]
         total = sum(sizes)
         for path, size in zip(captures[:-1], sizes[:-1], strict=False):
@@ -270,7 +271,7 @@ class BpmHistory:
         directory = self.directory / "captures"
         out = []
         for path in sorted(directory.glob("*.json")) if directory.exists() else []:
-            if path.with_suffix(".npz").exists():
+            if path.with_suffix(".h5").exists():
                 out.append(json.loads(path.read_text(encoding="utf-8")))
         return out
 
@@ -280,8 +281,8 @@ class BpmHistory:
         if not meta_path.exists():
             raise KeyError(f"no capture {ident}")
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        with np.load(meta_path.with_suffix(".npz")) as data:
-            arrays = {k: data[k] for k in ("x", "y", "intensity", "status")}
+        with h5py.File(meta_path.with_suffix(".h5"), "r") as data:
+            arrays = {k: data[k][()] for k in ("x", "y", "intensity", "status")}
         return self._turn_by_turn(meta["first"], arrays, f"capture {ident} ({meta['kind']})")
 
     def set_state(self, state: str, turn: int, **detail: Any) -> None:
@@ -318,8 +319,8 @@ class BpmHistory:
 
     def _chunks(self) -> list[_Chunk]:
         out = []
-        for path in (self.directory / "tbt").glob("*.npz"):
-            if path.name.endswith(".part.npz"):
+        for path in (self.directory / "tbt").glob("*.h5"):
+            if path.name.endswith(".part.h5"):
                 continue
             first, _, count = path.stem.partition("-")
             out.append(_Chunk(int(first), int(count), path))
@@ -358,7 +359,7 @@ class BpmHistory:
                 continue
             if chunk.first > covered:
                 break  # a gap: dropped while we read; keep what is contiguous
-            with np.load(chunk.path) as data:
+            with h5py.File(chunk.path, "r") as data:
                 cut = slice(covered - chunk.first, min(stop, chunk.end) - chunk.first)
                 for key in parts:
                     parts[key].append(data[key][:, cut])
@@ -451,14 +452,12 @@ class BpmHistory:
 
 
 def _save(path: Path, x, y, intensity, status) -> None:
-    temporary = path.with_suffix(".part.npz")
-    np.savez(
-        temporary,
-        x=np.asarray(x).astype(np.float32),
-        y=np.asarray(y).astype(np.float32),
-        intensity=np.asarray(intensity).astype(np.float32),
-        status=np.asarray(status).astype(np.uint8),
-    )
+    temporary = path.with_suffix(".part.h5")
+    with h5py.File(temporary, "w") as out:
+        out["x"] = np.asarray(x).astype(np.float32)
+        out["y"] = np.asarray(y).astype(np.float32)
+        out["intensity"] = np.asarray(intensity).astype(np.float32)
+        out["status"] = np.asarray(status).astype(np.uint8)
     os.replace(temporary, path)
 
 

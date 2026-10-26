@@ -1,7 +1,9 @@
 """The virtual accelerator service: who may change what, what the log keeps, and the machine files kept."""
 
 import hashlib
+import threading
 import time
+from contextlib import contextmanager
 
 import pytest
 
@@ -26,6 +28,27 @@ def server(tmp_path_factory):
     app = create_app(Catalog([folder / "files"]), static_dir=None, runs=RunCatalog([va.runs]), va=va)
     with TestClient(app) as client:
         yield client, va, password, lattice_file
+
+
+@contextmanager
+def serving(app, port: int):
+    """The app on a real port, for the notebook client, which speaks HTTP."""
+    import uvicorn
+
+    web = uvicorn.Server(
+        uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning", lifespan="off")
+    )
+    thread = threading.Thread(target=web.run, daemon=True)
+    thread.start()
+    try:
+        for _ in range(100):
+            if web.started:
+                break
+            time.sleep(0.05)
+        yield f"http://127.0.0.1:{port}"
+    finally:
+        web.should_exit = True
+        thread.join(5)
 
 
 def login(client, name, password) -> TestClient:
@@ -239,24 +262,12 @@ def test_roles_go_up():
 
 
 def test_the_notebook_client_writes_and_reads_the_log(server, people, ring):
-    import threading
-
-    import uvicorn
-
     from eicvibe.va.client import Client, Refused
 
     client, va, *_ = server
     token = people["ann"].post("/api/v1/va/me/tokens", json={"label": "client test"}).json()["token"]
-    config = uvicorn.Config(client.app, host="127.0.0.1", port=8797, log_level="warning", lifespan="off")
-    web = uvicorn.Server(config)
-    thread = threading.Thread(target=web.run, daemon=True)
-    thread.start()
-    try:
-        for _ in range(100):
-            if web.started:
-                break
-            time.sleep(0.05)
-        notebook = Client("http://127.0.0.1:8797", token=token)
+    with serving(client.app, 8797) as url:
+        notebook = Client(url, token=token)
         assert notebook.me()["name"] == "ann"
         channel = next(c for c in notebook.settings(ring["id"]) if c.endswith(":sp:h"))
         result = notebook.set(ring["id"], {channel: 1.25}, reason="client")
@@ -265,9 +276,6 @@ def test_the_notebook_client_writes_and_reads_the_log(server, people, ring):
         with pytest.raises(Refused, match="outside the limits"):
             notebook.set(ring["id"], {channel: 1e6})
         assert notebook.orbits(ring["id"])["bpms"]
-    finally:
-        web.should_exit = True
-        thread.join(5)
 
 
 def test_the_console_manages_accounts_and_prints_the_log(server, capsys):

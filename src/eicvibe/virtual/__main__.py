@@ -7,7 +7,7 @@
                     [--errors errors.yaml]
     eicvibe-virtual route LATTICE --through ltr,rcs --out runs/direct
     eicvibe-virtual show runs/bar1 [--turns 1024]
-    eicvibe-virtual export runs/bar1 acquisition.sdds [--start TURN] [--turns 1024]
+    eicvibe-virtual export runs/bar1 acquisition.h5 [--start TURN] [--turns 1024] [--format sdds]
 
 ``ring`` tracks until N turns (or Ctrl-C), recording every BPM every turn into
 the run folder, with the magnets', supplies' and BPMs' errors of ``--errors``
@@ -15,8 +15,9 @@ the run folder, with the magnets', supplies' and BPMs' errors of ``--errors``
 as the machine folder's ramp profile says (ramps/, ADR 0013); ``route`` sends shots along a route of
 the machine's ``routes.yaml`` (or through the branches given), recording every BPM every
 shot; ``show`` reads a run's folder, also while the run goes on; ``export``
-writes turns (or shots) in RHIC's turn-by-turn file layout, which tools made
-for RHIC's files read.
+writes turns (or shots) to a file: HDF5, EICViBE's own (``read_hdf5``), or for
+a ``.sdds`` file (or ``--format sdds``) the SDDS turn-by-turn layout, which
+tools made for SDDS files read.
 """
 
 import argparse
@@ -27,7 +28,7 @@ from pathlib import Path
 
 import numpy as np
 
-from eicvibe.diagnostics import amplitudes, closed_orbit, tune, write_rhic
+from eicvibe.diagnostics import amplitudes, closed_orbit, tune, write_hdf5, write_sdds
 from eicvibe.engines.contracts import Fidelity
 from eicvibe.engines.remote import EngineHost
 
@@ -345,10 +346,11 @@ def _matched_text(m: dict) -> str:
 def export(args: argparse.Namespace) -> None:
     history = BpmHistory.open(args.run)
     tbt = history.capture(args.capture) if args.capture else history.turn_by_turn(args.start, args.turns)
-    write_rhic(tbt, args.output)
+    form = args.format or ("sdds" if args.output.suffix == ".sdds" else "hdf5")
+    (write_sdds if form == "sdds" else write_hdf5)(tbt, args.output)
     print(
         f"wrote turns {tbt.first_turn} to {tbt.first_turn + tbt.turns} "
-        f"of {len(tbt.x.bpms)} BPMs to {args.output}"
+        f"of {len(tbt.x.bpms)} BPMs to {args.output} ({form.upper()})"
     )
 
 
@@ -425,12 +427,15 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("run", type=Path)
     s.add_argument("--turns", type=int, default=1024)
     s.set_defaults(handler=show)
-    e = commands.add_parser("export", help="turns of a run as a RHIC turn-by-turn file (SDDS)")
+    e = commands.add_parser("export", help="turns of a run as a file: HDF5, or SDDS")
     e.add_argument("run", type=Path)
     e.add_argument("output", type=Path)
     e.add_argument("--start", type=int, default=None, help="first turn; default: the latest turns")
     e.add_argument("--turns", type=int, default=1024)
     e.add_argument("--capture", default=None, help="a capture's id (eicvibe-virtual show lists them)")
+    e.add_argument(
+        "--format", choices=("hdf5", "sdds"), default=None, help="default: SDDS for a .sdds file, else HDF5"
+    )
     e.set_defaults(handler=export)
     args = parser.parse_args(argv)
     args.handler(args)

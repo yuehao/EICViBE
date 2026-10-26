@@ -11,11 +11,14 @@ applied to the live layer and then to the running engine. The machine files
 are never changed; resetting a machine drops its live layer.
 """
 
+import json
+import logging
 import math
 import re
+import shutil
 import threading
 import uuid
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -32,6 +35,8 @@ from eicvibe.virtual.errors import ErrorSpec
 
 from .settings import MachineSettings, Values
 from .store import ANONYMOUS, Role, Store, User, now
+
+_log = logging.getLogger(__name__)
 
 
 class Forbidden(Exception):
@@ -468,29 +473,42 @@ class VirtualAccelerator:
     def set_errors(
         self, user: User, machine_id: str, errors: ErrorSpec | Mapping[str, Any], reason: str = ""
     ) -> dict[str, Any]:
-        """Give a stopped machine other errors; it draws them when it starts. Without a seed, it
-        keeps its own: the same magnets keep the same errors where their spec is the same."""
+        """Give a machine other errors. Its magnets' and supplies' (and the seed) only while it is
+        stopped: it draws them when it starts. Its BPMs' also while it runs: they read the beam and
+        leave it alone, so the run reads with them from its next turn. Without a seed, it keeps its own:
+        the same magnets keep the same errors where their spec is the same."""
         instance = self._instance(machine_id)
         self._may(user, instance, Role.ADMIN)
-        if instance.state not in ("stopped", "failed"):
-            raise Conflict(f"stop {machine_id} first: a machine draws its errors when it starts")
         errors = _seeded(ErrorSpec.model_validate(errors), instance.spec.errors.seed)
+        current = instance.spec.errors
+        bpms_only = errors.model_dump(exclude={"bpms"}) == current.model_dump(exclude={"bpms"})
         if problems := self._errors_entry(instance.spec, errors)["problems"]:
             raise ValueError(
                 "; ".join(problems)
                 + ": nothing would be drawn for it; check its kinds and names (no names: all)"
             )
-        new_seed = errors.seed != instance.spec.errors.seed
-        with self._lock:
-            instance.spec = instance.spec.model_copy(update={"errors": errors})
-            self.store.update_machine(machine_id, instance.spec.model_dump())
+        with instance.lock:
+            if instance.state not in ("stopped", "failed", "running"):
+                raise Conflict(f"{machine_id} is {instance.state}: wait until it runs or has stopped")
+            if instance.state == "running" and not bpms_only:
+                raise Conflict(
+                    f"stop {machine_id} to change its magnets' or supplies' errors or its seed: it draws "
+                    "them as it starts (its BPMs' errors change while it runs)"
+                )
+            with self._lock:
+                instance.spec = instance.spec.model_copy(update={"errors": errors})
+                self.store.update_machine(machine_id, instance.spec.model_dump())
+            live = instance.state == "running" and errors.bpms != current.bpms
+            if live:
+                instance.run.set_bpms(errors.bpm_model())
         self.store.act(
             user.name,
             "errors",
             machine_id,
             reason,
             errors=_described(errors),
-            seed="new" if new_seed else "kept",
+            seed="new" if errors.seed != current.seed else "kept",
+            **({"run": instance.run_id} if live else {}),
         )
         return self.errors(user, machine_id)
 
@@ -755,22 +773,23 @@ class VirtualAccelerator:
 
     def propose(self, user: User, machine_id: str, request: Mapping[str, Any]) -> dict[str, Any]:
         """An operation computed on the machine as it is set and as its BPMs read: a proposal, written to
-        nothing. Agents may propose on shared machines too; a person applies there."""
-        from eicvibe.operations.bump import local_bump
+        nothing. Agents may propose on shared machines too; a person applies there. The operation is the
+        catalog's (ADR 0017): its parameters are validated, and what verifies it is measured beforehand."""
+        from eicvibe.operations.catalog import operation
         from eicvibe.operations.model import MachineModel
-        from eicvibe.operations.orbit import correct_orbit
-        from eicvibe.operations.tune import move_tunes
 
         instance = self._instance(machine_id)
         self._may(user, instance, Role.PHYSICIST, agent=True)
         spec = instance.spec
-        if spec.kind != "ring":
-            raise ValueError("operations are for rings so far; a route's lines come later")
-        request = dict(request)
-        operation, plane = request.get("operation"), request.get("plane") or "x"
+        declared = operation(request.get("operation"))
+        if spec.kind not in declared.machines:
+            kinds = " and ".join(f"{kind}s" for kind in sorted(declared.machines))
+            raise ValueError(f"{declared.label} is for {kinds} so far, not a {spec.kind}")
+        parameters = declared.parameters.model_validate(request)
+        request = {"operation": declared.name, **parameters.model_dump(), "reason": request.get("reason", "")}
         settings = self._machine_settings(spec.mode)
         context: dict[str, Any] = {"turn": instance.position}
-        if operation in ("orbit_correction", "local_bump") and instance.state == "running":
+        if declared.verified_by == "orbit" and instance.state == "running":
             try:
                 context["orbit_before"] = self._measured_orbit(instance)  # to verify against
             except Conflict:
@@ -781,50 +800,97 @@ class VirtualAccelerator:
         if instance.run is not None:
             effects = frozenset() if instance.run.warnings else instance.run.options.effects
         options = Options(fidelity=Fidelity(spec.fidelity), effects=effects)
+        measured = _Measured(lambda: context.get("orbit_before") or self._measured_orbit(instance))
         with MachineModel(settings, spec.target, self.live(machine_id), options=options) as model:
-            if operation == "orbit_correction":
-                orbit = None
-                if request.get("source", "measured") == "measured":
-                    measured = context.get("orbit_before") or self._measured_orbit(instance)
-                    orbit = {n: v * 1e-3 for n, v in measured[plane].items()}
-                proposal = correct_orbit(
-                    model, plane, orbit, method=request.get("method", "svd"),
-                    damping=float(request.get("damping", 0.01)), count=int(request.get("count", 3)),
-                    correctors=request.get("correctors"),
-                )  # fmt: skip
-            elif operation == "local_bump":
-                if request.get("at") is None or request.get("amplitude_mm") is None:
-                    raise ValueError("a bump needs where (at: a BPM's name) and its amplitude_mm")
-                angle = request.get("angle_mrad")
-                proposal = local_bump(
-                    model, plane, request["at"], float(request["amplitude_mm"]) * 1e-3,
-                    None if angle is None else float(angle) * 1e-3, correctors=request.get("correctors"),
-                )  # fmt: skip
-            elif operation == "tune_move":
-                proposal = move_tunes(
-                    model, float(request.get("dqx", 0.0)), float(request.get("dqy", 0.0)),
-                    quadrupoles=request.get("quadrupoles"),
-                )  # fmt: skip
-                context["tunes_before"] = self.tunes(machine_id)
-            else:
+            try:
+                proposal = declared.propose(model, parameters, measured)
+            except ValueError, KeyError, Conflict, Forbidden:
+                raise
+            except Exception as error:  # noqa: BLE001 - the engines' own errors, whichever engine
+                _log.exception("%s on %s failed in the model", declared.name, machine_id)
                 raise ValueError(
-                    f"no operation {operation!r}; operations: orbit_correction, local_bump, tune_move"
-                )
+                    f"{declared.label} could not be computed in the model: {type(error).__name__}: {error}"
+                ) from error
+            if declared.verified_by == "tunes":
+                context["tunes_before"] = self.tunes(machine_id)
         ident = uuid.uuid4().hex[:10]
         stored = proposal.model_dump(mode="json") | {"context": context}
-        self.store.add_proposal(ident, machine_id, user, operation, request, stored, instance.position)
+        self.store.add_proposal(ident, machine_id, user, declared.name, request, stored, instance.position)
         self.store.act(
-            user.name, "propose", machine_id, request.get("reason", ""), proposal=ident, operation=operation,
+            user.name, "propose", machine_id, request["reason"], proposal=ident, operation=declared.name,
             agent=user.agent, summary=proposal.summary,
         )  # fmt: skip
         return self.store.proposal(ident)
 
-    def proposals(self, machine_id: str) -> list[dict[str, Any]]:
+    def proposals(self, machine_id: str, waiting: bool = False) -> list[dict[str, Any]]:
         self._instance(machine_id)
-        return self.store.proposals(machine_id)
+        return self.store.proposals(machine_id, waiting=waiting)
 
     def proposal(self, ident: str) -> dict[str, Any]:
         return self.store.proposal(ident)
+
+    # -- what the service keeps besides its logs ------------------------------------------------
+
+    def history(self, user: User) -> dict[str, Any]:
+        """The runs' folders (their BPM histories, on disk), newest first, with their size and whether a
+        running machine uses them; and how many proposals each state has. For administrators to clear."""
+        self._require(user, Role.ADMIN)
+        in_use = self._runs_in_use()
+        runs = []
+        for folder in self.runs.iterdir() if self.runs.is_dir() else []:
+            if not folder.is_dir():
+                continue
+            try:
+                info = json.loads((folder / "run.json").read_text(encoding="utf-8"))
+            except OSError, ValueError:
+                info = {}  # a run that failed before it wrote what it was
+            runs.append(
+                {
+                    "id": folder.name,
+                    "machine": info.get("machine"),
+                    "engine": info.get("engine"),
+                    "started": info.get("start"),
+                    "bytes": _size(folder),
+                    "in_use": folder.name in in_use,
+                }
+            )
+        runs.sort(key=lambda r: r["started"] or "", reverse=True)
+        return {"runs": runs, "proposals": self.store.proposal_counts()}
+
+    def _runs_in_use(self) -> set[str]:
+        return {i.run_id for i in self._instances.values() if i.run_id is not None}
+
+    def delete_runs(self, user: User, runs: list[str] | None = None, reason: str = "") -> dict[str, Any]:
+        """Delete runs' folders, their BPM histories: these, or (None) every run no running machine uses.
+
+        A running machine's run is refused. The logs keep what the runs did, and this deletion.
+        """
+        self._require(user, Role.ADMIN)
+        in_use = self._runs_in_use()
+        known = {f.name for f in self.runs.iterdir() if f.is_dir()} if self.runs.is_dir() else set()
+        if runs is None:
+            chosen = sorted(known - in_use)
+        else:
+            chosen = list(dict.fromkeys(runs))
+            if unknown := [r for r in chosen if r not in known]:
+                raise KeyError(f"no run {unknown[0]}")
+            if busy := [r for r in chosen if r in in_use]:
+                raise Conflict(f"{busy[0]} is a running machine's run: stop the machine first")
+        freed = 0
+        for run in chosen:
+            freed += _size(self.runs / run)
+            shutil.rmtree(self.runs / run, ignore_errors=True)
+        self.store.act(user.name, "delete runs", None, reason, runs=chosen, bytes=freed)
+        return {"deleted": chosen, "bytes": freed}
+
+    def delete_proposals(self, user: User, waiting: bool = False, reason: str = "") -> dict[str, Any]:
+        """Delete every machine's finished proposals (verified, discarded, stale), and with ``waiting`` those
+        still waiting for a person too (proposed, applied). The logs keep what was proposed and done."""
+        self._require(user, Role.ADMIN)
+        states = ["verified", "discarded", "stale"] + (["proposed", "applied"] if waiting else [])
+        count = self.store.delete_proposals(states)
+        self.store.act(user.name, "delete proposals", None, reason, states=states, count=count)
+        return {"deleted": count}
 
     def apply(self, user: User, ident: str, reason: str = "") -> dict[str, Any]:
         """Write a proposal's changes, atomically, if the machine is still as it was proposed for.
@@ -891,9 +957,11 @@ class VirtualAccelerator:
             raise Conflict(f"proposal {ident} is {row['state']}: only an applied one is verified")
         if instance.state != "running":
             raise Conflict(f"{row['machine']} is {instance.state}: start it to measure")
+        from eicvibe.operations.catalog import operation
+
         settled = row["applied_turn"] + instance.spec.ramp_turns
         proposal, context = row["proposal"], row["proposal"].get("context", {})
-        if row["operation"] == "tune_move":
+        if operation(row["operation"]).verified_by == "tunes":
             reading = self.tunes(row["machine"])
             ready = (
                 reading is not None and reading["settled"] and reading["turn"] - reading["turns"] >= settled
@@ -1072,6 +1140,28 @@ def _spec_fields(stored: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in stored.items() if k in MachineSpec.model_fields}
 
 
+def _size(folder: Path) -> int:
+    """Bytes in a folder's files; a file removed meanwhile (a run's buffer moving on) counts nothing."""
+    total = 0
+    for path in folder.rglob("*"):
+        try:
+            total += path.stat().st_size if path.is_file() else 0
+        except OSError:
+            pass
+    return total
+
+
+@dataclass(frozen=True)
+class _Measured:
+    """What a machine measured, for an operation (the catalog's ``Measured``): its slow orbit, read when
+    asked for, by plane and BPM, mm."""
+
+    read: Callable[[], dict[str, dict[str, float]]]
+
+    def orbit(self, plane: str) -> dict[str, float]:
+        return {name: value * 1e-3 for name, value in self.read()[plane].items()}
+
+
 def _verify_orbit(proposal: dict, before: dict | None, samples, index: int) -> dict[str, Any]:
     """The orbit change the BPMs measured against the change predicted, at every BPM, mm."""
     predicted = proposal["predicted"]
@@ -1080,14 +1170,14 @@ def _verify_orbit(proposal: dict, before: dict | None, samples, index: int) -> d
     after = {n: float(v) for n, v in zip(names, getattr(samples, plane)[index], strict=True)}
     if before is None:
         return {"ready": True, "ok": False, "note": "no orbit was measured when it was proposed"}
-    if proposal["operation"] == "orbit_correction":
+    if "change" in predicted:  # the change at the BPMs (a bump)
+        expected = dict(zip(predicted["bpms"], predicted["change"], strict=True))
+    else:  # the orbit before and after (a correction)
         expected = {
             n: a - b
             for n, a, b in zip(predicted["bpms"], predicted["after"], predicted["before"], strict=True)
             if a is not None and b is not None
         }
-    else:
-        expected = dict(zip(predicted["bpms"], predicted["change"], strict=True))
     measured = {n: after[n] - before[plane][n] for n in expected if n in after and n in before[plane]}
     common = [n for n in expected if n in measured and measured[n] == measured[n]]
     if not common:

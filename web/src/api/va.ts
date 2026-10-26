@@ -24,7 +24,9 @@ export type TokenEntry = Schemas["TokenEntry"];
 export type AiSettings = Schemas["AiSettings"];
 export type AiChange = Schemas["AiChange"];
 export type AiTest = Schemas["AiTest"];
-export type ProposalRequest = Schemas["ProposalRequest"];
+export type OperationEntry = Schemas["OperationEntry"];
+/** An operation's name, the reason for the log, and its parameters, as its catalog entry describes them (ADR 0017). */
+export type ProposalRequest = { operation: string; reason?: string } & Record<string, unknown>;
 export type ProposalEntry = Schemas["ProposalEntry"];
 export type TuneReading = Schemas["TuneReading"];
 export type RampView = Schemas["RampView"];
@@ -32,6 +34,10 @@ export type ErrorSpec = Schemas["ErrorSpec"];
 export type MagnetErrors = Schemas["MagnetErrors"];
 export type SupplyNoise = Schemas["SupplyNoise"];
 export type ErrorsEntry = Schemas["ErrorsEntry"];
+export type HistoryView = Schemas["HistoryView"];
+export type RunRecord = Schemas["RunRecord"];
+export type RunsDeleted = Schemas["RunsDeleted"];
+export type ProposalsDeleted = Schemas["ProposalsDeleted"];
 
 const BASE = "/api/v1/va";
 
@@ -105,9 +111,11 @@ export const va = {
     call<WriteResult>("POST", `/machines/${enc(id)}/snapshots/${snapshot}/restore`, { reason }),
 
   /** Operations (ADR 0010): proposals computed on a machine as set, applied by a person, verified. */
-  propose: (id: string, request: Partial<ProposalRequest> & Pick<ProposalRequest, "operation">) =>
+  operations: () => call<OperationEntry[]>("GET", "/operations"),
+  propose: (id: string, request: ProposalRequest) =>
     call<ProposalEntry>("POST", `/machines/${enc(id)}/proposals`, request),
-  proposals: (id: string) => call<ProposalEntry[]>("GET", `/machines/${enc(id)}/proposals`),
+  /** A machine's latest proposals; ``waiting``: only those still to apply or verify. */
+  proposals: (id: string, waiting = false) => call<ProposalEntry[]>("GET", `/machines/${enc(id)}/proposals`, undefined, { waiting }),
   apply: (proposal: string, reason = "") => call<ProposalEntry>("POST", `/proposals/${enc(proposal)}/apply`, { reason }),
   verify: (proposal: string) => call<ProposalEntry>("POST", `/proposals/${enc(proposal)}/verify`),
   discard: (proposal: string, reason = "") => call<ProposalEntry>("POST", `/proposals/${enc(proposal)}/discard`, { reason }),
@@ -126,6 +134,12 @@ export const va = {
   changeUser: (name: string, change: { role?: string; disabled?: boolean }) =>
     call<UserEntry>("PATCH", `/users/${enc(name)}`, change),
   resetPassword: (name: string) => call<UserCreated>("POST", `/users/${enc(name)}/password`),
+
+  /** What the service keeps besides its append-only logs: runs' BPM histories and proposals (administrators). */
+  history: () => call<HistoryView>("GET", "/history"),
+  deleteRuns: (reason = "") => call<RunsDeleted>("DELETE", "/runs", undefined, { reason }),
+  deleteRun: (run: string, reason = "") => call<RunsDeleted>("DELETE", `/runs/${enc(run)}`, undefined, { reason }),
+  deleteProposals: (waiting: boolean, reason = "") => call<ProposalsDeleted>("DELETE", "/proposals", undefined, { waiting, reason }),
 
   /** The AI features' model (administrators; ADR 0009). Keys go in, never out. */
   ai: () => call<AiSettings>("GET", "/ai"),

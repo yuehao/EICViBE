@@ -68,7 +68,10 @@ export function installKindColors(): void {
       .join(" ");
   const style = document.createElement("style");
   style.id = "kind-colors";
-  style.textContent = `:root { ${rules(false)} } @media (prefers-color-scheme: dark) { :root { ${rules(true)} } }`;
+  // A widget in a notebook follows the notebook's theme rather than the system's (data-scheme).
+  style.textContent =
+    `:root { ${rules(false)} } @media (prefers-color-scheme: dark) { :root { ${rules(true)} } } ` +
+    `[data-scheme="light"] { ${rules(false)} } [data-scheme="dark"] { ${rules(true)} }`;
   document.head.append(style);
 }
 

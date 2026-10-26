@@ -1,0 +1,41 @@
+/* A view's own layout in a notebook's output (ADR 0016). The page's stylesheet, scoped to the
+   widget when built, styles what is inside; these rules are written scoped already. */
+
+.eicvibe-widget {
+  position: relative;
+  font: 13px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.eicvibe-widget.nb-view {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.eicvibe-widget .nb-floor {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 0;
+  background: var(--canvas-bg);
+}
+
+.eicvibe-widget .nb-panel {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 0;
+  background: var(--panel);
+}
+
+.eicvibe-widget.nb-chart {
+  padding: 4px 8px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.eicvibe-widget.nb-chart .chart-plot {
+  height: var(--chart-height, 260px);
+}

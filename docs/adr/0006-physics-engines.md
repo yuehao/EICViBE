@@ -34,7 +34,7 @@ Status: proposed (2026-10-08). Scope: `eicvibe.engines`. Depends on ADR 0001 (la
 | Effects | longitudinal, radiation damping and excitation | longitudinal (orbit and tracking; optics are 4D) |
 | Elements | multipoles to order 10 | multipoles to octupole; no thin bends or solenoids |
 
-TrackPad's elements follow the Accelerator Toolbox: `polynom_b[n+1] = Kn_n/n!`, a bend's `polynom_b[1]` is its field beyond the curvature, displacement and roll are the entrance and exit maps. Coordinates convert as `z = zeta/beta0`, `dE = (E - E0)/(P0 c)`. Julia starts from the real binary behind the juliaup launcher, which juliacall cannot load.
+TrackPad's elements follow the Accelerator Toolbox: `polynom_b[n+1] = Kn_n/n!`, a bend's `polynom_b[1]` is its field beyond the curvature, displacement and roll are the entrance and exit maps (but a bend's body roll turns its field, not its frame: ADR 0011). Coordinates convert as `z = zeta/beta0`, `dE = (E - E0)/(P0 c)`. Julia starts from the real binary behind the juliaup launcher, which juliacall cannot load; if the launcher does not answer, from the one the environment was last resolved with, since juliapkg takes any other as a new Julia and resolves again. That resolution needs Julia's OpenSSL to be Python's major version and no newer (juliacall's rule), and Julia has no OpenSSL 4: on a Python linked to OpenSSL 4 (Homebrew's 3.14) it fails after removing the environment's Manifest. The project therefore uses uv's own Pythons, linked to OpenSSL 3 (`python-preference = "only-managed"`), and the adapter refuses to start TrackPad, leaving the environment as it is, where a resolution would have to happen on such a Python (2026-10-25).
 
 ## Validation (2026-10-08)
 

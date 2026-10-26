@@ -19,6 +19,7 @@ import threading
 from collections import OrderedDict
 from concurrent.futures import Future
 
+from eicvibe.domain.lattice import Lattice
 from eicvibe.engines import ENGINES, engine
 from eicvibe.engines.contracts import EngineUnavailable, Fidelity, MachineOptics, Options, UnsupportedRequest
 from eicvibe.engines.worker import EngineWorker
@@ -80,10 +81,9 @@ def _key(
 
 
 def branch_optics(
-    revision: Revision, machine: MachineOptics, branch: str, mode: str | None = None
+    lattice: Lattice, machine: MachineOptics, branch: str, mode: str | None = None
 ) -> schemas.BranchOptics:
-    """One branch of a machine's optics as the viewer reads it."""
-    lattice = revision.lattice
+    """One branch of a machine's optics as the viewer reads it (from the server, or a notebook's kernel)."""
     if branch.startswith("route:"):
         branch_id, periodic = branch, False
     else:
@@ -143,6 +143,24 @@ def branch_optics(
     )
 
 
+def engine_infos() -> list[schemas.EngineInfo]:
+    """The engines that compute optics: whether installed here, their versions and fidelities."""
+    out = []
+    for name in ENGINES:
+        candidate = engine(name)
+        capabilities = candidate.capabilities()
+        out.append(
+            schemas.EngineInfo(
+                name=name,
+                available=candidate.available(),
+                version=capabilities.version,
+                fidelities=[f.value for f in Fidelity if f in capabilities.fidelities],
+                method=METHODS.get(name, ""),
+            )
+        )
+    return out
+
+
 class OpticsService:
     """Machine optics by (revision, engine, fidelity), computed by engine workers and kept for reuse."""
 
@@ -155,20 +173,7 @@ class OpticsService:
         ] = OrderedDict()
 
     def engines(self) -> list[schemas.EngineInfo]:
-        out = []
-        for name in ENGINES:
-            candidate = engine(name)
-            capabilities = candidate.capabilities()
-            out.append(
-                schemas.EngineInfo(
-                    name=name,
-                    available=candidate.available(),
-                    version=capabilities.version,
-                    fidelities=[f.value for f in Fidelity if f in capabilities.fidelities],
-                    method=METHODS.get(name, ""),
-                )
-            )
-        return out
+        return engine_infos()
 
     def worker(self, name: str) -> EngineWorker:
         """The worker process of engine ``name``, started on first use and shared."""
@@ -228,7 +233,7 @@ class OpticsService:
         if found is None or not found[0].done() or found[0].exception() is not None:
             return None
         branch_id = branch if route is not None else revision.lattice.layout(branch).id
-        return branch_optics(revision, found[0].result(), branch_id, mode)
+        return branch_optics(revision.lattice, found[0].result(), branch_id, mode)
 
     async def branch(
         self, revision: Revision, name: str, fidelity: Fidelity, branch: str, mode: str | None = None
@@ -240,7 +245,8 @@ class OpticsService:
         branch_id = branch if route is not None else revision.lattice.layout(branch).id
         payload = payloads.get(branch_id)
         if payload is None:
-            payload = payloads[branch_id] = Payload.of(branch_optics(revision, machine, branch_id, mode))
+            optics = branch_optics(revision.lattice, machine, branch_id, mode)
+            payload = payloads[branch_id] = Payload.of(optics)
         return payload
 
     def close(self) -> None:

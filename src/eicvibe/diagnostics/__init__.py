@@ -13,7 +13,14 @@ from .analysis import (
     tunes,
 )
 from .bpm import NO_BEAM, VALID, OrbitSeries, PlaneData, TurnByTurn
-from .formats import read_nsls2, read_rhic, read_sdds, write_rhic, write_sdds
+from .formats import (
+    read_hdf5,
+    read_sdds,
+    read_sdds_page,
+    write_hdf5,
+    write_sdds,
+    write_sdds_page,
+)
 
 __all__ = [
     "NO_BEAM",
@@ -26,14 +33,15 @@ __all__ = [
     "closed_orbit",
     "harmonics",
     "phase_errors",
-    "read_nsls2",
-    "read_rhic",
+    "read_hdf5",
     "read_sdds",
+    "read_sdds_page",
     "spectrum",
     "tune",
     "tune_drift",
     "tune_of",
     "tunes",
-    "write_rhic",
+    "write_hdf5",
     "write_sdds",
+    "write_sdds_page",
 ]

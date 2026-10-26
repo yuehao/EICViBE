@@ -224,6 +224,48 @@ def test_a_misaligned_quadrupole_moves_the_beam_as_its_offset_pitch_and_yaw_pred
         assert got == pytest.approx(np.concatenate([x, y]), abs=1e-9), opened or "updated"
 
 
+ANGLE, L_BEND = 0.05, 2.0
+
+
+@pytest.fixture(scope="module", params=[ANGLE, -ANGLE])
+def bend_line(request):
+    """A line through one sector bend, between drifts: bending either way."""
+    b = LatticeBuilder("bend", ids=SequentialIds())
+    b.define("BEG", "BeginningEle", ReferenceP={"species_ref": "electron", "pc_ref": 1e9})
+    b.define("B", "Bend", length=L_BEND, BendP={"angle_ref": request.param})
+    b.define("D", "Drift", length=1.0)
+    b.add_branch("line", "linac", ["BEG", "D", "B", "D"])
+    return b.build(), request.param
+
+
+def test_a_rolled_bend_kicks_the_beam_off_its_plane_and_the_reference_stays(bend_line, name):
+    """A body's roll (z_rot) is a misalignment: the bend's field turns, its reference does not. A beam on
+    the reference leaves at an angle of minus the bend's angle times sin(roll) vertically, half a
+    length times that below it (the field's skew part, uniform along the bend); a turned reference
+    (tilt_ref) would have carried it out of the plane and back, unkicked. Every setting changes in place."""
+    lattice, angle = bend_line
+    bend, roll = occurrence(lattice, "line", "B_1"), 1e-3
+    values = {(bend, "BodyShiftP.z_rot"): roll}
+    request = OrbitRequest(options=PRECISE, initial=(0.0, 0.0, 0.0, 0.0, 0.0, 0.0))
+    for opened in (values, {}):
+        session = engine(name).open(lattice, lattice.layout("line").id, PRECISE, opened)
+        try:
+            if not opened:
+                session.update(values)
+            orbit = session.orbit(request)
+        finally:
+            session.close()
+        k = orbit.occurrences.index(bend)
+        kick = -angle * math.sin(roll)
+        # The field's skew part is uniform along the arc to O(angle^2): Xsuite turns the body about its
+        # middle exactly (angle^2 / 24 less, 1e-4 here), TrackPad the field about the reference.
+        assert (orbit.py[k], orbit.y[k]) == pytest.approx((kick, kick * L_BEND / 2), rel=2e-4), opened
+        assert orbit.y[-1] == pytest.approx(orbit.y[k] + kick * 1.0, rel=2e-4)  # and drifts away after
+        # In its plane it bends by cos(roll) of its angle: the beam leaves outside, by angle roll^2 / 2.
+        bent = angle * (1 - math.cos(roll))
+        assert (orbit.px[k], orbit.x[k]) == pytest.approx((bent, bent * L_BEND / 2), rel=2e-3)
+
+
 def test_an_update_in_place_is_the_session_opened_with_the_values(fodo, name, ring):
     qf = occurrence(fodo, "ring", "QF_1")
     values = {(qf, "MagneticMultipoleP.Kn1"): 1.05 * K1}

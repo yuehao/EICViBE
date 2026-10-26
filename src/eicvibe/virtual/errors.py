@@ -394,26 +394,43 @@ class VirtualBpms:
     def __init__(
         self, model: BpmModel, count: int, particles: int, charge: float, names: list[str] | None = None
     ) -> None:
-        rng = np.random.default_rng(model.seed)
-        self.model = model
         names = names if names is not None else [str(k) for k in range(count)]
         unique = list(dict.fromkeys(names))
-        slot = np.array([unique.index(n) for n in names], dtype=int)
-        self.offsets = rng.normal(0.0, model.offset_rms, (2, len(unique)))[:, slot]
-        self.gains = (1.0 + rng.normal(0.0, model.gain_rms, (2, len(unique))))[:, slot]
-        self.rolls = rng.normal(0.0, model.roll_rms, len(unique))[slot]
+        self._slot = np.array([unique.index(n) for n in names], dtype=int)
+        self._unique = len(unique)
         self.particles = particles
         self.charge = charge
+        self.earlier: list[dict[str, Any]] = []
+        """The errors read with before each :meth:`remodel`, and the turn (or shot) they ended."""
+        self._draw(model)
         self._noise = np.random.default_rng(model.seed + 1)
         self._orbit = np.random.default_rng(model.seed + 2)
 
-    def hidden(self, names: list[str]) -> dict[str, Any]:
+    def _draw(self, model: BpmModel) -> None:
+        rng = np.random.default_rng(model.seed)
+        self.model = model
+        self.offsets = rng.normal(0.0, model.offset_rms, (2, self._unique))[:, self._slot]
+        self.gains = (1.0 + rng.normal(0.0, model.gain_rms, (2, self._unique)))[:, self._slot]
+        self.rolls = rng.normal(0.0, model.roll_rms, self._unique)[self._slot]
+
+    def remodel(self, model: BpmModel, until: int) -> None:
+        """Read with ``model`` from now on, the errors so far ending at turn (or shot) ``until``: an
+        administrator's change on a running machine, whose beam it leaves alone. Drawn from the model's
+        seed as before, so with the same seed each BPM keeps its offset, gain and roll, scaled to the
+        new rms."""
+        self.earlier.append(self._drawn() | {"until": until})
+        self._draw(model)
+
+    def _drawn(self) -> dict[str, Any]:
         return {
             "offsets_mm": self.offsets.tolist(),
             "gains": self.gains.tolist(),
             "rolls_rad": self.rolls.tolist(),
-            "bpms": names,
         }
+
+    def hidden(self, names: list[str]) -> dict[str, Any]:
+        """The errors the BPMs read with now, and those they read with before (``earlier``), if changed."""
+        return self._drawn() | {"bpms": names} | ({"earlier": self.earlier} if self.earlier else {})
 
     def systematic(self, x: np.ndarray, y: np.ndarray, count: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """What the BPMs read of centroids ``[bpm, n]`` (m) without noise: mm, through their errors."""

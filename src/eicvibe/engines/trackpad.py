@@ -23,10 +23,12 @@ matrices and chromaticity are exact derivatives of the maps, with no
 finite-difference steps. Tracking and the 6D closed orbit follow the RF.
 """
 
+import json
 import math
 import os
 import shutil
 import subprocess
+import sys
 from collections import defaultdict
 from collections.abc import Sequence
 from importlib.util import find_spec
@@ -188,24 +190,66 @@ THREADS = "EICVIBE_TRACKPAD_THREADS"
 
 
 def _point_juliacall_at_julia() -> None:
-    """Give juliacall a real Julia binary: juliaup's launcher cannot be loaded as a library."""
+    """Give juliacall a real Julia binary: juliaup's launcher cannot be loaded as a library.
+
+    Where the launcher cannot say which (juliaup busy updating, say), the one TrackPad's environment was
+    last resolved with: juliapkg takes any other as a new Julia and resolves the environment again,
+    removing its Manifest first, and that resolution fails where Python's OpenSSL is newer than Julia's.
+    """
     if os.environ.get("PYTHON_JULIAPKG_EXE"):
         return
-    launcher = shutil.which("julia")
-    if launcher is None:
-        return  # juliapkg installs a Julia of its own
-    try:
-        binary = subprocess.run(
-            [launcher, "--startup-file=no", "-e", 'print(joinpath(Sys.BINDIR, "julia"))'],
-            capture_output=True,
-            text=True,
-            timeout=300,
-            check=True,
-        ).stdout.strip()
-    except OSError, subprocess.SubprocessError:
-        return
+    binary = None
+    if launcher := shutil.which("julia"):
+        try:
+            binary = subprocess.run(
+                [launcher, "--startup-file=no", "-e", 'print(joinpath(Sys.BINDIR, "julia"))'],
+                capture_output=True,
+                text=True,
+                timeout=300,
+                check=True,
+            ).stdout.strip()
+        except OSError, subprocess.SubprocessError:
+            pass
+    binary = binary or _resolved_julia()
     if binary:
         os.environ["PYTHON_JULIAPKG_EXE"] = binary
+        if "juliapkg.state" in sys.modules:  # it read the setting as it was imported
+            sys.modules["juliapkg.state"].reset_state()
+
+
+def _unresolvable() -> str | None:
+    """Why TrackPad's Julia environment cannot be set up here, if it has to be (first use, a new Julia,
+    an update): juliacall asks for Julia's OpenSSL to be Python's major version and no newer, and
+    Julia's registry has no OpenSSL 4 (October 2026). juliapkg would remove the environment's Manifest,
+    fail, and leave TrackPad unable to start; refused first, the environment stays as it is."""
+    import ssl
+
+    if ssl.OPENSSL_VERSION_INFO[0] <= 3 or find_spec("juliapkg") is None:
+        return None
+    import juliapkg
+
+    if juliapkg.resolve(dry_run=True):
+        return None  # set up already: it loads
+    return (
+        f"TrackPad's Julia environment has to be set up, and this Python is linked to "
+        f"{ssl.OPENSSL_VERSION}, which Julia's OpenSSL cannot match (Homebrew's Python 3.14 is); "
+        "make the environment with uv's own Python, linked to OpenSSL 3: "
+        "rm -rf .venv && uv sync --managed-python"
+    )
+
+
+def _resolved_julia() -> str | None:
+    """The Julia that juliapkg last resolved TrackPad's environment with, if it is still installed."""
+    if find_spec("juliapkg") is None:
+        return None
+    from juliapkg.state import STATE
+
+    try:
+        meta = json.loads(Path(STATE["meta"]).read_text())
+    except OSError, ValueError:
+        return None
+    binary = meta.get("override_executable") or meta.get("executable")
+    return binary if binary and os.path.isfile(binary) else None
 
 
 def _julia():
@@ -215,6 +259,8 @@ def _julia():
         if np is None or find_spec("juliacall") is None:
             raise EngineUnavailable("juliacall is not installed: pip install 'eicvibe[trackpad]'")
         _point_juliacall_at_julia()
+        if reason := _unresolvable():
+            raise EngineUnavailable(reason)
         os.environ.setdefault("PYTHON_JULIACALL_THREADS", os.environ.get(THREADS, "auto"))
         if os.environ["PYTHON_JULIACALL_THREADS"] != "1":  # juliacall's condition for Julia's threads
             os.environ.setdefault("PYTHON_JULIACALL_HANDLE_SIGNALS", "yes")
@@ -752,10 +798,32 @@ def _strengths(multipoles: dict[str, Any], length: float, *, thin: bool = False)
     return out
 
 
-def _placement(groups: dict[str, Any], roll: float) -> dict[str, float]:
-    """The body's offsets, roll, and PALS pitch and yaw (about its centre; see trackpad.jl ``placement``)."""
+def _placement(groups: dict[str, Any], roll: float, *, body_roll: bool = True) -> dict[str, float]:
+    """The body's offsets, roll, and PALS pitch and yaw (about its centre; see trackpad.jl ``placement``).
+
+    The roll is AT's R1 and R2, which turn the element's frame: ``roll`` (a multipole's tilt, a bend's
+    ``tilt_ref``) and, with ``body_roll``, the body's own. A bend's body roll is not a turned frame
+    (the beam would follow the bend out of its plane and come back on the reference, unkicked) but a
+    turned field: :func:`_turned`.
+    """
     d = displacement(NAME, groups)
-    return {"dx": d.x, "dy": d.y, "roll": roll + d.roll, "pitch": d.pitch, "yaw": d.yaw}
+    own = d.roll if body_roll else 0.0
+    return {"dx": d.x, "dy": d.y, "roll": roll + own, "pitch": d.pitch, "yaw": d.yaw}
+
+
+def _turned(strengths: dict[str, float], roll: float) -> dict[str, float]:
+    """polynom_b and polynom_a of a field turned by ``roll`` about the reference (PALS's right-handed
+    z_rot): order n by (n + 1) roll, ``b + i a`` times ``exp(-i (n + 1) roll)``, as R1 and R2 would turn
+    it with the frame. A rolled bend's dipole so becomes its own field less a skew part, which kicks
+    the beam by minus its angle times sin(roll) vertically."""
+    if not roll:
+        return strengths
+    out = dict(strengths)
+    for n in range(TOP_ORDER + 1):
+        b, a = strengths[f"b{n}"], strengths[f"a{n}"]
+        c, s = math.cos((n + 1) * roll), math.sin((n + 1) * roll)
+        out[f"b{n}"], out[f"a{n}"] = b * c + a * s, a * c - b * s
+    return out
 
 
 def _pieces(
@@ -862,13 +930,15 @@ def _bend(
         raise UnsupportedRequest(NAME, [f"{placed.name}: a thin bend (no curvature in a thin multipole)"])
     e1, e2 = bend_edges(NAME, bp)
     strengths = _strengths(mm, length)
-    strengths["b0"] = bend_field(bp, mm, length) - angle / length  # the field beyond the curvature
+    strengths["b0"] = bend_field(bp, mm, length)  # the whole dipole, turned with the body's roll
+    strengths = _turned(strengths, displacement(NAME, groups).roll)
+    strengths["b0"] -= angle / length  # the field beyond the curvature
     strengths["order"] = highest_order({**mm, "Kn0": strengths["b0"], "Kn0L": 0.0}, length)
     if auto:
         kicks = max(1, int(abs(angle) / BEND_KICK))
         steps = 0 if exact and _only(strengths, "") else math.ceil(kicks / KICKS_PER_STEP)
     shape = {"L": length, "angle": angle, "e1": e1, "e2": e2, "steps": steps}
-    shape |= strengths | _placement(groups, bp.get("tilt_ref", 0.0))
+    shape |= strengths | _placement(groups, bp.get("tilt_ref", 0.0), body_roll=False)
     # The fringe is full gap x FINT = 2 HGAP x FINT in MAD-X's terms; the lattice stores HGAP x FINT.
     entry, exit_ = bp.get("edge1_int", 0.0), bp.get("edge2_int", 0.0)
     if not exact:

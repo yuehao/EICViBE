@@ -1,7 +1,7 @@
 """Analysis of BPM data, the same for a real machine and a virtual one.
 
 Every function takes a :class:`~.bpm.TurnByTurn` (or an orbit series), never
-an engine result, so a notebook that works on a RHIC file works on a virtual
+an engine result, so a notebook that works on a measured file works on a virtual
 ring's history and back.
 """
 

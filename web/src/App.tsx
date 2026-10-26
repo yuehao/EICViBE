@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api, ApiError, SCHEMA_VERSION, type LatticeEntry, type LatticeSummary, type RunEntry } from "./api/client";
+import { serverData } from "./api/data";
 import { va, type MachineEntry } from "./api/va";
 import { AccountMenu, useAuth } from "./components/Auth";
 import { BpmView } from "./components/BpmView";
@@ -249,6 +250,11 @@ export function App() {
   }, [digest]);
 
   const order = useMemo(() => (summary ? branchOrder(summary) : []), [summary]);
+  const data = useMemo(() => (digest ? serverData(digest) : null), [digest]);
+  const onOpticsChoice = useCallback(
+    (c: { engine: string; fidelity: string; mode: string }) => updateHash({ engine: c.engine, fidelity: c.fidelity, mode: c.mode || undefined }),
+    [],
+  );
   const currentModel = current ? (models.get(current) ?? routes.get(current) ?? null) : null;
 
   // Give the linear view the range of the current branch once its data is in.
@@ -510,7 +516,7 @@ export function App() {
           {notice}
         </div>
       ) : null}
-      {summary && digest ? (
+      {summary && digest && data ? (
         <main className="workspace">
           <section className="views">
             <div className="pane floor-pane">
@@ -532,7 +538,7 @@ export function App() {
               {/* Both tabs stay mounted, so each keeps its choices; the strip moves with the tab shown. */}
               <div className="tab-panel" role="tabpanel" aria-label="Optics" hidden={tab !== "optics"}>
                 <OpticsView
-                  digest={digest}
+                  data={data}
                   branch={currentModel}
                   selection={selection}
                   hover={hover}
@@ -545,12 +551,14 @@ export function App() {
                   modes={summary.modes ?? []}
                   initialMode={initial.mode}
                   onSelect={onLinearSelect}
+                  onChoice={onOpticsChoice}
                   tabs={tabs}
                   strip={tab === "optics" ? strip : null}
                 />
               </div>
               <div className="tab-panel" role="tabpanel" aria-label="Orbit" hidden={tab !== "orbit"}>
                 <BpmView
+                  data={data}
                   digest={digest}
                   latticeName={summary.name}
                   branch={currentModel}

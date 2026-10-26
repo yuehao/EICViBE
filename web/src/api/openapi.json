@@ -1801,6 +1801,33 @@
     "title": "HTTPValidationError",
     "type": "object"
    },
+   "HistoryView": {
+    "description": "What the service keeps besides its append-only logs, for administrators to clear.",
+    "properties": {
+     "proposals": {
+      "additionalProperties": {
+       "type": "integer"
+      },
+      "description": "How many proposals each state has, every machine's",
+      "title": "Proposals",
+      "type": "object"
+     },
+     "runs": {
+      "description": "Newest first",
+      "items": {
+       "$ref": "#/components/schemas/RunRecord"
+      },
+      "title": "Runs",
+      "type": "array"
+     }
+    },
+    "required": [
+     "runs",
+     "proposals"
+    ],
+    "title": "HistoryView",
+    "type": "object"
+   },
    "LatticeEntry": {
     "description": "One lattice the server offers.",
     "properties": {
@@ -1976,6 +2003,97 @@
      "strings"
     ],
     "title": "LatticeSummary",
+    "type": "object"
+   },
+   "LocalBumpRequest": {
+    "description": "Local bump: A closed bump: three correctors for an offset, four for an offset and an angle. Computed on a machine as set; nothing is written.",
+    "properties": {
+     "amplitude_mm": {
+      "description": "The offset there, mm",
+      "examples": [
+       1.0
+      ],
+      "title": "Amplitude",
+      "type": "number",
+      "x-form": {
+       "unit": "mm"
+      }
+     },
+     "angle_mrad": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "The angle there, mrad: leave it out for an offset alone (three correctors); an angle takes four",
+      "title": "Angle",
+      "x-form": {
+       "placeholder": "angle",
+       "unit": "mrad"
+      }
+     },
+     "at": {
+      "description": "A BPM's name (or an element's)",
+      "title": "Bump at",
+      "type": "string",
+      "x-form": {
+       "placeholder": "a BPM's name",
+       "prefix": "at"
+      }
+     },
+     "correctors": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Only these corrector channels",
+      "title": "Corrector channels",
+      "x-form": {
+       "advanced": true
+      }
+     },
+     "operation": {
+      "const": "local_bump",
+      "title": "Operation",
+      "type": "string"
+     },
+     "plane": {
+      "default": "x",
+      "enum": [
+       "x",
+       "y"
+      ],
+      "title": "Plane",
+      "type": "string",
+      "x-form": {
+       "labels": {
+        "x": "horizontal",
+        "y": "vertical"
+       }
+      }
+     },
+     "reason": {
+      "default": "",
+      "title": "Reason",
+      "type": "string"
+     }
+    },
+    "required": [
+     "at",
+     "amplitude_mm",
+     "operation"
+    ],
+    "title": "LocalBumpRequest",
     "type": "object"
    },
    "LogEntry": {
@@ -2658,6 +2776,52 @@
     "title": "OccurrenceDetail",
     "type": "object"
    },
+   "OperationEntry": {
+    "description": "An operation the virtual accelerator computes (ADR 0017): the viewer's form is made from it.",
+    "properties": {
+     "label": {
+      "title": "Label",
+      "type": "string"
+     },
+     "machines": {
+      "description": "The kinds of machine it runs on: ring, route",
+      "items": {
+       "type": "string"
+      },
+      "title": "Machines",
+      "type": "array"
+     },
+     "name": {
+      "title": "Name",
+      "type": "string"
+     },
+     "parameters": {
+      "additionalProperties": true,
+      "description": "Its parameters' JSON Schema, with x-form hints for a form",
+      "title": "Parameters",
+      "type": "object"
+     },
+     "summary": {
+      "title": "Summary",
+      "type": "string"
+     },
+     "verified_by": {
+      "description": "orbit (the BPMs' orbit) or tunes (the tune monitor)",
+      "title": "Verified By",
+      "type": "string"
+     }
+    },
+    "required": [
+     "name",
+     "label",
+     "summary",
+     "machines",
+     "verified_by",
+     "parameters"
+    ],
+    "title": "OperationEntry",
+    "type": "object"
+   },
    "OpticsProfile": {
     "description": "Optics inside elements too: the branch start, then the end of every piece the engine sampled.",
     "properties": {
@@ -2695,6 +2859,114 @@
      "values"
     ],
     "title": "OpticsProfile",
+    "type": "object"
+   },
+   "OrbitCorrectionRequest": {
+    "description": "Orbit correction: SVD (damped) or MICADO on the model's orbit response matrix, from the BPMs' latest slow orbit. Computed on a machine as set; nothing is written.",
+    "properties": {
+     "correctors": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Only these corrector channels",
+      "title": "Corrector channels",
+      "x-form": {
+       "advanced": true
+      }
+     },
+     "count": {
+      "default": 3,
+      "description": "MICADO: correctors to use",
+      "maximum": 50.0,
+      "minimum": 1.0,
+      "title": "Correctors",
+      "type": "integer",
+      "x-form": {
+       "unit": "correctors",
+       "when": {
+        "method": "micado"
+       }
+      }
+     },
+     "damping": {
+      "default": 0.01,
+      "description": "SVD: Tikhonov damping, of the largest singular value",
+      "exclusiveMinimum": 0.0,
+      "title": "Damping",
+      "type": "number",
+      "x-form": {
+       "advanced": true
+      }
+     },
+     "method": {
+      "default": "svd",
+      "enum": [
+       "svd",
+       "micado"
+      ],
+      "title": "Method",
+      "type": "string",
+      "x-form": {
+       "labels": {
+        "micado": "MICADO",
+        "svd": "SVD, damped"
+       }
+      }
+     },
+     "operation": {
+      "const": "orbit_correction",
+      "title": "Operation",
+      "type": "string"
+     },
+     "plane": {
+      "default": "x",
+      "enum": [
+       "x",
+       "y"
+      ],
+      "title": "Plane",
+      "type": "string",
+      "x-form": {
+       "labels": {
+        "x": "horizontal",
+        "y": "vertical"
+       }
+      }
+     },
+     "reason": {
+      "default": "",
+      "title": "Reason",
+      "type": "string"
+     },
+     "source": {
+      "default": "measured",
+      "description": "The BPMs' latest slow orbit, or the model's own",
+      "enum": [
+       "measured",
+       "model"
+      ],
+      "title": "Orbit from",
+      "type": "string",
+      "x-form": {
+       "labels": {
+        "measured": "from the BPMs",
+        "model": "from the model"
+       }
+      }
+     }
+    },
+    "required": [
+     "operation"
+    ],
+    "title": "OrbitCorrectionRequest",
     "type": "object"
    },
    "OrbitFrames": {
@@ -3638,149 +3910,17 @@
     "title": "ProposalEntry",
     "type": "object"
    },
-   "ProposalRequest": {
-    "description": "An operation to compute on a machine as it is set (ADR 0010); nothing is written.",
+   "ProposalsDeleted": {
     "properties": {
-     "amplitude_mm": {
-      "anyOf": [
-       {
-        "type": "number"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "description": "Bump: the offset there, mm",
-      "title": "Amplitude Mm"
-     },
-     "angle_mrad": {
-      "anyOf": [
-       {
-        "type": "number"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "description": "Bump: the angle there, mrad (four correctors)",
-      "title": "Angle Mrad"
-     },
-     "at": {
-      "anyOf": [
-       {
-        "type": "string"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "description": "Bump: a BPM's name (or an element's)",
-      "title": "At"
-     },
-     "correctors": {
-      "anyOf": [
-       {
-        "items": {
-         "type": "string"
-        },
-        "type": "array"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "description": "Only these corrector channels",
-      "title": "Correctors"
-     },
-     "count": {
-      "default": 3,
-      "description": "MICADO: correctors to use",
-      "maximum": 50.0,
-      "minimum": 1.0,
-      "title": "Count",
+     "deleted": {
+      "title": "Deleted",
       "type": "integer"
-     },
-     "damping": {
-      "default": 0.01,
-      "description": "SVD: Tikhonov damping, of the largest singular value",
-      "exclusiveMinimum": 0.0,
-      "title": "Damping",
-      "type": "number"
-     },
-     "dqx": {
-      "default": 0.0,
-      "description": "Tune move: the change of the horizontal tune",
-      "title": "Dqx",
-      "type": "number"
-     },
-     "dqy": {
-      "default": 0.0,
-      "description": "Tune move: the change of the vertical tune",
-      "title": "Dqy",
-      "type": "number"
-     },
-     "method": {
-      "default": "svd",
-      "enum": [
-       "svd",
-       "micado"
-      ],
-      "title": "Method",
-      "type": "string"
-     },
-     "operation": {
-      "enum": [
-       "orbit_correction",
-       "local_bump",
-       "tune_move"
-      ],
-      "title": "Operation",
-      "type": "string"
-     },
-     "plane": {
-      "default": "x",
-      "enum": [
-       "x",
-       "y"
-      ],
-      "title": "Plane",
-      "type": "string"
-     },
-     "quadrupoles": {
-      "anyOf": [
-       {
-        "items": {
-         "type": "string"
-        },
-        "type": "array"
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "description": "Tune move: only these quadrupole channels",
-      "title": "Quadrupoles"
-     },
-     "reason": {
-      "default": "",
-      "title": "Reason",
-      "type": "string"
-     },
-     "source": {
-      "default": "measured",
-      "description": "Orbit correction: the BPMs' latest slow orbit, or the model's own",
-      "enum": [
-       "measured",
-       "model"
-      ],
-      "title": "Source",
-      "type": "string"
      }
     },
     "required": [
-     "operation"
+     "deleted"
     ],
-    "title": "ProposalRequest",
+    "title": "ProposalsDeleted",
     "type": "object"
    },
    "RampProgram": {
@@ -4631,6 +4771,91 @@
     "title": "RunEvent",
     "type": "object"
    },
+   "RunRecord": {
+    "description": "A run's folder: its BPM history on disk.",
+    "properties": {
+     "bytes": {
+      "description": "Its folder's size on disk",
+      "title": "Bytes",
+      "type": "integer"
+     },
+     "engine": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Engine"
+     },
+     "id": {
+      "title": "Id",
+      "type": "string"
+     },
+     "in_use": {
+      "description": "A running machine's run, which is not deleted",
+      "title": "In Use",
+      "type": "boolean"
+     },
+     "machine": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Machine"
+     },
+     "started": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Turn 0, on the run's own clock",
+      "title": "Started"
+     }
+    },
+    "required": [
+     "id",
+     "machine",
+     "engine",
+     "started",
+     "bytes",
+     "in_use"
+    ],
+    "title": "RunRecord",
+    "type": "object"
+   },
+   "RunsDeleted": {
+    "properties": {
+     "bytes": {
+      "description": "Freed on disk",
+      "title": "Bytes",
+      "type": "integer"
+     },
+     "deleted": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Deleted",
+      "type": "array"
+     }
+    },
+    "required": [
+     "deleted",
+     "bytes"
+    ],
+    "title": "RunsDeleted",
+    "type": "object"
+   },
    "Selection": {
     "additionalProperties": false,
     "description": "Which magnets: of these kinds, in these branches, with names matching these patterns; empty: any.",
@@ -5033,6 +5258,65 @@
      "branch"
     ],
     "title": "Traversal",
+    "type": "object"
+   },
+   "TuneMoveRequest": {
+    "description": "Tune move: The quadrupole knob that moves the tunes with the least beta-beating and dispersion change. Computed on a machine as set; nothing is written.",
+    "properties": {
+     "dqx": {
+      "default": 0.0,
+      "description": "The change of the horizontal tune",
+      "examples": [
+       0.01
+      ],
+      "title": "Change of Qx",
+      "type": "number",
+      "x-form": {
+       "prefix": "\u0394Qx"
+      }
+     },
+     "dqy": {
+      "default": 0.0,
+      "description": "The change of the vertical tune",
+      "title": "Change of Qy",
+      "type": "number",
+      "x-form": {
+       "prefix": "\u0394Qy"
+      }
+     },
+     "operation": {
+      "const": "tune_move",
+      "title": "Operation",
+      "type": "string"
+     },
+     "quadrupoles": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Only these quadrupole channels",
+      "title": "Quadrupole channels",
+      "x-form": {
+       "advanced": true
+      }
+     },
+     "reason": {
+      "default": "",
+      "title": "Reason",
+      "type": "string"
+     }
+    },
+    "required": [
+     "operation"
+    ],
+    "title": "TuneMoveRequest",
     "type": "object"
    },
    "TuneReading": {
@@ -6297,6 +6581,28 @@
     ]
    }
   },
+  "/api/v1/va/history": {
+   "get": {
+    "description": "The runs' BPM histories on disk and the proposals, which an administrator may delete; the write\nand action logs are append-only and are not.",
+    "operationId": "history_api_v1_va_history_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HistoryView"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "History",
+    "tags": [
+     "virtual accelerator"
+    ]
+   }
+  },
   "/api/v1/va/log": {
    "get": {
     "description": "Every write, newest first; ``before`` an id pages back. For users who are logged in.",
@@ -6772,7 +7078,7 @@
     ]
    },
    "put": {
-    "description": "Other errors for a stopped machine, drawn when it starts; logged without their seed. A row\nthat chooses nothing on the machine is refused.",
+    "description": "Other errors for a machine, logged without their seed: its magnets' and supplies' while it is\nstopped (drawn when it starts), its BPMs' also while it runs (read with from its next turn). A\nrow that chooses nothing on the machine is refused.",
     "operationId": "set_errors_api_v1_va_machines__machine__errors_put",
     "parameters": [
      {
@@ -6937,6 +7243,7 @@
   },
   "/api/v1/va/machines/{machine}/proposals": {
    "get": {
+    "description": "A machine's latest proposals, newest first.",
     "operationId": "proposals_api_v1_va_machines__machine__proposals_get",
     "parameters": [
      {
@@ -6946,6 +7253,18 @@
       "schema": {
        "title": "Machine",
        "type": "string"
+      }
+     },
+     {
+      "description": "Only those a person still has to apply or verify: proposed, or applied",
+      "in": "query",
+      "name": "waiting",
+      "required": false,
+      "schema": {
+       "default": false,
+       "description": "Only those a person still has to apply or verify: proposed, or applied",
+       "title": "Waiting",
+       "type": "boolean"
       }
      }
     ],
@@ -6998,7 +7317,26 @@
      "content": {
       "application/json": {
        "schema": {
-        "$ref": "#/components/schemas/ProposalRequest"
+        "discriminator": {
+         "mapping": {
+          "local_bump": "#/components/schemas/LocalBumpRequest",
+          "orbit_correction": "#/components/schemas/OrbitCorrectionRequest",
+          "tune_move": "#/components/schemas/TuneMoveRequest"
+         },
+         "propertyName": "operation"
+        },
+        "oneOf": [
+         {
+          "$ref": "#/components/schemas/OrbitCorrectionRequest"
+         },
+         {
+          "$ref": "#/components/schemas/LocalBumpRequest"
+         },
+         {
+          "$ref": "#/components/schemas/TuneMoveRequest"
+         }
+        ],
+        "title": "Body"
        }
       }
      },
@@ -7677,6 +8015,32 @@
     ]
    }
   },
+  "/api/v1/va/operations": {
+   "get": {
+    "description": "The operations a proposal can compute, with their parameters (ADR 0017).",
+    "operationId": "operations_api_v1_va_operations_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "items": {
+          "$ref": "#/components/schemas/OperationEntry"
+         },
+         "title": "Response Operations Api V1 Va Operations Get",
+         "type": "array"
+        }
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "Operations",
+    "tags": [
+     "virtual accelerator"
+    ]
+   }
+  },
   "/api/v1/va/options": {
    "get": {
     "operationId": "options_api_v1_va_options_get",
@@ -7693,6 +8057,62 @@
      }
     },
     "summary": "Options",
+    "tags": [
+     "virtual accelerator"
+    ]
+   }
+  },
+  "/api/v1/va/proposals": {
+   "delete": {
+    "description": "Delete every machine's finished proposals (verified, discarded, stale) (logged).",
+    "operationId": "delete_proposals_api_v1_va_proposals_delete",
+    "parameters": [
+     {
+      "description": "Those still waiting for a person too: proposed, or applied",
+      "in": "query",
+      "name": "waiting",
+      "required": false,
+      "schema": {
+       "default": false,
+       "description": "Those still waiting for a person too: proposed, or applied",
+       "title": "Waiting",
+       "type": "boolean"
+      }
+     },
+     {
+      "in": "query",
+      "name": "reason",
+      "required": false,
+      "schema": {
+       "default": "",
+       "title": "Reason",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ProposalsDeleted"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Delete Proposals",
     "tags": [
      "virtual accelerator"
     ]
@@ -7897,6 +8317,103 @@
      }
     },
     "summary": "Verify",
+    "tags": [
+     "virtual accelerator"
+    ]
+   }
+  },
+  "/api/v1/va/runs": {
+   "delete": {
+    "description": "Delete every run's folder that no running machine uses (logged).",
+    "operationId": "delete_runs_api_v1_va_runs_delete",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "reason",
+      "required": false,
+      "schema": {
+       "default": "",
+       "title": "Reason",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/RunsDeleted"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Delete Runs",
+    "tags": [
+     "virtual accelerator"
+    ]
+   }
+  },
+  "/api/v1/va/runs/{run}": {
+   "delete": {
+    "description": "Delete one run's folder; a running machine's is refused (logged).",
+    "operationId": "delete_run_api_v1_va_runs__run__delete",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "run",
+      "required": true,
+      "schema": {
+       "title": "Run",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "reason",
+      "required": false,
+      "schema": {
+       "default": "",
+       "title": "Reason",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/RunsDeleted"
+        }
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Delete Run",
     "tags": [
      "virtual accelerator"
     ]

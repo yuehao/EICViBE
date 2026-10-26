@@ -163,3 +163,35 @@ def test_a_horizontal_bump_in_a_ring_with_rf_keeps_the_energy(settings, ring):
         assert np.max(np.abs(change[outside])) > 1e-4  # it leaks a tenth of a millimetre and more
     vertical = local_bump(ring, "y", ring.bpms[4].name, 1e-3)
     assert len(vertical.changes) == 3  # no dispersion vertically: three correctors close it
+
+
+@pytest.mark.skipif(not (EIN / "machine.yaml").exists(), reason="EIN machine folder not found")
+def test_a_bump_is_not_driven_off_by_an_energy_residual_the_correctors_barely_move():
+    """At rcs-b12 (6D, RF on) the linear solution closes the bump to 0.4 um, leaving a momentum deviation
+    of 5e-8 that the four correctors move by only 1e-8 per ampere; refining on it asked 11, then 309, then
+    222,000 A, and the engine lost the beam. A step is now kept only if it brings the bump closer."""
+    from eicvibe.engines.contracts import Effect, Fidelity, Options
+    from eicvibe.store import load_machine
+
+    machine = load_machine(EIN)
+    settings = MachineSettings(machine.lattice, machine.registry, {})
+    options = Options(fidelity=Fidelity.STANDARD, effects=frozenset({Effect.LONGITUDINAL}))
+    with MachineModel(settings, "rcs", options=options) as rcs:
+        bump = local_bump(rcs, "x", "rcs-b12", 1e-3)
+    assert bump.ok and len(bump.changes) == 4
+    assert bump.predicted["amplitude"] == pytest.approx(1.0, abs=1e-3) and bump.predicted["leak"] < 1e-3
+    assert max(abs(c.change) for c in bump.changes) < 1.0  # amperes, as the response asks
+
+
+def test_the_model_leaves_out_quantum_excitation_which_has_no_closed_orbit(settings):
+    """A running ring with a ramp radiates, quantum excitation included (ADR 0013); an operation's model
+    of it keeps the mean radiation and leaves out the random part, whose closed orbit search fails."""
+    from eicvibe.engines.contracts import Effect, Fidelity, Options
+
+    effects = frozenset({Effect.LONGITUDINAL, Effect.RADIATION_DAMPING, Effect.QUANTUM_EXCITATION})
+    with MachineModel(
+        settings, "ring", options=Options(fidelity=Fidelity.STANDARD, effects=effects)
+    ) as model:
+        assert model.options.effects == effects - {Effect.QUANTUM_EXCITATION}
+        assert np.max(np.abs(model.orbit()["x"])) < 1e-3
+        assert local_bump(model, "x", model.bpms[4].name, 1e-3).ok

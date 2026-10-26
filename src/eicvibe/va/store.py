@@ -398,11 +398,27 @@ class Store:
             raise KeyError(f"no proposal {ident}")
         return _proposal_row(rows[0])
 
-    def proposals(self, machine: str, limit: int = 50) -> list[dict[str, Any]]:
+    def proposals(self, machine: str, limit: int = 50, waiting: bool = False) -> list[dict[str, Any]]:
+        """A machine's proposals, newest first; ``waiting``: only those a person still has to apply or
+        verify (proposed, or applied)."""
+        only = " AND state IN ('proposed', 'applied')" if waiting else ""
         rows = self._rows(
-            "SELECT * FROM proposals WHERE machine = ? ORDER BY created DESC LIMIT ?", (machine, limit)
+            f"SELECT * FROM proposals WHERE machine = ?{only} ORDER BY created DESC LIMIT ?", (machine, limit)
         )
         return [_proposal_row(r) for r in rows]
+
+    def proposal_counts(self) -> dict[str, int]:
+        """How many proposals each state has, over every machine."""
+        return {
+            r["state"]: r["n"]
+            for r in self._rows("SELECT state, COUNT(*) AS n FROM proposals GROUP BY state")
+        }
+
+    def delete_proposals(self, states: Iterable[str]) -> int:
+        """Delete the proposals in these states; how many went."""
+        states = tuple(states)
+        marks = ", ".join("?" * len(states))
+        return self._run(f"DELETE FROM proposals WHERE state IN ({marks})", states).rowcount
 
     def act(
         self, user: str, action: str, machine: str | None = None, reason: str = "", **detail: Any

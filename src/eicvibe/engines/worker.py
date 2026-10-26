@@ -11,9 +11,16 @@ Requests and results cross the process boundary as the contract's plain data
 (machine optics as JSON; sessions' results pickled), so nothing
 engine-specific leaves the worker. A :class:`RemoteSession` keeps a session open
 in the worker, for work that goes on, such as a ring tracked turn after turn.
+
+A worker's process ends when the process that started it does, however that
+ends: a notebook's kernel restarted, a server stopped by force. Left alone it
+would wait for calls that never come, holding its engine (Julia's runtime is a
+gigabyte) and the output it inherited.
 """
 
 import multiprocessing
+import multiprocessing.connection
+import os
 import threading
 import uuid
 from concurrent.futures import Future, ProcessPoolExecutor
@@ -56,9 +63,16 @@ class EngineWorker:
         self._lock = threading.Lock()
 
     def machine_optics(
-        self, lattice: Lattice, options: Options, *, inside: bool = False, values: dict | None = None
+        self,
+        lattice: Lattice,
+        options: Options,
+        *,
+        inside: bool = False,
+        values: dict | None = None,
+        branches: list[str] | None = None,
     ) -> Future[MachineOptics]:
-        """The optics of every branch (:func:`.model.machine_optics`), computed in the worker."""
+        """The optics of every branch, or of ``branches`` (:func:`.model.machine_optics`), computed in
+        the worker."""
         raw = self._submit(
             _machine_optics,
             self.name,
@@ -66,6 +80,7 @@ class EngineWorker:
             options.model_dump_json(),
             inside,
             dict(values or {}),
+            branches,
         )
         result: Future[MachineOptics] = Future()
 
@@ -143,7 +158,9 @@ class EngineWorker:
                         self._pool = self.host.connect()
                     else:
                         self._pool = ProcessPoolExecutor(
-                            max_workers=1, mp_context=multiprocessing.get_context("spawn")
+                            max_workers=1,
+                            mp_context=multiprocessing.get_context("spawn"),
+                            initializer=_watch_parent,
                         )
                 try:
                     return self._pool.submit(function, *args)
@@ -206,6 +223,19 @@ class RemoteSession:
             self.worker._submit(_close_session, self.key, generation=self.generation).result(timeout=60)
         except Exception:  # noqa: BLE001 - a dead worker has nothing left to close
             pass
+
+
+def _watch_parent() -> None:
+    """In a worker's process: end it once the process that started it has ended."""
+    parent = multiprocessing.parent_process()
+    if parent is None:
+        return
+
+    def watch() -> None:
+        multiprocessing.connection.wait([parent.sentinel])  # ready when the parent is gone
+        os._exit(0)
+
+    threading.Thread(target=watch, name="parent-watch", daemon=True).start()
 
 
 #: Sessions open in this worker process, by key.
@@ -303,9 +333,14 @@ def _route_start(
 
 
 def _machine_optics(
-    name: str, lattice_json: str, options_json: str, inside: bool = False, values: dict | None = None
+    name: str,
+    lattice_json: str,
+    options_json: str,
+    inside: bool = False,
+    values: dict | None = None,
+    branches: list[str] | None = None,
 ) -> str:
-    """In the worker: machine optics of a lattice, with notes, as JSON."""
+    """In the worker: machine optics of a lattice (or some of its branches), with notes, as JSON."""
     from . import engine
     from .model import machine_optics
 
@@ -314,7 +349,7 @@ def _machine_optics(
     options = Options.model_validate_json(options_json)
     notes: dict[str, str] = {}
     results = machine_optics(
-        chosen, lattice, values=values or {}, options=options, notes=notes, inside=inside
+        chosen, lattice, values=values or {}, options=options, notes=notes, inside=inside, branches=branches
     )
     return MachineOptics(
         engine=name,

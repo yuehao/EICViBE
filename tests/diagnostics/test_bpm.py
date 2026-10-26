@@ -2,10 +2,11 @@
 
 import math
 import os
+from dataclasses import replace
 from datetime import UTC, datetime
-from importlib.util import find_spec
 from pathlib import Path
 
+import h5py
 import numpy as np
 import pytest
 
@@ -16,23 +17,24 @@ from eicvibe.diagnostics import (
     TurnByTurn,
     amplitudes,
     closed_orbit,
-    read_nsls2,
-    read_rhic,
+    read_hdf5,
+    read_sdds,
     tune,
     tune_of,
-    write_rhic,
+    write_hdf5,
+    write_sdds,
 )
 
-RHIC = Path(
+SDDS = Path(
     os.environ.get(
-        "EICVIBE_RHIC_TBT",
+        "EICVIBE_SDDS_TBT",
         "/Users/haoyue/Research/studentwork/Fung/RHIC_BPM/Error analysis/TBT_Data/"
         "data_Wed_Sep__4_19_08_18_2024",
     )
 )
-NSLS2 = Path(
+HDF5 = Path(
     os.environ.get(
-        "EICVIBE_NSLS2_TBT",
+        "EICVIBE_HDF5_TBT",
         "/Users/haoyue/Research/AI/Bayesian_Inference/NSLSII_BPM_MCMC/TbT20191024/op20191024_01.h5",
     )
 )
@@ -85,10 +87,50 @@ def test_analysis_reads_any_acquisition():
         PlaneData(("a", "b"), np.zeros(3), np.zeros((2, 4)))
 
 
-def test_the_rhic_layout_round_trips(tmp_path):
+def test_an_hdf5_file_reads_back_as_written(tmp_path):
     tbt = synthetic()
-    write_rhic(tbt, tmp_path / "tbt.sdds")
-    back = read_rhic(tmp_path / "tbt.sdds")
+    tbt = replace(
+        tbt, revolution_period=1e-6, metadata={"events": [{"turn": 3, "kind": "kick"}], "n": np.int64(2)}
+    )
+    write_hdf5(tbt, tmp_path / "tbt.h5")
+    back = read_hdf5(tmp_path / "tbt.h5")
+    for plane in "xy":
+        a, b = tbt.plane(plane), back.plane(plane)
+        assert a.bpms == b.bpms and np.array_equal(a.s, b.s)
+        assert np.array_equal(a.position, b.position, equal_nan=True)
+    assert np.array_equal(back.x.intensity, tbt.x.intensity) and np.array_equal(back.x.status, tbt.x.status)
+    assert back.y.intensity is None and back.y.status is None  # what was not there is not made up
+    assert (back.ring, back.first_turn, back.time, back.revolution_period, back.source) == (
+        "test",
+        0,
+        tbt.time,
+        1e-6,
+        "synthetic",
+    )
+    assert back.metadata == {"events": [{"turn": 3, "kind": "kick"}], "n": 2}
+
+
+def test_an_hdf5_file_of_matrices_reads_in_mm(tmp_path):
+    with h5py.File(tmp_path / "matrices.h5", "w") as f:
+        f["x0"] = np.full((3, 8), 2e6)  # nm
+        f["y0"] = np.full((3, 8), -1e6)
+        f["comment"] = b"pinger"
+    tbt = read_hdf5(tmp_path / "matrices.h5")
+    assert tbt.x.bpms == ("bpm001", "bpm002", "bpm003") and np.isnan(tbt.x.s).all()
+    assert tbt.x.position == pytest.approx(np.full((3, 8), 2.0)) and tbt.y.position[0, 0] == -1.0
+    assert tbt.metadata == {"comment": "pinger"}
+    named = read_hdf5(tmp_path / "matrices.h5", bpms=["a", "b", "c"], s=[0.0, 1.0, 2.0])
+    assert named.y.bpms == ("a", "b", "c") and named.y.s[2] == 2.0
+    with h5py.File(tmp_path / "empty.h5", "w") as f:
+        f["other"] = np.zeros(3)
+    with pytest.raises(ValueError, match="no turn-by-turn data"):
+        read_hdf5(tmp_path / "empty.h5")
+
+
+def test_the_sdds_layout_round_trips(tmp_path):
+    tbt = synthetic()
+    write_sdds(tbt, tmp_path / "tbt.sdds")
+    back = read_sdds(tmp_path / "tbt.sdds")
     assert back.x.bpms == tbt.x.bpms and back.y.bpms == tbt.y.bpms
     assert back.time == tbt.time
     valid = tbt.x.status == VALID
@@ -97,24 +139,24 @@ def test_the_rhic_layout_round_trips(tmp_path):
     assert back.y.position == pytest.approx(tbt.y.position, abs=1e-9)
 
 
-@pytest.mark.skipif(not RHIC.exists(), reason="no RHIC turn-by-turn file here")
-def test_a_real_rhic_acquisition(tmp_path):
-    tbt = read_rhic(RHIC)
+@pytest.mark.skipif(not SDDS.exists(), reason="no SDDS turn-by-turn file here")
+def test_a_real_sdds_acquisition(tmp_path):
+    tbt = read_sdds(SDDS)
     assert tbt.ring == "Blue" and tbt.time.year == 2024
     assert (len(tbt.x.bpms), tbt.x.turns, len(tbt.y.bpms)) == (168, 1024, 167)
     assert tbt.x.bpms[:2] == ("g6-bx", "bo6-b1") and tbt.x.s[1] == pytest.approx(25.0237827)
-    assert tune(tbt, "x") == pytest.approx(0.3005, abs=1e-3)  # RHIC's .695, seen as 1 - q
-    write_rhic(tbt, tmp_path / "again.sdds")
-    again = read_rhic(tmp_path / "again.sdds")
+    assert tune(tbt, "x") == pytest.approx(0.3005, abs=1e-3)  # the ring's .695, seen as 1 - q
+    write_sdds(tbt, tmp_path / "again.sdds")
+    again = read_sdds(tmp_path / "again.sdds")
     assert again.x.position == pytest.approx(tbt.x.position, abs=1e-6)
     assert np.array_equal(again.y.status, tbt.y.status)
 
 
-@pytest.mark.skipif(not NSLS2.exists() or find_spec("h5py") is None, reason="no NSLS-II file or h5py here")
-def test_a_real_nsls2_acquisition():
-    tbt = read_nsls2(NSLS2)
+@pytest.mark.skipif(not HDF5.exists(), reason="no HDF5 turn-by-turn file of matrices here")
+def test_a_real_hdf5_acquisition_of_matrices():
+    tbt = read_hdf5(HDF5)
     assert tbt.x.position.shape == (180, 2000)
     assert "pinger" in tbt.metadata["comment"]
     assert (tune(tbt, "x"), tune(tbt, "y")) == pytest.approx(
         (0.2185, 0.2603), abs=2e-3
-    )  # NSLS-II: 33.22, 16.26
+    )  # the ring's 33.22, 16.26

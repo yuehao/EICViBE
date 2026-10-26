@@ -6,7 +6,8 @@
 // when the machine starts, the same every start; "New draw" picks another seed,
 // another machine with the same tolerances. Only whoever may configure the
 // machine sees them (administrators for a shared machine, its owner for a
-// sandbox), and only while it is stopped can they change.
+// sandbox). The magnets' and supplies' change only while it is stopped; the
+// BPMs', which read the beam and leave it alone, also while it runs.
 //
 // Shown in the units magnet and BPM people use: µm, mrad, 10⁻⁴ of the field,
 // ppm of the current; the server keeps SI (metres, radians, fractions; BPMs in mm).
@@ -233,12 +234,16 @@ export function ErrorsEditor({ machine, onError, onSaved }: Props) {
   if (refused) return <p className="muted">{`${machine.name}'s errors are for whoever may configure it: ${refused}`}</p>;
   if (!draft || !base) return <p className="muted">Reading {machine.name}'s errors…</p>;
   const stopped = machine.state === "stopped" || machine.state === "failed";
+  const running = machine.state === "running";
+  // The BPMs read the beam and leave it alone: their errors change while it runs too.
+  const bpmsOpen = stopped || running;
   const set = (change: Partial<Draft>) => setDraft({ ...draft, ...change });
   const magnet = (k: number, change: Partial<MagnetDraft>) => set({ magnets: draft.magnets.map((m, i) => (i === k ? { ...m, ...change } : m)) });
   const supply = (k: number, change: Partial<SupplyDraft>) => set({ supplies: draft.supplies.map((s, i) => (i === k ? { ...s, ...change } : s)) });
-  const number = (value: string, onChange: (v: string) => void, label: string, placeholder = "0") => (
-    <input className="error-number" inputMode="decimal" aria-label={label} placeholder={placeholder} value={value} onChange={(e) => onChange(e.target.value)} disabled={!stopped} />
+  const number = (value: string, onChange: (v: string) => void, label: string, placeholder = "0", open = stopped) => (
+    <input className="error-number" inputMode="decimal" aria-label={label} placeholder={placeholder} value={value} onChange={(e) => onChange(e.target.value)} disabled={!open} />
   );
+  const bpm = (key: keyof Draft["bpms"], label: string) => number(draft.bpms[key], (v) => set({ bpms: { ...draft.bpms, [key]: v } }), label, "0", bpmsOpen);
   const save = () => {
     let spec: ErrorSpec;
     try {
@@ -252,7 +257,11 @@ export function ErrorsEditor({ machine, onError, onSaved }: Props) {
         setDraft(draftOf(saved.errors));
         setChosen(saved.chosen);
         setReason("");
-        setNote(`Saved: ${machine.name} draws these errors (seed ${saved.errors.seed}) when it starts.`);
+        setNote(
+          running
+            ? `Saved: ${machine.name}'s BPMs read with these errors from its next turn.`
+            : `Saved: ${machine.name} draws these errors (seed ${saved.errors.seed}) when it starts.`,
+        );
         onSaved?.();
       },
       (e: Error) => setNote(e.message),
@@ -261,7 +270,15 @@ export function ErrorsEditor({ machine, onError, onSaved }: Props) {
 
   return (
     <div className="errors-editor" data-testid="errors-editor">
-      {!stopped ? <p className="admin-error">Stop {machine.name} to change its errors: it draws them as it starts.</p> : null}
+      {running ? (
+        <p className="admin-error">
+          {machine.name} is running: its BPMs' errors change from its next turn. Stop it to change its magnets' and supplies' errors or the seed: it draws them as it starts.
+        </p>
+      ) : !stopped ? (
+        <p className="admin-error">
+          {machine.name} is {machine.state}: its errors change once it runs or has stopped.
+        </p>
+      ) : null}
       <h3>Magnets</h3>
       <p className="muted">Each row's errors are drawn per magnet: Gaussian, rms, cut at the sigma given; rows add. Offsets and rotations are of the body's centre (yaw turns the exit to +x, pitch to −y); the field error scales the main field (a bend's dipole, a quadrupole's gradient, a corrector's kick).</p>
       <table className="errors-table">
@@ -364,22 +381,13 @@ export function ErrorsEditor({ machine, onError, onSaved }: Props) {
       </div>
 
       <h3>BPMs</h3>
+      <p className="muted">Each BPM reads gain × (roll of (beam − offset)) + noise, its offset, gain and roll drawn from the seed: changed here, each keeps its own, scaled to the new rms. They change while the machine runs, from its next turn.</p>
       <div className="admin-row errors-bpms">
-        <label>
-          offsets µm rms {number(draft.bpms.offset, (offset) => set({ bpms: { ...draft.bpms, offset } }), "BPM offsets µm")}
-        </label>
-        <label>
-          gains % rms {number(draft.bpms.gain, (gain) => set({ bpms: { ...draft.bpms, gain } }), "BPM gains %")}
-        </label>
-        <label>
-          rolls mrad rms {number(draft.bpms.roll, (roll) => set({ bpms: { ...draft.bpms, roll } }), "BPM rolls mrad")}
-        </label>
-        <label title="Each turn's reading, at full intensity; more as the beam thins">
-          turn-by-turn noise µm {number(draft.bpms.tbt, (tbt) => set({ bpms: { ...draft.bpms, tbt } }), "BPM turn-by-turn noise µm")}
-        </label>
-        <label title="Each sample of the closed-orbit (slow) acquisition">
-          closed-orbit noise µm {number(draft.bpms.orbit, (orbit) => set({ bpms: { ...draft.bpms, orbit } }), "BPM closed-orbit noise µm")}
-        </label>
+        <label>offsets µm rms {bpm("offset", "BPM offsets µm")}</label>
+        <label>gains % rms {bpm("gain", "BPM gains %")}</label>
+        <label>rolls mrad rms {bpm("roll", "BPM rolls mrad")}</label>
+        <label title="Each turn's reading, at full intensity; more as the beam thins">turn-by-turn noise µm {bpm("tbt", "BPM turn-by-turn noise µm")}</label>
+        <label title="Each sample of the closed-orbit (slow) acquisition">closed-orbit noise µm {bpm("orbit", "BPM closed-orbit noise µm")}</label>
       </div>
 
       <div className="admin-row">
@@ -389,8 +397,8 @@ export function ErrorsEditor({ machine, onError, onSaved }: Props) {
         <button type="button" title="Another seed: another machine with the same tolerances" onClick={() => set({ seed: String(1 + Math.floor(Math.random() * 2 ** 31)) })} disabled={!stopped}>
           New draw
         </button>
-        <input className="setpoint-reason" placeholder="Why (goes into the log, without the seed)" aria-label="Reason for the errors" value={reason} onChange={(e) => setReason(e.target.value)} disabled={!stopped} />
-        <button type="button" onClick={save} disabled={!stopped}>
+        <input className="setpoint-reason" placeholder="Why (goes into the log, without the seed)" aria-label="Reason for the errors" value={reason} onChange={(e) => setReason(e.target.value)} disabled={!bpmsOpen} />
+        <button type="button" onClick={save} disabled={!bpmsOpen}>
           Save errors
         </button>
       </div>

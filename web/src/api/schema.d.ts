@@ -370,6 +370,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/va/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * History
+         * @description The runs' BPM histories on disk and the proposals, which an administrator may delete; the write
+         *     and action logs are append-only and are not.
+         */
+        get: operations["history_api_v1_va_history_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/va/log": {
         parameters: {
             query?: never;
@@ -512,8 +533,9 @@ export interface paths {
         get: operations["errors_api_v1_va_machines__machine__errors_get"];
         /**
          * Set Errors
-         * @description Other errors for a stopped machine, drawn when it starts; logged without their seed. A row
-         *     that chooses nothing on the machine is refused.
+         * @description Other errors for a machine, logged without their seed: its magnets' and supplies' while it is
+         *     stopped (drawn when it starts), its BPMs' also while it runs (read with from its next turn). A
+         *     row that chooses nothing on the machine is refused.
          */
         put: operations["set_errors_api_v1_va_machines__machine__errors_put"];
         post?: never;
@@ -567,7 +589,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Proposals */
+        /**
+         * Proposals
+         * @description A machine's latest proposals, newest first.
+         */
         get: operations["proposals_api_v1_va_machines__machine__proposals_get"];
         put?: never;
         /**
@@ -780,6 +805,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/va/operations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Operations
+         * @description The operations a proposal can compute, with their parameters (ADR 0017).
+         */
+        get: operations["operations_api_v1_va_operations_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/va/options": {
         parameters: {
             query?: never;
@@ -792,6 +837,26 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/va/proposals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Proposals
+         * @description Delete every machine's finished proposals (verified, discarded, stale) (logged).
+         */
+        delete: operations["delete_proposals_api_v1_va_proposals_delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -866,6 +931,46 @@ export interface paths {
          */
         post: operations["verify_api_v1_va_proposals__proposal__verify_post"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/va/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Runs
+         * @description Delete every run's folder that no running machine uses (logged).
+         */
+        delete: operations["delete_runs_api_v1_va_runs_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/va/runs/{run}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Run
+         * @description Delete one run's folder; a running machine's is refused (logged).
+         */
+        delete: operations["delete_run_api_v1_va_runs__run__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1778,6 +1883,24 @@ export interface components {
             detail?: components["schemas"]["ValidationError"][];
         };
         /**
+         * HistoryView
+         * @description What the service keeps besides its append-only logs, for administrators to clear.
+         */
+        HistoryView: {
+            /**
+             * Proposals
+             * @description How many proposals each state has, every machine's
+             */
+            proposals: {
+                [key: string]: number;
+            };
+            /**
+             * Runs
+             * @description Newest first
+             */
+            runs: components["schemas"]["RunRecord"][];
+        };
+        /**
          * LatticeEntry
          * @description One lattice the server offers.
          */
@@ -1871,6 +1994,49 @@ export interface components {
              * @description Circuits that drive several magnets in series
              */
             strings: number;
+        };
+        /**
+         * LocalBumpRequest
+         * @description Local bump: A closed bump: three correctors for an offset, four for an offset and an angle. Computed on a machine as set; nothing is written.
+         */
+        LocalBumpRequest: {
+            /**
+             * Amplitude
+             * @description The offset there, mm
+             * @example 1
+             */
+            amplitude_mm: number;
+            /**
+             * Angle
+             * @description The angle there, mrad: leave it out for an offset alone (three correctors); an angle takes four
+             */
+            angle_mrad?: number | null;
+            /**
+             * Bump at
+             * @description A BPM's name (or an element's)
+             */
+            at: string;
+            /**
+             * Corrector channels
+             * @description Only these corrector channels
+             */
+            correctors?: string[] | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            operation: "local_bump";
+            /**
+             * Plane
+             * @default x
+             * @enum {string}
+             */
+            plane: "x" | "y";
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
         };
         /** LogEntry */
         LogEntry: {
@@ -2166,6 +2332,35 @@ export interface components {
             tags: string[];
         };
         /**
+         * OperationEntry
+         * @description An operation the virtual accelerator computes (ADR 0017): the viewer's form is made from it.
+         */
+        OperationEntry: {
+            /** Label */
+            label: string;
+            /**
+             * Machines
+             * @description The kinds of machine it runs on: ring, route
+             */
+            machines: string[];
+            /** Name */
+            name: string;
+            /**
+             * Parameters
+             * @description Its parameters' JSON Schema, with x-form hints for a form
+             */
+            parameters: {
+                [key: string]: unknown;
+            };
+            /** Summary */
+            summary: string;
+            /**
+             * Verified By
+             * @description orbit (the BPMs' orbit) or tunes (the tune monitor)
+             */
+            verified_by: string;
+        };
+        /**
          * OpticsProfile
          * @description Optics inside elements too: the branch start, then the end of every piece the engine sampled.
          */
@@ -2187,6 +2382,58 @@ export interface components {
             values: {
                 [key: string]: number[];
             };
+        };
+        /**
+         * OrbitCorrectionRequest
+         * @description Orbit correction: SVD (damped) or MICADO on the model's orbit response matrix, from the BPMs' latest slow orbit. Computed on a machine as set; nothing is written.
+         */
+        OrbitCorrectionRequest: {
+            /**
+             * Corrector channels
+             * @description Only these corrector channels
+             */
+            correctors?: string[] | null;
+            /**
+             * Correctors
+             * @description MICADO: correctors to use
+             * @default 3
+             */
+            count: number;
+            /**
+             * Damping
+             * @description SVD: Tikhonov damping, of the largest singular value
+             * @default 0.01
+             */
+            damping: number;
+            /**
+             * Method
+             * @default svd
+             * @enum {string}
+             */
+            method: "svd" | "micado";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            operation: "orbit_correction";
+            /**
+             * Plane
+             * @default x
+             * @enum {string}
+             */
+            plane: "x" | "y";
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
+            /**
+             * Orbit from
+             * @description The BPMs' latest slow orbit, or the model's own
+             * @default measured
+             * @enum {string}
+             */
+            source: "measured" | "model";
         };
         /**
          * OrbitFrames
@@ -2561,89 +2808,10 @@ export interface components {
                 [key: string]: unknown;
             } | null;
         };
-        /**
-         * ProposalRequest
-         * @description An operation to compute on a machine as it is set (ADR 0010); nothing is written.
-         */
-        ProposalRequest: {
-            /**
-             * Amplitude Mm
-             * @description Bump: the offset there, mm
-             */
-            amplitude_mm?: number | null;
-            /**
-             * Angle Mrad
-             * @description Bump: the angle there, mrad (four correctors)
-             */
-            angle_mrad?: number | null;
-            /**
-             * At
-             * @description Bump: a BPM's name (or an element's)
-             */
-            at?: string | null;
-            /**
-             * Correctors
-             * @description Only these corrector channels
-             */
-            correctors?: string[] | null;
-            /**
-             * Count
-             * @description MICADO: correctors to use
-             * @default 3
-             */
-            count: number;
-            /**
-             * Damping
-             * @description SVD: Tikhonov damping, of the largest singular value
-             * @default 0.01
-             */
-            damping: number;
-            /**
-             * Dqx
-             * @description Tune move: the change of the horizontal tune
-             * @default 0
-             */
-            dqx: number;
-            /**
-             * Dqy
-             * @description Tune move: the change of the vertical tune
-             * @default 0
-             */
-            dqy: number;
-            /**
-             * Method
-             * @default svd
-             * @enum {string}
-             */
-            method: "svd" | "micado";
-            /**
-             * Operation
-             * @enum {string}
-             */
-            operation: "orbit_correction" | "local_bump" | "tune_move";
-            /**
-             * Plane
-             * @default x
-             * @enum {string}
-             */
-            plane: "x" | "y";
-            /**
-             * Quadrupoles
-             * @description Tune move: only these quadrupole channels
-             */
-            quadrupoles?: string[] | null;
-            /**
-             * Reason
-             * @default
-             */
-            reason: string;
-            /**
-             * Source
-             * @description Orbit correction: the BPMs' latest slow orbit, or the model's own
-             * @default measured
-             * @enum {string}
-             */
-            source: "measured" | "model";
+        /** ProposalsDeleted */
+        ProposalsDeleted: {
+            /** Deleted */
+            deleted: number;
         };
         /**
          * RampProgram
@@ -3088,6 +3256,43 @@ export interface components {
             turn: number;
         };
         /**
+         * RunRecord
+         * @description A run's folder: its BPM history on disk.
+         */
+        RunRecord: {
+            /**
+             * Bytes
+             * @description Its folder's size on disk
+             */
+            bytes: number;
+            /** Engine */
+            engine: string | null;
+            /** Id */
+            id: string;
+            /**
+             * In Use
+             * @description A running machine's run, which is not deleted
+             */
+            in_use: boolean;
+            /** Machine */
+            machine: string | null;
+            /**
+             * Started
+             * @description Turn 0, on the run's own clock
+             */
+            started: string | null;
+        };
+        /** RunsDeleted */
+        RunsDeleted: {
+            /**
+             * Bytes
+             * @description Freed on disk
+             */
+            bytes: number;
+            /** Deleted */
+            deleted: string[];
+        };
+        /**
          * Selection
          * @description Which magnets: of these kinds, in these branches, with names matching these patterns; empty: any.
          */
@@ -3284,6 +3489,40 @@ export interface components {
             occurrence: string;
             /** Role */
             role: string;
+        };
+        /**
+         * TuneMoveRequest
+         * @description Tune move: The quadrupole knob that moves the tunes with the least beta-beating and dispersion change. Computed on a machine as set; nothing is written.
+         */
+        TuneMoveRequest: {
+            /**
+             * Change of Qx
+             * @description The change of the horizontal tune
+             * @default 0
+             * @example 0.01
+             */
+            dqx: number;
+            /**
+             * Change of Qy
+             * @description The change of the vertical tune
+             * @default 0
+             */
+            dqy: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            operation: "tune_move";
+            /**
+             * Quadrupole channels
+             * @description Only these quadrupole channels
+             */
+            quadrupoles?: string[] | null;
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
         };
         /**
          * TuneReading
@@ -3993,6 +4232,26 @@ export interface operations {
             };
         };
     };
+    history_api_v1_va_history_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HistoryView"];
+                };
+            };
+        };
+    };
     log_api_v1_va_log_get: {
         parameters: {
             query?: {
@@ -4399,7 +4658,10 @@ export interface operations {
     };
     proposals_api_v1_va_machines__machine__proposals_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Only those a person still has to apply or verify: proposed, or applied */
+                waiting?: boolean;
+            };
             header?: never;
             path: {
                 machine: string;
@@ -4439,7 +4701,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ProposalRequest"];
+                "application/json": components["schemas"]["OrbitCorrectionRequest"] | components["schemas"]["LocalBumpRequest"] | components["schemas"]["TuneMoveRequest"];
             };
         };
         responses: {
@@ -4904,6 +5166,26 @@ export interface operations {
             };
         };
     };
+    operations_api_v1_va_operations_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationEntry"][];
+                };
+            };
+        };
+    };
     options_api_v1_va_options_get: {
         parameters: {
             query?: never;
@@ -4920,6 +5202,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["VaOptions"];
+                };
+            };
+        };
+    };
+    delete_proposals_api_v1_va_proposals_delete: {
+        parameters: {
+            query?: {
+                /** @description Those still waiting for a person too: proposed, or applied */
+                waiting?: boolean;
+                reason?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProposalsDeleted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -5043,6 +5358,70 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProposalEntry"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_runs_api_v1_va_runs_delete: {
+        parameters: {
+            query?: {
+                reason?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunsDeleted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_run_api_v1_va_runs__run__delete: {
+        parameters: {
+            query?: {
+                reason?: string;
+            };
+            header?: never;
+            path: {
+                run: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunsDeleted"];
                 };
             };
             /** @description Validation Error */

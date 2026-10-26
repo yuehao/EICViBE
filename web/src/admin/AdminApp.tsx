@@ -30,9 +30,10 @@ import {
 import { ErrorsEditor } from "../components/ErrorsEditor";
 import { outside, SourceBadge } from "../components/SupplyMarks";
 import { AiPanel } from "./AiPanel";
+import { HistoryPanel } from "./HistoryPanel";
 import { RampPanel } from "./RampPanel";
 
-type Tab = "machines" | "settings" | "ramp" | "errors" | "log" | "users" | "ai" | "account";
+type Tab = "machines" | "settings" | "ramp" | "errors" | "log" | "history" | "users" | "ai" | "account";
 
 const TABS: { key: Tab; label: string; role?: (typeof ROLES)[number]; login?: boolean }[] = [
   { key: "machines", label: "Machines" },
@@ -40,6 +41,7 @@ const TABS: { key: Tab; label: string; role?: (typeof ROLES)[number]; login?: bo
   { key: "ramp", label: "Ramp" },
   { key: "errors", label: "Errors", login: true },
   { key: "log", label: "Log" },
+  { key: "history", label: "History", role: "admin" },
   { key: "users", label: "Users", role: "admin" },
   { key: "ai", label: "AI", role: "admin" },
   { key: "account", label: "Account", login: true },
@@ -175,6 +177,8 @@ export function AdminApp() {
           <Errors machines={machines} machine={selected} onMachine={(id) => setHash({ machine: id })} onChanged={refresh} onError={fail} />
         ) : tab === "log" ? (
           <Log machines={machines} machine={hash.machine} onMachine={(id) => setHash({ machine: id })} onError={fail} />
+        ) : tab === "history" ? (
+          <HistoryPanel onError={fail} />
         ) : tab === "users" ? (
           <Users me={me} onError={fail} />
         ) : tab === "ai" ? (

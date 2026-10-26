@@ -65,7 +65,7 @@ def test_turns_are_read_across_chunks_by_their_numbers(tmp_path):
 
 
 def test_old_turns_go_first_beyond_the_size_kept(tmp_path):
-    writer = BpmHistory.create(tmp_path / "run", info(retention_bytes=12_000))
+    writer = BpmHistory.create(tmp_path / "run", info(retention_bytes=24_000))
     for first in range(0, 1000, 100):
         writer.append(first, *chunk(first), wall=0.0)
     first, end = writer.span()

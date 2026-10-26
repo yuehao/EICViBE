@@ -853,6 +853,7 @@ def _fields(element) -> dict[str, Any]:
         "shift_x",
         "shift_y",
         "rot_s_rad",
+        "rot_s_rad_no_frame",
         "rot_x_rad",
         "rot_y_rad",
         "rot_shift_anchor",
@@ -875,13 +876,17 @@ def _misalignment(groups: dict[str, Any], tilt: float = 0.0, length: float = 0.0
     """Xsuite's shifts and rotations of a body, about its centre (``rot_shift_anchor``, from the entry).
 
     Xsuite's ``rot_y_rad`` is PALS's right-handed yaw; its ``rot_x_rad`` turns the exit towards +y,
-    so it is minus PALS's pitch. The anchor moves only what pitch and yaw do.
+    so it is minus PALS's pitch. The anchor moves only what pitch and yaw do. ``tilt`` turns the
+    element's frame with it (``rot_s_rad``: a bend's ``tilt_ref`` bends the reference out of the
+    plane); the body's roll turns only its field (``rot_s_rad_no_frame``), so a rolled bend kicks the
+    beam off the reference, as a misaligned magnet does. For a straight element the two are the same.
     """
     d = displacement(NAME, groups)
     return {
         "shift_x": d.x,
         "shift_y": d.y,
-        "rot_s_rad": tilt + d.roll,
+        "rot_s_rad": tilt,
+        "rot_s_rad_no_frame": d.roll,
         "rot_x_rad": -d.pitch,
         "rot_y_rad": d.yaw,
         "rot_shift_anchor": length / 2,

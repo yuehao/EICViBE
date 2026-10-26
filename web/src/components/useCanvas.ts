@@ -62,12 +62,17 @@ export function useCanvas(draw: (ctx: CanvasRenderingContext2D, size: CanvasSize
 
 const DARK = "(prefers-color-scheme: dark)";
 
-/** Theme colours from CSS custom properties, re-read when the colour scheme changes. */
+/**
+ * Theme colours from CSS custom properties, re-read when the colour scheme changes. The scheme is
+ * the system's, unless an element around this one says otherwise (``data-scheme``: a notebook's
+ * widget follows its notebook's theme).
+ */
 export function readTheme(element: Element | null) {
   const style = element ? getComputedStyle(element) : null;
   const get = (name: string, fallback: string) => style?.getPropertyValue(name).trim() || fallback;
+  const scheme = element?.closest<HTMLElement>("[data-scheme]")?.dataset.scheme;
   return {
-    dark: window.matchMedia(DARK).matches,
+    dark: scheme ? scheme === "dark" : window.matchMedia(DARK).matches,
     background: get("--canvas-bg", "#ffffff"),
     text: get("--text", "#1d2330"),
     muted: get("--muted", "#6b7280"),

@@ -15,7 +15,7 @@ import numpy as np
 
 from eicvibe.domain.machine.registry import DeviceType
 from eicvibe.engines import engine as find_engine
-from eicvibe.engines.contracts import OpticsRequest, OpticsResult, Options, OrbitRequest, OrbitResult
+from eicvibe.engines.contracts import Effect, OpticsRequest, OpticsResult, Options, OrbitRequest, OrbitResult
 from eicvibe.engines.model import initial_conditions
 from eicvibe.va.settings import MachineSettings
 
@@ -75,7 +75,13 @@ class MachineModel:
         self.layout = lattice.layout(branch)
         self.branch, self.name, self.periodic = self.layout.id, self.layout.branch.name, self.layout.periodic
         self.live = dict(live or {})
-        self.options = options or Options()
+        # The model is the machine's deterministic response: closed orbits, optics, their changes. Quantum
+        # excitation, being random, has no closed orbit (the engine's search fails), so it is left out; the
+        # mean radiation stays, with the energy it takes.
+        options = options or Options()
+        self.options = Options(
+            **(options.model_dump() | {"effects": options.effects - {Effect.QUANTUM_EXCITATION}})
+        )
         here = {p.id for p in self.layout.placements}
         self._here = here
         self.position = {p.id: p.s_exit for p in self.layout.placements}
